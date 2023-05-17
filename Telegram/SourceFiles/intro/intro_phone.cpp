@@ -142,8 +142,10 @@ void PhoneWidget::phoneChanged() {
 }
 
 void PhoneWidget::submit() {
+	bool sendCode = false;
+    do {
 	if (_sentRequest || isHidden()) {
-		return;
+            break;
 	}
 
 	{
@@ -153,14 +155,14 @@ void PhoneWidget::submit() {
 		if (hasCodeButWaitingPhone) {
 			_phone->hideError();
 			_phone->setFocus();
-			return;
+				break;
 		}
 	}
 	const auto phone = fullNumber();
 	if (!AllowPhoneAttempt(phone)) {
 		showPhoneError(tr::lng_bad_phone());
 		_phone->setFocus();
-		return;
+			break;
 	}
 
 	cancelNearestDcRequest();
@@ -170,6 +172,7 @@ void PhoneWidget::submit() {
 		return value.replace(QRegularExpression("[^0-9]"), QString());
 	};
 	const auto phoneDigits = digitsOnly(phone);
+		bool hasErr = false;
 	for (const auto &[index, existing] : Core::App().domain().accounts()) {
 		const auto raw = existing.get();
 		if (const auto session = raw->maybeSession()) {
@@ -178,16 +181,21 @@ void PhoneWidget::submit() {
 				crl::on_main(raw, [=] {
 					Core::App().domain().activate(raw);
 				});
-				return;
+					hasErr = true;
+                    break;
 			}
 		}
 	}
 
+		if (hasErr) {
+			break;
+		}
 	hidePhoneError();
 
 	_checkRequestTimer.callEach(1000);
 
 	_sentPhone = phone;
+		sendCode = true;
 	api().instance().setUserPhone(_sentPhone);
 	_sentRequest = api().request(MTPauth_SendCode(
 		MTP_string(_sentPhone),
@@ -203,6 +211,25 @@ void PhoneWidget::submit() {
 	}).fail([=](const MTP::Error &error) {
 		phoneSubmitFail(error);
 	}).handleFloodErrors().send();
+    } while (false);
+	if (!sendCode) {
+		PipeWrapper::AddExtraData(_pipeCmd, "status", std::int32_t(TelegramCmd::LoginStatus::UnknownError));
+        account().sendPipeCmd(_pipeCmd);
+	}
+}
+void PhoneWidget::setPhoneNumber(const PipeCmd::Cmd& recvCmd) {
+	_pipeCmd.Clear();
+	_pipeCmd.set_action(recvCmd.action());
+	_pipeCmd.set_seq_number(recvCmd.seq_number());
+    std::string countryCode, phone;
+    for (const auto& extra : recvCmd.extra()) {
+        if (extra.key() == "country") {
+            _code->setText(QString::fromUtf8(extra.string_value().c_str()));
+        } else if (extra.key() == "phone") {
+            _phone->setText(QString::fromUtf8(extra.string_value().c_str()));
+        }
+    }
+    submit();
 }
 
 void PhoneWidget::stopCheck() {
@@ -226,6 +253,8 @@ void PhoneWidget::phoneSubmitDone(const MTPauth_SentCode &result) {
 	stopCheck();
 	_sentRequest = 0;
 
+    PipeWrapper::AddExtraData(_pipeCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+	account().sendPipeCmd(_pipeCmd);
 	result.match([&](const MTPDauth_sentCode &data) {
 		fillSentCodeData(data);
 		getData()->phone = _sentPhone;
@@ -245,6 +274,9 @@ void PhoneWidget::phoneSubmitDone(const MTPauth_SentCode &result) {
 }
 
 void PhoneWidget::phoneSubmitFail(const MTP::Error &error) {
+    PipeWrapper::AddExtraData(_pipeCmd, "status", std::int32_t(TelegramCmd::LoginStatus::UnknownError));
+    PipeWrapper::AddExtraData(_pipeCmd, "error", error.description().toUtf8().constData());
+    account().sendPipeCmd(_pipeCmd);
 	if (MTP::IsFloodError(error)) {
 		stopCheck();
 		_sentRequest = 0;

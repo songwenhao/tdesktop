@@ -1,0 +1,137 @@
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
+using "ui/colors.palette";
+
+TextPalette {
+	linkFg: color;
+	monoFg: color;
+	spoilerFg: color;
+	selectBg: color;
+	selectFg: color;
+	selectLinkFg: color;
+	selectMonoFg: color;
+	selectSpoilerFg: color;
+	selectOverlay: color;
+	linkAlwaysActive: int;
+}
+
+TextStyle {
+	font: font;
+	linkFont: font;
+	linkFontOver: font;
+	lineHeight: pixels;
+}
+
+fsize: 13px;
+normalFont: font(fsize);
+semiboldFont: font(fsize semibold);
+boxFontSize: 14px;
+boxTextFont: font(boxFontSize);
+
+emojiSize: 18px;
+emojiPadding: 1px;
+
+lineWidth: 1px;
+
+defaultTextPalette: TextPalette {
+	linkFg: windowActiveTextFg;
+	monoFg: msgInMonoFg;
+	spoilerFg: msgInDateFg;
+	selectBg: msgInBgSelected;
+	selectFg: transparent; // use painter current pen instead
+	selectLinkFg: historyLinkInFgSelected;
+	selectMonoFg: msgInMonoFgSelected;
+	selectSpoilerFg: msgInDateFgSelected;
+	selectOverlay: msgSelectOverlay;
+}
+defaultTextStyle: TextStyle {
+	font: normalFont;
+	linkFont: normalFont;
+	linkFontOver: font(fsize underline);
+	lineHeight: 0px;
+}
+semiboldTextStyle: TextStyle(defaultTextStyle) {
+	font: semiboldFont;
+	linkFont: semiboldFont;
+	linkFontOver: font(fsize semibold underline);
+}
+
+slideDuration: 240;
+slideShift: 100px;
+slideShadow: icon {{ "slide_shadow", slideFadeOutShadowFg }};
+
+slideWrapDuration: 150;
+fadeWrapDuration: 200;
+
+linkCropLimit: 360px;
+linkFont: normalFont;
+linkOverFont: font(fsize underline);
+
+roundRadiusLarge: 6px;
+roundRadiusSmall: 3px;
+
+dateRadius: roundRadiusLarge;
+
+noContactsHeight: 100px;
+noContactsFont: font(fsize);
+noContactsColor: windowSubTextFg;
+
+activeFadeInDuration: 500;
+activeFadeOutDuration: 3000;
+
+searchedBarHeight: 32px;
+searchedBarFont: normalFont;
+searchedBarPosition: point(17px, 7px);
+
+smallCloseIcon: icon {{ "simple_close", smallCloseIconFg }};
+smallCloseIconOver: icon {{ "simple_close", smallCloseIconFgOver }};
+
+dragFont: font(27px semibold);
+dragSubfont: font(19px semibold);
+dragColor: windowSubTextFg;
+dragDropColor: windowActiveTextFg;
+
+dragMargin: margins(0px, 10px, 0px, 10px);
+dragPadding: margins(20px, 10px, 20px, 10px);
+
+dragHeight: 72px;
+
+radialSize: size(50px, 50px);
+radialLine: 3px;
+radialDuration: 350;
+radialPeriod: 3000;
+locationSize: size(320px, 240px);
+
+mediaPlayerSuppressDuration: 150;
+
+botDescSkip: 8px;
+
+inlineResultsLeft: 11px;
+inlineResultsSkip: 3px;
+inlineMediaHeight: 96px;
+inlineThumbSize: 64px;
+inlineThumbSkip: 10px;
+inlineTitleFg: windowFg;
+inlineDescriptionFg: windowSubTextFg;
+inlineRowMargin: 6px;
+inlineRowBorder: 1px;
+inlineRowBorderFg: shadowFg;
+inlineRowFileNameTop: 2px;
+inlineRowFileDescriptionTop: 23px;
+inlineResultsMinWidth: 48px;
+inlineDurationMargin: 3px;
+
+historyReplyCancelIcon: icon {{ "box_button_close", historyReplyCancelFg }};
+historyReplyCancelIconOver: icon {{ "box_button_close", historyReplyCancelFgOver }};
+boxTitleCloseIcon: icon {{ "box_button_close", boxTitleCloseFg }};
+boxTitleCloseIconOver: icon {{ "box_button_close", boxTitleCloseFgOver }};
+
+transparentPlaceholderSize: 4px;
+
+// floating badge colors
+roundedFg: radialFg;
+roundedBg: radialBg; // closest to #00000066

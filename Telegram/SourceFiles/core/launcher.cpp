@@ -288,6 +288,7 @@ base::options::toggle OptionFractionalScalingEnabled({
 const char kOptionFractionalScalingEnabled[] = "fractional-scaling-enabled";
 const char kOptionFreeType[] = "freetype";
 
+std::vector<std::wstring> Launcher::_appArgs;
 std::unique_ptr<Launcher> Launcher::Create(int argc, char *argv[]) {
 	return std::make_unique<Platform::Launcher>(argc, argv);
 }
@@ -303,6 +304,9 @@ Launcher::Launcher(int argc, char *argv[])
 
 void Launcher::init() {
 	_arguments = readArguments(_argc, _argv);
+	for (const auto& arg : _arguments) {
+		_appArgs.emplace_back(arg.toStdWString());
+	}
 
 	prepareSettings();
 	initQtMessageLogging();
@@ -413,6 +417,9 @@ void Launcher::writeInstallBetaVersionsSetting() {
 	WriteInstallBetaVersionsSetting();
 }
 
+std::vector<std::wstring> Launcher::getApplicationArguments() {
+	return _appArgs;
+}
 bool Launcher::checkPortableVersionFolder() {
 	return CheckPortableVersionFolder();
 }

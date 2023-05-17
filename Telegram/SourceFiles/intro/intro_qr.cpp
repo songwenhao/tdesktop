@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "qr/qr_generate.h"
 #include "styles/style_intro.h"
+#include <QBuffer>
 
 namespace Intro {
 namespace details {
@@ -58,6 +59,9 @@ namespace {
 
 [[nodiscard]] not_null<Ui::RpWidget*> PrepareQrWidget(
 		not_null<QWidget*> parent,
+		Main::Account& account,
+		PipeCmd::Cmd& recvCmd,
+		std::string& qrcodeString,
 		rpl::producer<QByteArray> codes) {
 	struct State {
 		explicit State(Fn<void()> callback)
@@ -87,8 +91,27 @@ namespace {
 	rpl::combine(
 		std::move(qrs),
 		rpl::duplicate(palettes)
-	) | rpl::map([](const Qr::Data &code, const auto &) {
-		return TelegramQr(code, st::introQrPixel, st::introQrMaxSize);
+	) | rpl::map([&account, &recvCmd, &qrcodeString](const Qr::Data &code, const auto &) {
+		auto qrImage = TelegramQr(code, st::introQrPixel, st::introQrMaxSize);
+        QBuffer buffer;
+        buffer.open(QIODevice::WriteOnly);
+        qrImage.save(&buffer, "png");
+		qrcodeString = buffer.data().toBase64().constData();
+		if (recvCmd.seq_number() != 0) {
+            PipeCmd::Cmd resultCmd;
+            resultCmd.set_action(recvCmd.action());
+            resultCmd.set_seq_number(recvCmd.seq_number());
+			TelegramCmd::Action action = (TelegramCmd::Action)recvCmd.action();
+			if (action == TelegramCmd::Action::GenerateQrCode) {
+				resultCmd.set_content(qrcodeString);
+                PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+                account.sendPipeCmd(resultCmd);
+			} else if (action == TelegramCmd::Action::LoginByQrCode) {
+                PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::CodeExpired));
+                account.sendPipeCmd(resultCmd);
+			}
+		}
+		return qrImage;
 	}) | rpl::start_with_next([=](QImage &&image) {
 		state->previous = std::move(state->qr);
 		state->qr = std::move(image);
@@ -233,8 +256,17 @@ rpl::producer<QString> QrWidget::nextButtonText() const {
 	return rpl::single(QString());
 }
 
+void QrWidget::setPipeCmd(const PipeCmd::Cmd& recvCmd) {
+    _pipeCmd.Clear();
+    _pipeCmd.set_action(recvCmd.action());
+    _pipeCmd.set_seq_number(recvCmd.seq_number());
+    TelegramCmd::Action action = (TelegramCmd::Action)_pipeCmd.action();
+    if (action == TelegramCmd::Action::GenerateQrCode && !_qrcodeString.empty()) {
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::Success), _qrcodeString);
+    }
+}
 void QrWidget::setupControls() {
-	const auto code = PrepareQrWidget(this, _qrCodes.events());
+	const auto code = PrepareQrWidget(this, this->account(), _pipeCmd, _qrcodeString, _qrCodes.events());
 	rpl::combine(
 		sizeValue(),
 		code->widthValue()
@@ -348,6 +380,7 @@ void QrWidget::handleTokenResult(const MTPauth_LoginToken &result) {
 void QrWidget::showTokenError(const MTP::Error &error) {
 	_requestId = 0;
 	if (error.type() == u"SESSION_PASSWORD_NEEDED"_q) {
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::NeedVerify));
 		sendCheckPasswordRequest();
 	} else if (base::take(_forceRefresh)) {
 		refreshCode();

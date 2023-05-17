@@ -31,6 +31,7 @@ public:
 		return true;
 	}
 
+    void setPipeCmd(const PipeCmd::Cmd& recvCmd);
 private:
 	int errorTop() const override;
 
@@ -45,6 +46,7 @@ private:
 	void showToken(const QByteArray &token);
 	void done(const MTPauth_Authorization &authorization);
 
+	std::string _qrcodeString;
 	rpl::event_stream<QByteArray> _qrCodes;
 	base::Timer _refreshTimer;
 	mtpRequestId _requestId = 0;

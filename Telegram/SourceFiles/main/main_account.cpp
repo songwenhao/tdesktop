@@ -30,6 +30,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_domain.h"
 #include "main/main_session_settings.h"
+#include "core/launcher.h"
+#include "intro/intro_start.h"
+#include "intro/intro_qr.h"
+#include "intro/intro_phone.h"
+#include "intro/intro_code.h"
+#include "intro/intro_password_check.h"
+#include "apiwrap.h"
 
 namespace Main {
 namespace {
@@ -51,7 +58,10 @@ Account::Account(not_null<Domain*> domain, const QString &dataName, int index)
 : _domain(domain)
 , _local(std::make_unique<Storage::Account>(
 	this,
-	ComposeDataString(dataName, index))) {
+	ComposeDataString(dataName, index)))
+, _dataDb(nullptr)
+, _pipe(nullptr)
+, _handlePipeCmdTimer([this] { handlePipeCmd(); }) {
 }
 
 Account::~Account() {
@@ -59,6 +69,10 @@ Account::~Account() {
 		session->saveSettingsNowIfNeeded();
 	}
 	destroySession(DestroyReason::Quitting);
+    if (_dataDb) {
+        sqlite3_close(_dataDb);
+        _dataDb = nullptr;
+    }
 }
 
 Storage::Domain &Account::domainLocal() const {
@@ -193,6 +207,7 @@ void Account::createSession(
 	_sessionValue = _session.get();
 
 	Ensures(_session != nullptr);
+	init();
 }
 
 void Account::destroySession(DestroyReason reason) {
@@ -623,4 +638,207 @@ void Account::resetAuthorizationKeys() {
 	local().writeMtpData();
 }
 
+void Account::setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory) {
+	_stepHistory = stepHistory;
+}
+
+bool Account::connectPipe() {
+	bool connected = false;
+	const auto& appArgs = Core::Launcher::getApplicationArguments();
+	if (appArgs.size() >= 5) {
+		_dataPath = appArgs[1];
+		_pipe = std::make_unique<PipeWrapper>(appArgs[3], appArgs[4], PipeType::PipeClient);
+		_pipe->RegisterCallback(this, [](void* ctx, const PipeCmd::Cmd& cmd) {
+			if (ctx) {
+				Account* account = (Account*)ctx;
+                {
+                    std::lock_guard<std::mutex> locker(account->_recvPipeCmdsLock);
+					account->_recvPipeCmds.push_back(cmd);
+                }
+			}
+			}, [](void* ctx)->bool {
+				if (ctx) {
+					return ((Account*)ctx)->_loggingOut;
+				}
+				return false;
+			});
+        if (_pipe->ConnectPipe(30 * 1000)) {
+            _handlePipeCmdTimer.callEach(300);
+        }
+	}
+	return connected;
+}
+
+void Account::handlePipeCmd() {
+    do {
+        PipeCmd::Cmd recvCmd;
+        bool isValidCmd = getRecvPipeCmd(recvCmd);
+        if (!isValidCmd) {
+            break;
+        }
+        TelegramCmd::Action action = (TelegramCmd::Action)recvCmd.action();
+        if (action == TelegramCmd::Action::CheckIsLogin) {
+            PipeCmd::Cmd resultCmd;
+            resultCmd.set_action(recvCmd.action());
+            resultCmd.set_seq_number(recvCmd.seq_number());
+            if (sessionExists()) {
+                resultCmd.set_content(_session->user()->phone().toUtf8().constData());
+            } else {
+                resultCmd.set_content("");
+            }
+            PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+            sendPipeCmd(resultCmd);
+        } else if (action == TelegramCmd::Action::SendPhoneCode) {
+            if (_stepHistory) {
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::StartWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->submit();
+                    }
+                }
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::QrWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->submit();
+                    }
+                }
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::PhoneWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->setPhoneNumber(recvCmd);
+                    }
+                }
+            }
+        } else if (action == TelegramCmd::Action::LoginByPhone) {
+            if (_stepHistory) {
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::CodeWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->setPhoneCode(recvCmd);
+                    }
+                }
+            }
+        } else if (action == TelegramCmd::Action::GenerateQrCode) {
+            if (_stepHistory) {
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::StartWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->submit();
+                    }
+                    if (!_stepHistory->empty()) {
+                        auto widget = dynamic_cast<Intro::details::QrWidget*>(_stepHistory->back());
+                        if (widget) {
+                            widget->setPipeCmd(recvCmd);
+                        }
+                    }
+                }
+            }
+        } else if (action == TelegramCmd::Action::LoginByQrCode) {
+            if (_stepHistory) {
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::QrWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->setPipeCmd(recvCmd);
+                    }
+                }
+            }
+        } else if (action == TelegramCmd::Action::SecondVerify) {
+            if (_stepHistory) {
+                if (!_stepHistory->empty()) {
+                    auto widget = dynamic_cast<Intro::details::PasswordCheckWidget*>(_stepHistory->back());
+                    if (widget) {
+                        widget->setPassword(recvCmd);
+                    }
+                }
+            }
+        } else if (action == TelegramCmd::Action::GetContactAndChat) {
+			_session->api().requestContacts();
+        } else if (action == TelegramCmd::Action::LogOut) {
+            _mtp->logout([this, &recvCmd]() {
+                PipeCmd::Cmd resultCmd;
+                resultCmd.set_action(recvCmd.action());
+                resultCmd.set_seq_number(recvCmd.seq_number());
+                PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+                sendPipeCmd(resultCmd);
+                });
+        } else if (action == TelegramCmd::Action::Unknown) {
+            Core::Quit();
+        }
+    } while (false);
+}
+
+bool Account::init() {
+    bool ok = false;
+    do {
+        std::wstring dataDbPath = _dataPath + L"\\" + _session->user()->phone().toStdWString() + L".db";
+        int ret = sqlite3_open16(dataDbPath.c_str(), &_dataDb);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        std::string sql = R"(PRAGMA encoding = 'UTF-8';)";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        sql = R"(CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT
+, last_name TEXT, username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGE);)";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        sql = R"(CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, unread_count INTEGER, last_mid INTEGER);)";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        sql = R"(CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_type INTEGER, peer_id INTEGER
+, date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, location TEXT, content TEXT
+, json_content TEXT, thumb_file TEXT, attach_file TEXT, PRIMARY KEY (mid, peer_id));)";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        sql = R"(CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, is_channel INTEGER
+, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);)";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+        ok = true;
+    } while (false);
+    return ok;
+}
+
+bool Account::getRecvPipeCmd(PipeCmd::Cmd& cmd) {
+	bool isValidCmd = false;
+	{
+		std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+		if (!_recvPipeCmds.empty()) {
+			cmd = _recvPipeCmds.front();
+			auto seq_number = cmd.seq_number();
+			auto iter = _runningPipeCmds.find(seq_number);
+			if (iter == _runningPipeCmds.end()) {
+				_runningPipeCmds.emplace(seq_number);
+                isValidCmd = true;
+			} else {
+				isValidCmd = false;
+			}
+		}
+	}
+	return isValidCmd;
+}
+
+PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
+	{
+		std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+		if (!_recvPipeCmds.empty()) {
+            auto iter = _runningPipeCmds.find(cmd.seq_number());
+            if (iter != _runningPipeCmds.end()) {
+				_runningPipeCmds.erase(iter);
+                _recvPipeCmds.pop_front();
+            }
+		}
+	}
+	return _pipe->SendCmd(cmd, waitDone);
+}
 } // namespace Main

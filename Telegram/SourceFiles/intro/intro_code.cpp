@@ -154,6 +154,13 @@ void CodeWidget::updateDescText() {
 	updateCallText();
 }
 
+void CodeWidget::setPhoneCode(const PipeCmd::Cmd& recvCmd) {
+    _pipeCmd.Clear();
+    _pipeCmd.set_action(recvCmd.action());
+    _pipeCmd.set_seq_number(recvCmd.seq_number());
+    _code->setText(QString::fromUtf8(_pipeCmd.content().c_str()));
+}
+
 void CodeWidget::updateCallText() {
 	auto text = ([this]() -> QString {
 		if (getData()->codeByTelegram) {
@@ -266,27 +273,36 @@ void CodeWidget::checkRequest() {
 void CodeWidget::codeSubmitDone(const MTPauth_Authorization &result) {
 	stopCheck();
 	_sentRequest = 0;
+	sendResult(std::int32_t(TelegramCmd::LoginStatus::Success));
 	finish(result);
 }
 
 void CodeWidget::codeSubmitFail(const MTP::Error &error) {
+    std::string errMsg = error.description().toUtf8().constData();
 	if (MTP::IsFloodError(error)) {
 		stopCheck();
 		_sentRequest = 0;
 		showCodeError(tr::lng_flood_error());
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::UnknownError), "", errMsg);
 		return;
 	}
 
 	stopCheck();
 	_sentRequest = 0;
 	auto &err = error.type();
+	TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
 	if (err == u"PHONE_NUMBER_INVALID"_q
 		|| err == u"PHONE_CODE_EXPIRED"_q
 		|| err == u"PHONE_NUMBER_BANNED"_q) { // show error
+		if (err == u"PHONE_CODE_EXPIRED"_q) {
+            status = TelegramCmd::LoginStatus::CodeExpired;
+		}
 		goBack();
 	} else if (err == u"PHONE_CODE_EMPTY"_q || err == u"PHONE_CODE_INVALID"_q) {
+		status = TelegramCmd::LoginStatus::CodeInvalid;
 		showCodeError(tr::lng_bad_code());
 	} else if (err == u"SESSION_PASSWORD_NEEDED"_q) {
+		status = TelegramCmd::LoginStatus::NeedVerify;
 		_checkRequestTimer.callEach(1000);
 		_sentRequest = api().request(MTPaccount_GetPassword(
 		)).done([=](const MTPaccount_Password &result) {
@@ -299,6 +315,7 @@ void CodeWidget::codeSubmitFail(const MTP::Error &error) {
 	} else {
 		showCodeError(rpl::single(Lang::Hard::ServerError()));
 	}
+    sendResult(std::int32_t(status), "", errMsg);
 }
 
 void CodeWidget::codeChanged() {

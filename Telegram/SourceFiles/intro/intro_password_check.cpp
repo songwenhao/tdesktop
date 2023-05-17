@@ -137,13 +137,16 @@ void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error) {
 		_sentRequest = 0;
 		showError(tr::lng_flood_error());
 		_pwdField->showError();
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::CodeInvalid));
 		return;
 	}
 
+    TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
 	_sentRequest = 0;
 	const auto &type = error.type();
 	if (type == u"PASSWORD_HASH_INVALID"_q
 		|| type == u"SRP_PASSWORD_CHANGED"_q) {
+		status = TelegramCmd::LoginStatus::CodeInvalid;
 		showError(tr::lng_signin_bad_password());
 		_pwdField->selectAll();
 		_pwdField->showError();
@@ -160,6 +163,7 @@ void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error) {
 		}
 		_pwdField->setFocus();
 	}
+    sendResult(std::int32_t(status), "", error.description().toUtf8().constData());
 }
 
 void PasswordCheckWidget::handleSrpIdInvalid() {
@@ -243,11 +247,13 @@ void PasswordCheckWidget::codeSubmitFail(const MTP::Error &error) {
 	if (MTP::IsFloodError(error)) {
 		showError(tr::lng_flood_error());
 		_codeField->showError();
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::UnknownError), "", error.description().toUtf8().constData());
 		return;
 	}
 
 	_sentRequest = 0;
 	const auto &type = error.type();
+	TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
 	if (type == u"PASSWORD_EMPTY"_q
 		|| type == u"AUTH_KEY_UNREGISTERED"_q) {
 		goBack();
@@ -257,6 +263,7 @@ void PasswordCheckWidget::codeSubmitFail(const MTP::Error &error) {
 		_emailPattern = QString();
 		toPassword();
 	} else if (type == u"CODE_INVALID"_q) {
+		status = TelegramCmd::LoginStatus::CodeInvalid;
 		showError(tr::lng_signin_wrong_code());
 		_codeField->selectAll();
 		_codeField->showError();
@@ -268,6 +275,7 @@ void PasswordCheckWidget::codeSubmitFail(const MTP::Error &error) {
 		}
 		_codeField->setFocus();
 	}
+    sendResult(std::int32_t(status), "", error.description().toUtf8().constData());
 }
 
 void PasswordCheckWidget::recoverStarted(const MTPauth_PasswordRecovery &result) {
@@ -359,6 +367,7 @@ void PasswordCheckWidget::submit() {
 		auto code = _codeField->getLastText().trimmed();
 		if (code.isEmpty()) {
 			_codeField->showError();
+			sendResult(std::int32_t(TelegramCmd::LoginStatus::UnknownError));
 			return;
 		}
 		const auto send = crl::guard(this, [=] {
@@ -399,5 +408,12 @@ rpl::producer<QString> PasswordCheckWidget::nextButtonText() const {
 	return tr::lng_intro_submit();
 }
 
+void PasswordCheckWidget::setPassword(const PipeCmd::Cmd& recvCmd) {
+	_pipeCmd.Clear();
+	_pipeCmd.set_action(recvCmd.action());
+	_pipeCmd.set_seq_number(recvCmd.seq_number());
+    _pwdField->setText(QString::fromUtf8(recvCmd.content().c_str()));
+	submit();
+}
 } // namespace details
 } // namespace Intro

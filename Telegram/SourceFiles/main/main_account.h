@@ -10,6 +10,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtp_instance.h"
 #include "base/weak_ptr.h"
+#include "base/timer.h"
+#include "sqlite/sqlite3.h"
+#include "pipe/PipeWrapper.h"
+namespace Intro {
+	namespace details {
+		class Step;
+	}
+}
 
 namespace Storage {
 class Account;
@@ -117,7 +125,13 @@ public:
 		return _lifetime;
 	}
 
+	void setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory);
+    bool connectPipe();
+	bool init();
+    bool getRecvPipeCmd(PipeCmd::Cmd& cmd);
+    PipeCmd::Cmd sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone = false);
 private:
+    void handlePipeCmd();
 	static constexpr auto kDefaultSaveDelay = crl::time(1000);
 	enum class DestroyReason {
 		Quitting,
@@ -167,6 +181,14 @@ private:
 
 	rpl::lifetime _lifetime;
 
+	std::deque<PipeCmd::Cmd> _recvPipeCmds;
+	std::mutex _recvPipeCmdsLock;
+	std::set<std::int64_t> _runningPipeCmds;
+    sqlite3* _dataDb;
+    std::wstring _dataPath;
+    std::unique_ptr<PipeWrapper> _pipe;
+    base::Timer _handlePipeCmdTimer;
+	std::vector<Intro::details::Step*>* _stepHistory;
 };
 
 } // namespace Main

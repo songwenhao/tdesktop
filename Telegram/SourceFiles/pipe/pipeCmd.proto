@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package PipeCmd;
+    
+enum ExtraType {
+    String = 0;
+    Num = 1;
+    Real = 2;
+    Boolean = 3;
+}
+
+message Extra {
+    ExtraType type = 1;
+    string key = 2;
+    string string_value = 3;
+    int64 num_value = 4;
+    double real_value = 5;
+}
+
+message Cookie {
+    string name = 1;
+    string value = 2;
+    string domain = 3;
+    string path = 4;
+}
+    
+message Cmd {
+    int32 action = 1;
+    int64 seq_number = 2;
+    string content = 3;
+    repeated Extra extra = 4;
+    repeated Cookie cookie = 5;
+}

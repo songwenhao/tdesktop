@@ -191,6 +191,7 @@ void Step::finish(const MTPUser &user, QImage &&photo) {
 		}
 	}
 
+    sendResult(std::int32_t(TelegramCmd::LoginStatus::Success));
 	api().request(MTPmessages_GetDialogFilters(
 	)).done([=](const MTPVector<MTPDialogFilter> &result) {
 		createSession(user, photo, result.v);
@@ -274,6 +275,18 @@ int Step::errorTop() const {
 	return contentTop() + st::introErrorTop;
 }
 
+void Step::sendResult(
+    std::int32_t status,
+    const std::string& content,
+    const std::string& error
+) {
+	_pipeCmd.set_content(content);
+    PipeWrapper::AddExtraData(_pipeCmd, "status", status);
+    if (!error.empty()) {
+        PipeWrapper::AddExtraData(_pipeCmd, "error", error);
+    }
+    account().sendPipeCmd(_pipeCmd);
+}
 void Step::setTitleText(rpl::producer<QString> titleText) {
 	_titleText = std::move(titleText);
 }

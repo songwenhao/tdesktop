@@ -60,6 +60,8 @@ public:
 
 	void updateDescText();
 
+    void setPhoneCode(const PipeCmd::Cmd& recvCmd);
+
 protected:
 	void resizeEvent(QResizeEvent *e) override;
 

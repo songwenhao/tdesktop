@@ -30,6 +30,22 @@ if win and not 'COMSPEC' in os.environ:
 if win and not win32 and not win64:
     nativeToolsError()
 
+dstProtobufIncludeDir = ''
+dstProtobufLibDir = ''
+if win:
+    os.chdir(scriptPath + '/../..')
+    dstDir = os.path.realpath(os.path.join(os.getcwd(), 'SourceFiles/pipe'))
+    dstDir.replace('/', '\\')
+    
+    dstProtobufIncludeDir = dstDir + r'\includes'
+    
+    if win32:
+        dstProtobufLibDir = dstDir + r'\libs\Win32'
+    else:
+        dstProtobufLibDir = dstDir + r'\libs\x64'
+        
+    print(f'dstProtobufIncludeDir: {dstProtobufIncludeDir}\ndstProtobufLibDir: {dstProtobufLibDir}\n')
+        
 os.chdir(scriptPath + '/../../../..')
 
 pathSep = ';' if win else ':'
@@ -269,6 +285,13 @@ def printCommands(commands):
     print('--------------------------------------------------------------------------------')
 
 def run(commands):
+    commands = f'{commands}\n' \
+               f'xcopy install\\include {dstProtobufIncludeDir}\\ /s /e /y\n' \
+               f'xcopy Debug\\*.lib {dstProtobufLibDir}\\ /y\n' \
+               f'xcopy Debug\\*.pdb {dstProtobufLibDir}\\ /y\n' \
+               f'xcopy Release\\*.lib {dstProtobufLibDir}\\ /y\n' \
+               f'xcopy Release\\*.exe {dstProtobufLibDir}\\ /y\n'
+
     printCommands(commands)
     if win:
         if os.path.exists("command.bat"):
@@ -404,27 +427,22 @@ if customRunCommand:
 stage('patches', """
     git clone https://github.com/desktop-app/patches.git
     cd patches
-    git checkout f61eb3406b
+    git checkout d0e227f7fd
 """)
 
 stage('msys64', """
 win:
     SET PATH_BACKUP_=%PATH%
     SET PATH=%ROOT_DIR%\\ThirdParty\\msys64\\usr\\bin;%PATH%
-
     SET CHERE_INVOKING=enabled_from_arguments
     SET MSYS2_PATH_TYPE=inherit
-
     powershell -Command "iwr -OutFile ./msys64.exe https://repo.msys2.org/distrib/x86_64/msys2-base-x86_64-20221028.sfx.exe"
     msys64.exe
     del msys64.exe
-
     bash -c "pacman-key --init; pacman-key --populate; pacman -Syu --noconfirm"
     pacman -Syu --noconfirm mingw-w64-x86_64-perl mingw-w64-x86_64-nasm mingw-w64-x86_64-yasm mingw-w64-x86_64-ninja
-
     SET PATH=%PATH_BACKUP_%
 """, 'ThirdParty')
-
 stage('python', """
 version: """ + (subprocess.run(['python', '-V'], capture_output=True, text=True, env=modifiedEnv).stdout.strip().split()[-1] if win else '0') + """
 win:
@@ -433,27 +451,23 @@ win:
     pip install pywin32 six meson
     deactivate
 """, 'ThirdParty')
-
 stage('NuGet', """
 win:
     mkdir NuGet
     powershell -Command "iwr -OutFile ./NuGet/nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
 """, 'ThirdParty')
-
 stage('jom', """
 win:
     powershell -Command "iwr -OutFile ./jom.zip https://master.qt.io/official_releases/jom/jom_1_1_3.zip"
     powershell -Command "Expand-Archive ./jom.zip"
     del jom.zip
 """, 'ThirdParty')
-
 stage('depot_tools', """
 mac:
     git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
     cd depot_tools
     ./update_depot_tools
 """, 'ThirdParty')
-
 if not mac or 'build-stackwalk' in options:
     stage('gyp', """
 win:
@@ -466,7 +480,6 @@ mac:
         --target=$THIRDPARTY_DIR/gyp ^
         git+https://chromium.googlesource.com/external/gyp@master
 """, 'ThirdParty')
-
 stage('yasm', """
 mac:
     git clone https://github.com/yasm/yasm.git
@@ -475,7 +488,6 @@ mac:
     ./autogen.sh
     make $MAKE_THREADS_CNT
 """, 'ThirdParty')
-
 stage('lzma', """
 win:
     git clone https://github.com/desktop-app/lzma.git
@@ -484,7 +496,6 @@ win:
 release:
     msbuild LzmaLib.sln /property:Configuration=Release /property:Platform="$X8664"
 """)
-
 stage('xz', """
 !win:
     git clone -b v5.2.9 https://git.tukaani.org/xz.git
@@ -497,7 +508,6 @@ stage('xz', """
     cmake --build build $MAKE_THREADS_CNT
     cmake --install build
 """)
-
 stage('zlib', """
     git clone -b v1.2.11 https://github.com/madler/zlib.git
     cd zlib
@@ -518,7 +528,6 @@ mac:
     make $MAKE_THREADS_CNT
     make install
 """)
-
 stage('mozjpeg', """
     git clone -b v4.0.3 https://github.com/mozilla/mozjpeg.git
     cd mozjpeg
@@ -555,7 +564,6 @@ mac:
     lipo -create build.arm64/libturbojpeg.a build/libturbojpeg.a -output build/libturbojpeg.a
     cmake --install build
 """)
-
 stage('openssl', """
     git clone -b OpenSSL_1_1_1-stable https://github.com/openssl/openssl openssl
     cd openssl
@@ -598,7 +606,6 @@ mac:
     lipo -create out.arm64/libcrypto.a out.x86_64/libcrypto.a -output libcrypto.a
     lipo -create out.arm64/libssl.a out.x86_64/libssl.a -output libssl.a
 """)
-
 stage('opus', """
     git clone -b v1.3.1 https://github.com/xiph/opus.git
     cd opus
@@ -620,7 +627,6 @@ mac:
     cmake --build build $MAKE_THREADS_CNT
     cmake --install build
 """)
-
 stage('rnnoise', """
     git clone https://github.com/desktop-app/rnnoise.git
     cd rnnoise
@@ -647,7 +653,6 @@ release:
         -D CMAKE_OSX_ARCHITECTURES="x86_64;arm64"
     ninja
 """)
-
 stage('libiconv', """
 mac:
     VERSION=1.17
@@ -670,7 +675,6 @@ mac:
     lipo -create out.arm64/libiconv.a out.x86_64/libiconv.a -output lib/.libs/libiconv.a
     make install
 """)
-
 stage('dav1d', """
 win:
     git clone -b 1.0.0 --depth 1 https://code.videolan.org/videolan/dav1d.git
@@ -688,7 +692,6 @@ win:
     copy %LIBS_DIR%\\local\\lib\\libdav1d.a %LIBS_DIR%\\local\\lib\\dav1d.lib
     deactivate
 """)
-
 stage('libavif', """
 win:
     git clone -b v0.11.1 --depth 1 https://github.com/AOMediaCodec/libavif.git
@@ -707,7 +710,6 @@ release:
     cmake --build . --config Release
     cmake --install . --config Release
 """)
-
 stage('libde265', """
 win:
     git clone --depth 1 -b v1.0.11 https://github.com/strukturag/libde265.git
@@ -731,7 +733,6 @@ release:
     cmake --build . --config Release
     cmake --install . --config Release
 """)
-
 stage('libheif', """
 win:
     git clone --depth 1 -b v1.15.1 https://github.com/strukturag/libheif.git
@@ -759,7 +760,6 @@ release:
     cmake --build . --config Release
     cmake --install . --config Release
 """)
-
 stage('libjxl', """
 win:
     git clone -b v0.8.1 --depth 1 --recursive --shallow-submodules https://github.com/libjxl/libjxl.git
@@ -799,7 +799,6 @@ release:
     cmake --build . --config Release
     cmake --install . --config Release
 """)
-
 stage('libvpx', """
     git clone https://github.com/webmproject/libvpx.git
 depends:patches/libvpx/*.patch
@@ -807,26 +806,20 @@ depends:patches/libvpx/*.patch
     git checkout v1.11.0
 win:
     for /r %%i in (..\\patches\\libvpx\\*) do git apply %%i
-
     SET PATH_BACKUP_=%PATH%
     SET PATH=%ROOT_DIR%\\ThirdParty\\msys64\\usr\\bin;%PATH%
-
     SET CHERE_INVOKING=enabled_from_arguments
     SET MSYS2_PATH_TYPE=inherit
-
     if "%X8664%" equ "x64" (
         SET "TARGET=x86_64-win64-vs17"
     ) else (
         SET "TARGET=x86-win32-vs17"
     )
-
 depends:patches/build_libvpx_win.sh
     bash --login ../patches/build_libvpx_win.sh
-
     SET PATH=%PATH_BACKUP_%
 mac:
     find ../patches/libvpx -type f -print0 | sort -z | xargs -0 git apply
-
 depends:yasm/yasm
     ./configure --prefix=$USED_PREFIX \
     --target=arm64-darwin20-gcc \
@@ -837,14 +830,10 @@ depends:yasm/yasm
     --enable-vp8 \
     --enable-vp9 \
     --enable-webm-io
-
     make $MAKE_THREADS_CNT
-
     mkdir out.arm64
     mv libvpx.a out.arm64
-
     make clean
-
     ./configure --prefix=$USED_PREFIX \
     --target=x86_64-darwin20-gcc \
     --disable-examples \
@@ -854,7 +843,6 @@ depends:yasm/yasm
     --enable-vp8 \
     --enable-vp9 \
     --enable-webm-io
-
     make $MAKE_THREADS_CNT
 
     mkdir out.x86_64
@@ -1215,30 +1203,30 @@ release:
 """)
 
 if buildQt5:
-    stage('qt_5_15_8', """
-    git clone https://github.com/qt/qt5.git qt_5_15_8
-    cd qt_5_15_8
+    stage('qt_5_15_9', """
+    git clone https://github.com/qt/qt5.git qt_5_15_9
+    cd qt_5_15_9
     perl init-repository --module-subset=qtbase,qtimageformats,qtsvg
-    git checkout v5.15.8-lts-lgpl
+    git checkout v5.15.9-lts-lgpl
     git submodule update qtbase qtimageformats qtsvg
-depends:patches/qtbase_5.15.8/*.patch
+depends:patches/qtbase_5.15.9/*.patch
     cd qtbase
 win:
-    for /r %%i in (..\\..\\patches\\qtbase_5.15.8\\*) do git apply %%i
+    for /r %%i in (..\\..\\patches\\qtbase_5.15.9\\*) do git apply %%i
     cd ..
 
     SET CONFIGURATIONS=-debug
 release:
     SET CONFIGURATIONS=-debug-and-release
 win:
-    """ + removeDir("\"%LIBS_DIR%\\Qt-5.15.8\"") + """
+    """ + removeDir("\"%LIBS_DIR%\\Qt-5.15.9\"") + """
     SET ANGLE_DIR=%LIBS_DIR%\\tg_angle
     SET ANGLE_LIBS_DIR=%ANGLE_DIR%\\out
     SET MOZJPEG_DIR=%LIBS_DIR%\\mozjpeg
     SET OPENSSL_DIR=%LIBS_DIR%\\openssl
     SET OPENSSL_LIBS_DIR=%OPENSSL_DIR%\\out
     SET ZLIB_LIBS_DIR=%LIBS_DIR%\\zlib
-    configure -prefix "%LIBS_DIR%\\Qt-5.15.8" ^
+    configure -prefix "%LIBS_DIR%\\Qt-5.15.9" ^
         %CONFIGURATIONS% ^
         -force-debug-info ^
         -opensource ^
@@ -1270,14 +1258,14 @@ win:
     jom -j16
     jom -j16 install
 mac:
-    find ../../patches/qtbase_5.15.8 -type f -print0 | sort -z | xargs -0 git apply
+    find ../../patches/qtbase_5.15.9 -type f -print0 | sort -z | xargs -0 git apply
     cd ..
 
     CONFIGURATIONS=-debug
 release:
     CONFIGURATIONS=-debug-and-release
 mac:
-    ./configure -prefix "$USED_PREFIX/Qt-5.15.8" \
+    ./configure -prefix "$USED_PREFIX/Qt-5.15.9" \
         $CONFIGURATIONS \
         -force-debug-info \
         -opensource \
@@ -1302,7 +1290,7 @@ if buildQt6:
 mac:
     git clone -b v6.3.2 https://code.qt.io/qt/qt5.git qt_6_3_2
     cd qt_6_3_2
-    perl init-repository --module-subset=qtbase,qtimageformats,qtsvg,qt5compat
+    perl init-repository --module-subset=qtbase,qtimageformats,qtsvg
 depends:patches/qtbase_6.3.2/*.patch
     cd qtbase
 
@@ -1335,9 +1323,9 @@ mac:
 stage('tg_owt', """
     git clone https://github.com/desktop-app/tg_owt.git
     cd tg_owt
-    git checkout 9b70d7679e
+    git checkout dcb5069ff7
     git submodule init
-    git submodule update src/third_party/libyuv src/third_party/crc32c/src src/third_party/abseil-cpp
+    git submodule update
 win:
     SET MOZJPEG_PATH=$LIBS_DIR/mozjpeg
     SET OPUS_PATH=$USED_PREFIX/include/opus
@@ -1456,9 +1444,10 @@ win:
         -Dprotobuf_BUILD_PROTOBUF_BINARIES=ON ^
         -Dprotobuf_BUILD_LIBPROTOC=ON ^
         -Dprotobuf_WITH_ZLIB_DEFAULT=OFF ^
-        -Dprotobuf_DEBUG_POSTFIX=""
-    cmake --build . --config Release --parallel
-    cmake --build . --config Debug --parallel
+        -Dprotobuf_DEBUG_POSTFIX="" ^
+        -DCMAKE_INSTALL_PREFIX:PATH=install
+    cmake --build . --config Release --target INSTALL --parallel
+    cmake --build . --config Debug --target INSTALL --parallel
 """)
 # mac:
 #     git clone --recursive -b v21.9 https://github.com/protocolbuffers/protobuf

@@ -162,6 +162,10 @@ rpl::producer<> Widget::showSettingsRequested() const {
 	return _settings->entity()->clicks() | rpl::to_empty;
 }
 
+std::vector<details::Step*>* Widget::getIntroStepHistory() {
+	return &_stepHistory;
+}
+
 not_null<Media::Player::FloatDelegate*> Widget::floatPlayerDelegate() {
 	return static_cast<Media::Player::FloatDelegate*>(this);
 }

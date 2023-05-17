@@ -35,6 +35,8 @@ public:
 	void submit() override;
 	rpl::producer<QString> nextButtonText() const override;
 
+    void setPassword(const PipeCmd::Cmd& recvCmd);
+    
 protected:
 	void resizeEvent(QResizeEvent *e) override;
 

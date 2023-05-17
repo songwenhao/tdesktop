@@ -40,6 +40,8 @@ public:
 		return true;
 	}
 
+	void setPhoneNumber(const PipeCmd::Cmd& recvCmd);
+
 protected:
 	void resizeEvent(QResizeEvent *e) override;
 

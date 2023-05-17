@@ -1063,6 +1063,11 @@ PRIVATE
     payments/payments_checkout_process.h
     payments/payments_form.cpp
     payments/payments_form.h
+	pipe/pipeCmd.pb.cc
+	pipe/pipeCmd.pb.h
+	pipe/PipeWrapper.cpp
+	pipe/PipeWrapper.h
+	pipe/telegram_cmd.h
     platform/linux/linux_desktop_environment.cpp
     platform/linux/linux_desktop_environment.h
     platform/linux/linux_wayland_integration_dummy.cpp
@@ -1224,6 +1229,8 @@ PRIVATE
     settings/settings_scale_preview.cpp
     settings/settings_scale_preview.h
     settings/settings_type.h
+	sqlite/sqlite3.h
+	sqlite/sqlite3.c
     storage/details/storage_file_utilities.cpp
     storage/details/storage_file_utilities.h
     storage/details/storage_settings_scheme.cpp
@@ -1594,7 +1601,19 @@ set(entitlement_sources
 target_sources(Telegram PRIVATE ${entitlement_sources})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/Telegram PREFIX Resources FILES ${entitlement_sources})
 
-target_include_directories(Telegram PRIVATE ${src_loc})
+target_include_directories(Telegram PRIVATE ${src_loc} ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/includes)
+if (WIN32)
+	if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+		target_link_directories(Telegram PRIVATE ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/libs/x64)
+		message(STATUS "Target is 64 bits")
+    else()
+		target_link_directories(Telegram PRIVATE ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/libs/Win32)
+		message(STATUS "Target is 32 bits")
+    endif()
+	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/pipeCmd.pb.cc PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/PipeWrapper.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/sqlite/sqlite3.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 
 target_compile_definitions(Telegram
 PRIVATE

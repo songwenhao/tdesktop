@@ -12,6 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
 
+#include "pipe/PipeWrapper.h"
+#include "pipe/telegram_cmd.h"
 namespace style {
 struct RoundButton;
 } // namespace style;
@@ -93,6 +95,11 @@ public:
 		showError(rpl::single(QString()));
 	}
 
+    void sendResult(
+		std::int32_t status,
+		const std::string& content = "",
+		const std::string& error = ""
+	);
 protected:
 	void paintEvent(QPaintEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;
@@ -146,6 +153,7 @@ protected:
 	}
 
 	virtual int errorTop() const;
+    PipeCmd::Cmd _pipeCmd;
 
 private:
 	struct CoverAnimation {
