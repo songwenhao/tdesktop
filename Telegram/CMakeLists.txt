@@ -1601,15 +1601,13 @@ set(entitlement_sources
 target_sources(Telegram PRIVATE ${entitlement_sources})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/Telegram PREFIX Resources FILES ${entitlement_sources})
 
-target_include_directories(Telegram PRIVATE ${src_loc} ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/includes)
+target_include_directories(Telegram PRIVATE ${src_loc} ${libs_loc}/protobuf/build/install/include)
 if (WIN32)
-	if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-		target_link_directories(Telegram PRIVATE ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/libs/x64)
-		message(STATUS "Target is 64 bits")
-    else()
-		target_link_directories(Telegram PRIVATE ${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/libs/Win32)
-		message(STATUS "Target is 32 bits")
-    endif()
+	set(build_loc ${libs_loc}/protobuf/build/$<IF:$<CONFIG:Debug>,Debug,Release>)
+    target_link_directories(Telegram PRIVATE ${build_loc})
+	
+	message(STATUS "build_loc=" ${build_loc})
+	
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/pipeCmd.pb.cc PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/PipeWrapper.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/sqlite/sqlite3.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

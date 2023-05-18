@@ -11,12 +11,7 @@
 #include <mutex>
 
 #include "pipeCmd.pb.h"
-
-#ifdef _DEBUG
-#pragma comment(lib, "libprotobufd")
-#else
 #pragma comment(lib, "libprotobuf")
-#endif
 
 enum class PipeType {
     PipeServer = 0,
@@ -81,11 +76,6 @@ public:
         PipeCmd::Cmd& cmd,
         const unsigned char* data,
         size_t dataSize
-    );
-
-    static void ParseExtraData(
-        PipeCmd::Cmd& cmd,
-        const std::string& extraJson
     );
 
     static void AddExtraData(

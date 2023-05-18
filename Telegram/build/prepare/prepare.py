@@ -287,10 +287,10 @@ def printCommands(commands):
 def run(commands):
     commands = f'{commands}\n' \
                f'xcopy install\\include {dstProtobufIncludeDir}\\ /s /e /y\n' \
-               f'xcopy Debug\\*.lib {dstProtobufLibDir}\\ /y\n' \
-               f'xcopy Debug\\*.pdb {dstProtobufLibDir}\\ /y\n' \
-               f'xcopy Release\\*.lib {dstProtobufLibDir}\\ /y\n' \
-               f'xcopy Release\\*.exe {dstProtobufLibDir}\\ /y\n'
+               f'xcopy Debug\\*.lib {dstProtobufLibDir}\\Debug\\ /y\n' \
+               f'xcopy Debug\\*.pdb {dstProtobufLibDir}\\Debug\\ /y\n' \
+               f'xcopy Release\\*.lib {dstProtobufLibDir}\\Release\\ /y\n' \
+               f'xcopy Release\\*.exe {dstProtobufLibDir}\\Release\\ /y\n'
 
     printCommands(commands)
     if win:

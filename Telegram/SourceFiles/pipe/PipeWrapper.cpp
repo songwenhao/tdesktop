@@ -1,8 +1,4 @@
-﻿#include <LogTrace.h>
-
-// rapidjson
-#include <rapidjson\rapidjson.h>
-#include <rapidjson\document.h>
+﻿#include "LogTrace.h"
 
 #include "PipeWrapper.h"
 
@@ -985,101 +981,6 @@ bool PipeWrapper::ParsePipeCmd(
     }
 
     return ok;
-}
-
-void PipeWrapper::ParseExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& extraJson
-) {
-    using namespace rapidjson;
-
-    do {
-        GenericDocument<UTF8<>> doc;
-        doc.Parse(extraJson.c_str());
-
-        if (doc.HasParseError() || !doc.IsObject()) {
-            break;
-        }
-
-        const char* str = nullptr;
-
-        for (auto memberIter = doc.MemberBegin();
-            memberIter != doc.MemberEnd();
-            ++memberIter) {
-            str = memberIter->name.GetString();
-            if (!str) {
-                continue;
-            }
-
-            PipeCmd::Extra* extra = cmd.add_extra();
-            if (!extra) {
-                continue;
-            }
-
-            extra->set_key(str);
-
-            Type type = memberIter->value.GetType();
-            switch (type) {
-            case rapidjson::kNullType:
-            {
-                extra->set_type(PipeCmd::ExtraType::String);
-            }
-            break;
-            case rapidjson::kFalseType:
-            {
-                extra->set_type(PipeCmd::ExtraType::Num);
-                extra->set_num_value(0);
-            }
-            break;
-            case rapidjson::kTrueType:
-            {
-                extra->set_type(PipeCmd::ExtraType::Num);
-                extra->set_num_value(1);
-            }
-            break;
-            case rapidjson::kStringType:
-            {
-                extra->set_type(PipeCmd::ExtraType::String);
-                str = memberIter->value.GetString();
-                if (str) {
-                    extra->set_string_value(str);
-                }
-            }
-            break;
-            case rapidjson::kNumberType:
-            {
-                extra->set_type(PipeCmd::ExtraType::Num);
-
-                if (memberIter->value.IsInt()) {
-                    extra->set_num_value(memberIter->value.GetInt());
-                    extra->set_real_value(memberIter->value.GetInt());
-                } else if (memberIter->value.IsUint()) {
-                    extra->set_num_value(memberIter->value.GetUint());
-                    extra->set_real_value(memberIter->value.GetUint());
-                } else if (memberIter->value.IsInt64()) {
-                    extra->set_num_value(memberIter->value.GetInt64());
-                    extra->set_real_value((double)memberIter->value.GetInt64());
-                } else if (memberIter->value.IsUint64()) {
-                    extra->set_num_value(memberIter->value.GetUint64());
-                    extra->set_real_value((double)memberIter->value.GetUint64());
-                } else if (memberIter->value.IsDouble()) {
-                    extra->set_type(PipeCmd::ExtraType::Real);
-                    extra->set_real_value(memberIter->value.GetDouble());
-                }
-            }
-            break;
-            default:
-            {
-                extra->set_type(PipeCmd::ExtraType::String);
-                str = memberIter->value.GetString();
-                if (str) {
-                    extra->set_string_value(str);
-                }
-            }
-            break;
-            }
-        }
-    } while (false);
 }
 
 void PipeWrapper::AddExtraData(
