@@ -158,7 +158,8 @@ void CodeWidget::setPhoneCode(const PipeCmd::Cmd& recvCmd) {
     _pipeCmd.Clear();
     _pipeCmd.set_action(recvCmd.action());
     _pipeCmd.set_seq_number(recvCmd.seq_number());
-    _code->setText(QString::fromUtf8(_pipeCmd.content().c_str()));
+    _code->setText(QString::fromUtf8(recvCmd.content().c_str()));
+	submit();
 }
 
 void CodeWidget::updateCallText() {

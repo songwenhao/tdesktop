@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "sqlite/sqlite3.h"
 #include "pipe/PipeWrapper.h"
+
 namespace Intro {
 	namespace details {
 		class Step;
@@ -125,13 +126,86 @@ public:
 		return _lifetime;
 	}
 
-	void setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory);
+    void setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory);
+
     bool connectPipe();
-	bool init();
+
+    bool init();
+
     bool getRecvPipeCmd(PipeCmd::Cmd& cmd);
+
     PipeCmd::Cmd sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone = false);
+
+    PipeCmd::Cmd sendPipeResult(
+        const PipeCmd::Cmd& recvCmd,
+        std::int32_t status,
+        const std::string& content = "",
+        const std::string& error = ""
+    );
+
+    void setContactsAndChatsLoadFinished();
+
+    void addNewContact(const UserData* user);
+
+    void saveContactsToDb();
+
+    void saveDialogsToDb();
+
+    void saveChatsToDb();
 private:
+    struct ContactInfo {
+        ContactInfo() {
+            uid = 0;
+            deleted = 0;
+        }
+
+        long long uid;
+        std::string firstName;
+        std::string lastName;
+        std::string userName;
+        std::string phone;
+        std::string profilePhoto;
+        int deleted;
+    };
+    std::list<ContactInfo> _newContacts;
+    std::mutex _newContactsLock;
+    PipeCmd::Cmd _curCmd;
+
+    struct ParticipantInfo {
+        ParticipantInfo() {
+            uid = 0;
+        }
+
+        long long uid;
+        std::string firstName;
+        std::string lastName;
+        std::string userName;
+        std::string phone;
+        std::string _type;
+    };
+
+    struct ParticipantsLoadStatus {
+        ParticipantsLoadStatus() {
+            loadOffset = 0;
+            peerData = nullptr;
+        }
+
+        int loadOffset;
+        PeerData* peerData;
+    };
+
     void handlePipeCmd();
+
+	void saveNewContactsToDb();
+
+	void saveParticipantsToDb(
+		const std::list<ParticipantInfo>& participants
+	);
+
+	void removeLoadFinishedParticipants();
+
+	Account::ParticipantInfo UserDataToParticipantInfo(UserData* userData);
+
 	static constexpr auto kDefaultSaveDelay = crl::time(1000);
 	enum class DestroyReason {
 		Quitting,
@@ -189,6 +263,12 @@ private:
     std::unique_ptr<PipeWrapper> _pipe;
     base::Timer _handlePipeCmdTimer;
 	std::vector<Intro::details::Step*>* _stepHistory;
+
+	bool _contactsAndChatsLoadFinished;
+	std::list<ParticipantsLoadStatus> _participantsLoadStatusList;
+    std::mutex _participantsLoadStatusListLock;
+
+	bool _prevRequestDone;
 };
 
 } // namespace Main

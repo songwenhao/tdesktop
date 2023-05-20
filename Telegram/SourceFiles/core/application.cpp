@@ -251,6 +251,23 @@ void Application::run() {
 
 	refreshGlobalProxy(); // Depends on app settings being read.
 
+    auto appArgs = Core::Launcher::getApplicationArguments();
+    if (appArgs.size() >= 5) {
+        QString proxyString = QString::fromStdWString(appArgs[2]);
+        QStringList proxySettings = proxyString.split('|');
+        if (proxySettings.size() == 3) {
+            MTP::ProxyData proxy;
+            proxy.type = MTP::ProxyData::Type::Socks5;
+            if (proxySettings.at(0) == "0") {
+                proxy.type = MTP::ProxyData::Type::Socks5;
+            } else if (proxySettings.at(0) == "1") {
+                proxy.type = MTP::ProxyData::Type::Http;
+            }
+            proxy.host = proxySettings.at(1);
+            proxy.port = proxySettings.at(2).toUInt();
+            Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
+        }
+    }
 	if (const auto old = Local::oldSettingsVersion(); old < AppVersion) {
 		InvokeQueued(this, [] { RegisterUrlScheme(); });
 		Platform::NewVersionLaunched(old);

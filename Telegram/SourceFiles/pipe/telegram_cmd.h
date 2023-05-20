@@ -1,3 +1,6 @@
+#ifndef TELEGRAM_CMD_H
+#define TELEGRAM_CMD_H
+
 #include <cstdint>
 #include <string>
 
@@ -17,51 +20,7 @@ namespace TelegramCmd {
         LogOut
     };
 
-    static std::wstring CmdActionToWString(Action action) {
-        std::wstring actionString;
-
-        switch (action) {
-        case Action::Unknown:
-            actionString = L"Unknown";
-            break;
-        case Action::CheckIsLogin:
-            actionString = L"CheckIsLogin";
-            break;
-        case Action::SendPhoneCode:
-            actionString = L"SendPhoneCode";
-            break;
-        case Action::GenerateQrCode:
-            actionString = L"GenerateQrCode";
-            break;
-        case Action::LoginByPhone:
-            actionString = L"LoginByPhone";
-            break;
-        case Action::LoginByQrCode:
-            actionString = L"LoginByQrCode";
-            break;
-        case Action::SecondVerify:
-            actionString = L"SecondVerify";
-            break;
-        case Action::GetContactAndChat:
-            actionString = L"GetContactAndChat";
-            break;
-        case Action::GetMessage:
-            actionString = L"GetMessage";
-            break;
-        case Action::ExportData:
-            actionString = L"ExportData";
-            break;
-        case Action::LogOut:
-            actionString = L"LogOut";
-            break;
-        default:
-            break;
-        }
-
-        return actionString;
-    }
-
-    enum class LoginStatus {
+    enum class LoginStatus : std::int32_t {
         UnknownError = -1,
         Success = 0,
         NeedVerify,
@@ -70,3 +29,5 @@ namespace TelegramCmd {
     };
 
 }
+
+#endif // TELEGRAM_CMD_H

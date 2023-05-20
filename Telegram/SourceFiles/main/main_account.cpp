@@ -1,4 +1,4 @@
-/*
+﻿/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -17,6 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/localstorage.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "data/data_chat.h"
+#include "data/data_channel.h"
 #include "data/data_changes.h"
 #include "window/window_controller.h"
 #include "media/audio/media_audio.h"
@@ -36,7 +38,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_phone.h"
 #include "intro/intro_code.h"
 #include "intro/intro_password_check.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "apiwrap.h"
+#include "api/api_chat_participants.h"
+#include "pipe/telegram_cmd.h"
 
 namespace Main {
 namespace {
@@ -62,6 +68,7 @@ Account::Account(not_null<Domain*> domain, const QString &dataName, int index)
 , _dataDb(nullptr)
 , _pipe(nullptr)
 , _handlePipeCmdTimer([this] { handlePipeCmd(); }) {
+	_handlePipeCmdTimer.callEach(1000);
 }
 
 Account::~Account() {
@@ -658,36 +665,195 @@ bool Account::connectPipe() {
 			}
 			}, [](void* ctx)->bool {
 				if (ctx) {
+					if (((Account*)ctx)->_loggingOut) {
+						Core::Quit();
+					}
+
 					return ((Account*)ctx)->_loggingOut;
 				}
 				return false;
 			});
+
+		_prevRequestDone = true;
+        _contactsAndChatsLoadFinished = false;
         if (_pipe->ConnectPipe(30 * 1000)) {
-            _handlePipeCmdTimer.callEach(300);
+            _handlePipeCmdTimer.callEach(1000);
         }
-	}
+
+    }
 	return connected;
 }
 
 void Account::handlePipeCmd() {
     do {
+		auto action = (TelegramCmd::Action)_curCmd.action();
+		if (action == TelegramCmd::Action::GetContactAndChat) {
+			saveNewContactsToDb();
+
+			do {
+				ParticipantsLoadStatus* participantsLoadStatus = nullptr;
+
+				{
+					std::lock_guard<std::mutex> locker(_participantsLoadStatusListLock);
+					if (!_participantsLoadStatusList.empty()) {
+						participantsLoadStatus = &_participantsLoadStatusList.front();
+					}
+				}
+
+				if (!participantsLoadStatus) {
+					if (_contactsAndChatsLoadFinished) {
+						sendPipeResult(_curCmd, std::int32_t(TelegramCmd::LoginStatus::Success));
+					}
+					break;
+				}
+
+				if (!_prevRequestDone) {
+					break;
+				}
+
+				_prevRequestDone = false;
+
+                if (participantsLoadStatus->peerData->isChannel()) {
+                    const auto participantsHash = uint64(0);
+                    const auto channel = participantsLoadStatus->peerData->asChannel();
+
+                    _session->api().request(MTPchannels_GetParticipants(
+                        channel->inputChannel,
+                        MTP_channelParticipantsRecent(),
+                        MTP_int(participantsLoadStatus->loadOffset),
+                        MTP_int(200),
+                        MTP_long(participantsHash)
+                    )).done([=, this](const MTPchannels_ChannelParticipants& result) {
+                        ParticipantsLoadStatus* participantsLoadStatus = nullptr;
+
+                        {
+                            std::lock_guard<std::mutex> locker(_participantsLoadStatusListLock);
+                            if (!_participantsLoadStatusList.empty()) {
+                                participantsLoadStatus = &_participantsLoadStatusList.front();
+                            }
+                        }
+
+                        const auto firstLoad = participantsLoadStatus ? !participantsLoadStatus->loadOffset : true;
+
+                        auto wasRecentRequest = firstLoad && channel->canViewMembers();
+
+                        result.match([&](const MTPDchannels_channelParticipants& data) {
+                            const auto& [availableCount, list] = wasRecentRequest
+                                ? Api::ChatParticipants::ParseRecent(channel, data)
+                                : Api::ChatParticipants::Parse(channel, data);
+
+                            std::list<ParticipantInfo> participants;
+
+                            for (const auto& data : list) {
+                                UserData* userData = _session->data().userLoaded(data.userId());
+                                if (userData) {
+                                    participants.emplace_back(std::move(UserDataToParticipantInfo(userData)));
+                                }
+                            }
+
+                            if (const auto size = list.size()) {
+                                saveParticipantsToDb(participants);
+
+                                {
+                                    std::lock_guard<std::mutex> locker(_participantsLoadStatusListLock);
+                                    if (!_participantsLoadStatusList.empty()) {
+										auto& var = _participantsLoadStatusList.front();
+										var.loadOffset += size;
+                                    }
+                                }
+                            } else {
+                                // To be sure - wait for a whole empty result list.
+								removeLoadFinishedParticipants();
+                            }
+                            }, [&](const MTPDchannels_channelParticipantsNotModified&) {
+                                removeLoadFinishedParticipants();
+                            });
+
+                        _prevRequestDone = true;
+                        }
+					).fail([this] {
+                            _prevRequestDone = true;
+                            removeLoadFinishedParticipants();
+                            }).send();
+                } else if (participantsLoadStatus->peerData->isChat()) {
+                    const auto chat = participantsLoadStatus->peerData->asChat();
+                    _session->api().request(MTPmessages_GetFullChat(
+                        chat->inputChat
+                    )).done([=](const MTPmessages_ChatFull& result) {
+                        std::list<ParticipantInfo> participantInfos;
+
+                        const auto& d = result.c_messages_chatFull();
+                        _session->data().applyMaximumChatVersions(d.vchats());
+
+                        _session->data().processUsers(d.vusers());
+                        _session->data().processChats(d.vchats());
+
+                        d.vfull_chat().match([&](const MTPDchatFull& data) {
+							const MTPChatParticipants& participants = data.vparticipants();
+                            participants.match([&](const MTPDchatParticipantsForbidden& data) {
+                                if (const auto self = data.vself_participant()) {
+                                    // self->
+                                }
+
+                                _prevRequestDone = true;
+                                removeLoadFinishedParticipants();
+                                }, [&](const MTPDchatParticipants& data) {
+                                    const auto status = chat->applyUpdateVersion(data.vversion().v);
+                                    if (status == ChatData::UpdateStatus::TooOld) {
+                                        return;
+                                    }
+
+                                    const auto& list = data.vparticipants().v;
+                                    for (const auto& participant : list) {
+                                        const auto userId = participant.match([&](const auto& data) {
+                                            return data.vuser_id().v;
+                                            });
+
+                                        const auto userData = chat->owner().userLoaded(userId);
+                                        if (userData) {
+											participantInfos.emplace_back(std::move(UserDataToParticipantInfo(userData)));
+										}
+                                    }
+
+                                    saveParticipantsToDb(participantInfos);
+
+                                    _prevRequestDone = true;
+                                    removeLoadFinishedParticipants();
+                                });
+							}, [&](const MTPDchannelFull& data) {
+                                _prevRequestDone = true;
+                                removeLoadFinishedParticipants();
+							});
+                        }
+					).fail([this] {
+                            _prevRequestDone = true;
+                            removeLoadFinishedParticipants();
+                    }).send();
+				} else {
+                    _prevRequestDone = true;
+                    removeLoadFinishedParticipants();
+				}
+
+            } while (false);
+        }
+
         PipeCmd::Cmd recvCmd;
         bool isValidCmd = getRecvPipeCmd(recvCmd);
         if (!isValidCmd) {
             break;
         }
-        TelegramCmd::Action action = (TelegramCmd::Action)recvCmd.action();
+
+		_curCmd = recvCmd;
+
+        action = (TelegramCmd::Action)_curCmd.action();
         if (action == TelegramCmd::Action::CheckIsLogin) {
-            PipeCmd::Cmd resultCmd;
-            resultCmd.set_action(recvCmd.action());
-            resultCmd.set_seq_number(recvCmd.seq_number());
+			std::string content;
+
             if (sessionExists()) {
-                resultCmd.set_content(_session->user()->phone().toUtf8().constData());
-            } else {
-                resultCmd.set_content("");
+				content = _session->user()->phone().toUtf8().constData();
             }
-            PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
-            sendPipeCmd(resultCmd);
+
+            sendPipeResult(_curCmd, std::int32_t(TelegramCmd::LoginStatus::Success), content);
         } else if (action == TelegramCmd::Action::SendPhoneCode) {
             if (_stepHistory) {
                 if (!_stepHistory->empty()) {
@@ -705,7 +871,7 @@ void Account::handlePipeCmd() {
                 if (!_stepHistory->empty()) {
                     auto widget = dynamic_cast<Intro::details::PhoneWidget*>(_stepHistory->back());
                     if (widget) {
-                        widget->setPhoneNumber(recvCmd);
+                        widget->setPhoneNumber(_curCmd);
                     }
                 }
             }
@@ -714,7 +880,7 @@ void Account::handlePipeCmd() {
                 if (!_stepHistory->empty()) {
                     auto widget = dynamic_cast<Intro::details::CodeWidget*>(_stepHistory->back());
                     if (widget) {
-                        widget->setPhoneCode(recvCmd);
+                        widget->setPhoneCode(_curCmd);
                     }
                 }
             }
@@ -728,7 +894,7 @@ void Account::handlePipeCmd() {
                     if (!_stepHistory->empty()) {
                         auto widget = dynamic_cast<Intro::details::QrWidget*>(_stepHistory->back());
                         if (widget) {
-                            widget->setPipeCmd(recvCmd);
+                            widget->setPipeCmd(_curCmd);
                         }
                     }
                 }
@@ -738,7 +904,7 @@ void Account::handlePipeCmd() {
                 if (!_stepHistory->empty()) {
                     auto widget = dynamic_cast<Intro::details::QrWidget*>(_stepHistory->back());
                     if (widget) {
-                        widget->setPipeCmd(recvCmd);
+                        widget->setPipeCmd(_curCmd);
                     }
                 }
             }
@@ -747,19 +913,15 @@ void Account::handlePipeCmd() {
                 if (!_stepHistory->empty()) {
                     auto widget = dynamic_cast<Intro::details::PasswordCheckWidget*>(_stepHistory->back());
                     if (widget) {
-                        widget->setPassword(recvCmd);
+                        widget->setPassword(_curCmd);
                     }
                 }
             }
         } else if (action == TelegramCmd::Action::GetContactAndChat) {
-			_session->api().requestContacts();
+            _session->api().requestContactsAndDialogs();
         } else if (action == TelegramCmd::Action::LogOut) {
-            _mtp->logout([this, &recvCmd]() {
-                PipeCmd::Cmd resultCmd;
-                resultCmd.set_action(recvCmd.action());
-                resultCmd.set_seq_number(recvCmd.seq_number());
-                PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
-                sendPipeCmd(resultCmd);
+            _mtp->logout([this]() {
+				sendPipeResult(_curCmd, std::int32_t(TelegramCmd::LoginStatus::Success));
                 });
         } else if (action == TelegramCmd::Action::Unknown) {
             Core::Quit();
@@ -767,45 +929,326 @@ void Account::handlePipeCmd() {
     } while (false);
 }
 
+void Account::saveNewContactsToDb() {
+	sqlite3_stmt* stmt = nullptr;
+	bool beginTransaction = false;
+    bool ok = false;
+
+	do {
+		if (!_dataDb) {
+			break;
+		}
+
+		std::list<ContactInfo> newContacts;
+		{
+			std::lock_guard<std::mutex> locker(_newContactsLock);
+			if (_newContacts.empty()) {
+				break;
+			}
+
+			newContacts.swap(_newContacts);
+		}
+
+		int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		beginTransaction = true;
+
+		/*
+		* CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT
+		, last_name TEXT, username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGER);
+		*/
+		ret = sqlite3_prepare(_dataDb, "insert into users values (?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		for (const auto& contact : newContacts) {
+            ok = false;
+            int column = 1;
+
+            do {
+
+                int ret = sqlite3_bind_int64(stmt, column++, contact.uid);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_text(stmt, column++, contact.firstName.c_str(), contact.firstName.size(), SQLITE_TRANSIENT);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_text(stmt, column++, contact.lastName.c_str(), contact.lastName.size(), SQLITE_TRANSIENT);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_text(stmt, column++, contact.userName.c_str(), contact.userName.size(), SQLITE_TRANSIENT);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_text(stmt, column++, contact.phone.c_str(), contact.phone.size(), SQLITE_TRANSIENT);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_text(stmt, column++, "", -1, SQLITE_TRANSIENT);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_bind_int(stmt, column++, contact.deleted);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ret = sqlite3_step(stmt);
+                if (ret != SQLITE_DONE) {
+                    break;
+                }
+
+                ret = sqlite3_reset(stmt);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+                ok = true;
+
+            } while (false);
+
+            if (!ok) {
+                break;
+            }
+		}
+
+	} while (false);
+
+	if (stmt) {
+		sqlite3_finalize(stmt);
+	}
+
+	if (beginTransaction) {
+		if (ok) {
+			sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+		} else {
+			sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+		}
+	}
+}
+
+void Account::saveParticipantsToDb(
+    const std::list<ParticipantInfo>& participants
+) {
+	sqlite3_stmt* stmt = nullptr;
+	bool beginTransaction = false;
+	bool ok = false;
+
+	do {
+		if (!_dataDb || participants.empty()) {
+			break;
+		}
+
+		uint64_t peerId = -1;
+
+		{
+			std::lock_guard<std::mutex> locker(_participantsLoadStatusListLock);
+			if (!_participantsLoadStatusList.empty()) {
+				peerId = _participantsLoadStatusList.front().peerData->id.value;
+			}
+		}
+
+		if (peerId == -1) {
+			break;
+		}
+
+		int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		beginTransaction = true;
+
+		/*
+        * CREATE TABLE IF NOT EXISTS participants(cid INTEGER NOT NULL, uid INTEGER NOT NULL,
+		first_name TEXT, last_name TEXT, username TEXT, phone TEXT, type TEXT, PRIMARY KEY (cid, uid));
+		*/
+		ret = sqlite3_prepare(_dataDb, "insert into participants values (?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		for (const auto& participant : participants) {
+			ok = false;
+			int column = 1;
+
+			do {
+                int ret = sqlite3_bind_int64(stmt, column++, peerId);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+
+				ret = sqlite3_bind_int64(stmt, column++, participant.uid);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_bind_text(stmt, column++, participant.firstName.c_str(), participant.firstName.size(), SQLITE_TRANSIENT);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_bind_text(stmt, column++, participant.lastName.c_str(), participant.lastName.size(), SQLITE_TRANSIENT);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_bind_text(stmt, column++, participant.userName.c_str(), participant.userName.size(), SQLITE_TRANSIENT);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_bind_text(stmt, column++, participant.phone.c_str(), participant.phone.size(), SQLITE_TRANSIENT);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_bind_text(stmt, column++, participant._type.c_str(), participant._type.size(), SQLITE_TRANSIENT);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ret = sqlite3_step(stmt);
+				if (ret != SQLITE_DONE) {
+					break;
+				}
+
+				ret = sqlite3_reset(stmt);
+				if (ret != SQLITE_OK) {
+					break;
+				}
+
+				ok = true;
+
+			} while (false);
+
+			if (!ok) {
+				break;
+			}
+		}
+
+	} while (false);
+
+	if (stmt) {
+		sqlite3_finalize(stmt);
+	}
+
+	if (beginTransaction) {
+		if (ok) {
+			sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+		} else {
+			sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+		}
+	}
+}
+
+void Account::removeLoadFinishedParticipants() {
+    {
+        std::lock_guard<std::mutex> locker(_participantsLoadStatusListLock);
+        if (!_participantsLoadStatusList.empty()) {
+            _participantsLoadStatusList.pop_front();
+        }
+    }
+}
+
+Account::ParticipantInfo Account::UserDataToParticipantInfo(UserData* userData) {
+	Account::ParticipantInfo participantInfo;
+	
+	if (userData) {
+		participantInfo.uid = userData->id.value;
+		participantInfo.firstName = userData->firstName.toUtf8().constData();
+		participantInfo.lastName = userData->lastName.toUtf8().constData();
+		participantInfo.userName = userData->username().toUtf8().constData();
+		participantInfo.phone = userData->phone().toUtf8().constData();
+
+		if (userData->isContact()) {
+			participantInfo._type = (const char*)std::u8string(u8"好友").c_str();
+		} else {
+			participantInfo._type = (const char*)std::u8string(u8"陌生人").c_str();
+		}
+	}
+
+	return participantInfo;
+}
+
 bool Account::init() {
     bool ok = false;
+	const wchar_t* errMsg = nullptr;
+
     do {
+        const auto& appArgs = Core::Launcher::getApplicationArguments();
+		if (appArgs.size() < 5) {
+			break;
+		}
+		
+		_dataPath = appArgs[1];
+
         std::wstring dataDbPath = _dataPath + L"\\" + _session->user()->phone().toStdWString() + L".db";
         int ret = sqlite3_open16(dataDbPath.c_str(), &_dataDb);
         if (ret != SQLITE_OK) {
             break;
         }
-        std::string sql = R"(PRAGMA encoding = 'UTF-8';)";
+        std::string sql = "PRAGMA encoding = 'UTF-8';";
         ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
         if (ret != SQLITE_OK) {
             break;
         }
-        sql = R"(CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT
-, last_name TEXT, username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGE);)";
+        sql = "CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT, last_name TEXT, "
+			"username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGER);";
         ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
         if (ret != SQLITE_OK) {
             break;
         }
-        sql = R"(CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, unread_count INTEGER, last_mid INTEGER);)";
+
+        sql = "CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, "
+			"unread_count INTEGER, last_mid INTEGER);";
         ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
         if (ret != SQLITE_OK) {
             break;
         }
-        sql = R"(CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_type INTEGER, peer_id INTEGER
-, date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, location TEXT, content TEXT
-, json_content TEXT, thumb_file TEXT, attach_file TEXT, PRIMARY KEY (mid, peer_id));)";
+
+        sql = "CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_type INTEGER, peer_id INTEGER, "
+			"date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, location TEXT, "
+			"content TEXT, json_content TEXT, thumb_file TEXT, attach_file TEXT, PRIMARY KEY (mid, peer_id));";
         ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
         if (ret != SQLITE_OK) {
             break;
         }
-        sql = R"(CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, is_channel INTEGER
-, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);)";
+
+        sql = "CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, "
+			"is_channel INTEGER, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);";
         ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
         if (ret != SQLITE_OK) {
             break;
         }
+
+        sql = "CREATE TABLE IF NOT EXISTS participants(cid INTEGER NOT NULL, uid INTEGER NOT NULL, first_name TEXT, "
+			"last_name TEXT, username TEXT, phone TEXT, type TEXT, PRIMARY KEY (cid, uid));";
+        ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+
         ok = true;
     } while (false);
+
+	if (!ok && _dataDb) {
+		errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
+	}
+
     return ok;
 }
 
@@ -841,4 +1284,459 @@ PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
 	}
 	return _pipe->SendCmd(cmd, waitDone);
 }
+
+PipeCmd::Cmd Account::sendPipeResult(
+    const PipeCmd::Cmd& recvCmd,
+    std::int32_t status,
+    const std::string& content,
+    const std::string& error
+) {
+	PipeCmd::Cmd resultCmd;
+	resultCmd.set_action(recvCmd.action());
+	resultCmd.set_seq_number(recvCmd.seq_number());
+	resultCmd.set_content(content);
+
+    PipeWrapper::AddExtraData(resultCmd, "status", status);
+    if (!error.empty()) {
+        PipeWrapper::AddExtraData(resultCmd, "error", error);
+    }
+
+    return sendPipeCmd(resultCmd);
+}
+
+
+void Account::setContactsAndChatsLoadFinished() {
+	_contactsAndChatsLoadFinished = true;
+}
+
+void Account::addNewContact(const UserData* user) {
+    if (!user) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> locker(_newContactsLock);
+        ContactInfo contact;
+
+        contact.uid = user->id.value;
+        contact.firstName = user->firstName.toUtf8().constData();
+        contact.lastName = user->lastName.toUtf8().constData();
+        contact.userName = user->username().toUtf8().constData();
+        contact.phone = user->phone().toUtf8().constData();
+
+        if (user->flags() == UserDataFlag::Deleted) {
+            contact.deleted = 1;
+        }
+
+        _newContacts.emplace_back(std::move(contact));
+    }
+}
+
+void Account::saveContactsToDb() {
+    sqlite3_stmt* stmt = nullptr;
+
+    bool beginTransaction = false;
+    bool ok = false;
+	const wchar_t* errMsg = nullptr;
+
+    do {
+        if (!_dataDb) {
+            break;
+        }
+
+        int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+
+        beginTransaction = true;
+
+		/*
+        * CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT
+		, last_name TEXT, username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGER);
+		*/
+        ret = sqlite3_prepare(_dataDb, "insert into users values (?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+        if (ret != SQLITE_OK) {
+            break;
+        }
+
+        const auto appendList = [&](auto contacts) {
+            auto count = 0;
+            for (const auto& contact : contacts->all()) {
+                if (const auto history = contact->history()) {
+                    if (const UserData* user = history->peer->asUser()) {
+						++count;
+
+                        ok = false;
+                        int column = 1;
+
+                        do {
+
+                            int ret = sqlite3_bind_int64(stmt, column++, user->id.value);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_bind_text(stmt, column++, user->firstName.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_bind_text(stmt, column++, user->lastName.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_bind_text(stmt, column++, user->username().toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_bind_text(stmt, column++, user->phone().toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_bind_text(stmt, column++, "", -1, SQLITE_TRANSIENT);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+							int deleted = 0;
+							if (user->flags() == UserDataFlag::Deleted) {
+								deleted = 1;
+							}
+
+                            ret = sqlite3_bind_int(stmt, column++, deleted);
+                            if (ret != SQLITE_OK) {
+                                break;
+                            }
+
+                            ret = sqlite3_step(stmt);
+                            if (ret != SQLITE_DONE) {
+                                break;
+                            }
+
+                            ret = sqlite3_reset(stmt);
+
+                            ok = true;
+							 
+                        } while (false);
+
+						if (!ok) {
+							errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
+						}
+                    }
+                }
+            }
+            return count;
+        };
+
+        appendList(session().data().contactsList());
+
+    } while (false);
+
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+
+    if (beginTransaction) {
+        if (ok) {
+            sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+        } else {
+            sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+        }
+    }
+}
+
+void Account::saveDialogsToDb() {
+	sqlite3_stmt* stmt = nullptr;
+
+	bool beginTransaction = false;
+	bool ok = false;
+    const wchar_t* errMsg = nullptr;
+
+	do {
+		if (!_dataDb) {
+			break;
+		}
+
+		int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		beginTransaction = true;
+
+		/*
+		* CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, unread_count INTEGER, last_mid INTEGER);
+		*/
+		ret = sqlite3_prepare(_dataDb, "insert into dialogs values (?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		const auto appendList = [&](auto chats) {
+			auto count = 0;
+			for (const auto& chat : *chats->indexed()) {
+				if (const auto history = chat->history()) {
+					long long id = 0;
+					std::string name;
+					std::int32_t date = 0;
+
+                    if (const UserData* userData = history->peer->asUser()) {
+                        id = userData->id.value;
+
+                        name = userData->username().toUtf8().constData();
+						if (name.empty()) {
+                            name = (userData->firstName + userData->lastName).toUtf8().constData();
+                        }
+                    } else if (const ChatData* chatData = history->peer->asChat()) {
+						id = chatData->id.value;
+						name = chatData->name().toUtf8().constData();
+						date = chatData->date;
+                    } else if (const ChannelData* channelData = history->peer->asChannel()) {
+                        id = channelData->id.value;
+                        name = channelData->name().toUtf8().constData();
+                        date = channelData->date;
+					} else {
+						continue;
+					}
+
+                    ok = false;
+                    int column = 1;
+
+                    do {
+                        int ret = sqlite3_bind_int64(stmt, column++, id);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_text(stmt, column++, name.c_str(), -1, SQLITE_TRANSIENT);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int(stmt, column++, date);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int64(stmt, column++, 0LL);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int64(stmt, column++, 0LL);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_step(stmt);
+                        if (ret != SQLITE_DONE) {
+                            break;
+                        }
+
+                        ret = sqlite3_reset(stmt);
+
+                        ok = true;
+
+                    } while (false);
+
+                    if (!ok) {
+                        errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
+                    }
+				}
+			}
+			return count;
+		};
+
+		appendList(session().data().chatsList());
+
+	} while (false);
+
+	if (stmt) {
+		sqlite3_finalize(stmt);
+	}
+
+	if (beginTransaction) {
+		if (ok) {
+			sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+		} else {
+			sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+		}
+	}
+}
+
+void Account::saveChatsToDb() {
+	sqlite3_stmt* stmt = nullptr;
+
+	bool beginTransaction = false;
+	bool ok = false;
+	const wchar_t* errMsg = nullptr;
+
+	do {
+		if (!_dataDb) {
+			break;
+		}
+
+		int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		beginTransaction = true;
+
+		/*
+        * CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, is_channel INTEGER
+		, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);
+		*/
+        ret = sqlite3_prepare(_dataDb, "insert into chats values (?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+		if (ret != SQLITE_OK) {
+			break;
+		}
+
+		const auto appendList = [&](auto chats) {
+			auto count = 0;
+			for (const auto& chat : *chats->indexed()) {
+				if (const auto history = chat->history()) {
+					if (!history->peer->isChat() && !history->peer->isChannel()) {
+						continue;
+					}
+
+                    long long id = 0;
+                    std::string title;
+                    std::string channelName;
+                    std::int32_t date = 0;
+                    int isChannel = 0;
+                    int membersCount = 0;
+                    std::string profilePhotoPath;
+                    std::string chatType;
+
+					if (history->peer->isChat()) {
+						if (const ChatData* chatData = history->peer->asChat()) {
+							id = chatData->id.value;
+							title = chatData->name().toUtf8().constData();
+							date = chatData->date;
+							membersCount = chatData->participants.size();
+
+							if (chatData->amIn()) {
+								chatType = (const char*)std::u8string(u8"公开群组").c_str();
+							} else {
+								chatType = (const char*)std::u8string(u8"私有群组").c_str();
+							}
+						}
+					} else if (history->peer->isChannel()) {
+						if (const ChannelData* channelData = history->peer->asChannel()) {
+							id = channelData->id.value;
+							title = channelData->name().toUtf8().constData();
+							channelName = title;
+							date = channelData->date;
+							isChannel = 1;
+							membersCount = channelData->membersCount();
+
+							if (history->peer->isMegagroup()) {
+                                isChannel = 0;
+
+                                if (!channelData->isPublic()) {
+                                    chatType = (const char*)std::u8string(u8"公开群组").c_str();
+                                } else {
+                                    chatType = (const char*)std::u8string(u8"私有群组").c_str();
+                                }
+							} else {
+								if (!channelData->isPublic()) {
+									chatType = (const char*)std::u8string(u8"公开频道").c_str();
+								} else {
+									chatType = (const char*)std::u8string(u8"私有频道").c_str();
+								}
+							}
+						}
+					} else {
+						continue;
+					}
+
+					ParticipantsLoadStatus loadStatus;
+					loadStatus.peerData = history->peer;
+					_participantsLoadStatusList.emplace_back(std::move(loadStatus));
+
+					ok = false;
+					int column = 1;
+
+					do {
+                        int ret = sqlite3_bind_int64(stmt, column++, id);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_text(stmt, column++, title.c_str(), title.size(), nullptr);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int(stmt, column++, date);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int(stmt, column++, isChannel);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_int(stmt, column++, membersCount);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_text(stmt, column++, channelName.c_str(), channelName.size(), nullptr);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_text(stmt, column++, profilePhotoPath.c_str(), profilePhotoPath.size(), nullptr);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_bind_text(stmt, column++, chatType.c_str(), chatType.size(), nullptr);
+                        if (ret != SQLITE_OK) {
+                            break;
+                        }
+
+                        ret = sqlite3_step(stmt);
+                        if (ret != SQLITE_DONE) {
+                            break;
+                        }
+
+						ret = sqlite3_reset(stmt);
+
+						ok = true;
+
+					} while (false);
+
+					if (!ok) {
+						errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
+					}
+				}
+			}
+			return count;
+		};
+
+		appendList(session().data().chatsList());
+
+	} while (false);
+
+	if (stmt) {
+		sqlite3_finalize(stmt);
+	}
+
+	if (beginTransaction) {
+		if (ok) {
+			sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+		} else {
+			sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+		}
+	}
+}
+
 } // namespace Main

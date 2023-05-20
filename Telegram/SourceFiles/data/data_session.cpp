@@ -1391,6 +1391,9 @@ void Session::setupUserIsContactViewer() {
 		}
 		if (user->isContact()) {
 			const auto history = this->history(user->id);
+
+			_session->account().addNewContact(history->peer->asUser());
+
 			_contactsList.addByName(history);
 			if (!history->inChatList()) {
 				_contactsNoChatsList.addByName(history);
