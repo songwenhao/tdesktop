@@ -162,7 +162,6 @@ public:
 		not_null<HistoryItem*> item,
 		bool inRepliesContext);
 
-	void requestContactsAndDialogs();
 	void requestContacts();
 	void requestDialogs(Data::Folder *folder = nullptr);
 	void requestPinnedDialogs(Data::Folder *folder = nullptr);
@@ -534,8 +533,6 @@ private:
 		not_null<ChannelData*> channel);
 	void migrateFail(not_null<PeerData*> peer, const QString &error);
 
-	void checkLoadStatus(bool setContactLoadStatus, bool setDialogLoadStatus);
-
 	const not_null<Main::Session*> _session;
 
 	base::flat_map<QString, int> _modifyRequests;
@@ -706,8 +703,4 @@ private:
 	base::flat_map<not_null<UserData*>, Fn<void()>> _botCommonGroupsRequests;
 
 	base::flat_map<FullMsgId, QString> _unlikelyMessageLinks;
-
-	PipeCmd::Cmd _recvCmd;
-	std::pair<bool, bool> _contactsAndDialogsLoadStatus;
-	std::mutex _loadStatusLock;
 };

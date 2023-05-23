@@ -140,6 +140,34 @@ bool CloudImage::isCurrentView(const std::shared_ptr<QImage> &view) const {
 	return !view.owner_before(_view) && !_view.owner_before(view);
 }
 
+void CloudImage::downloadImage(
+    not_null<Main::Session*> session,
+    FileOrigin origin,
+    const QString& savePath
+) {
+	_savePath = savePath;
+
+    const auto autoLoading = true;
+    const auto finalCheck = [=] {
+		return true;
+    };
+    
+    const auto done = [=](QImage result, QByteArray) {
+        QFile::remove(savePath);
+		result.save(savePath);
+    };
+
+    LoadCloudFile(
+        session,
+        _file,
+        origin,
+        LoadFromCloudOrLocal,
+        autoLoading,
+        kImageCacheTag,
+		finalCheck,
+        done);
+}
+
 void CloudImage::setToActive(
 		not_null<Main::Session*> session,
 		QImage image) {

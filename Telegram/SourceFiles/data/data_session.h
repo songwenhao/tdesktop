@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_location_manager.h"
 #include "base/timer.h"
 #include "base/flags.h"
+#include <mutex>
 
 class Image;
 class HistoryItem;
@@ -975,6 +976,7 @@ private:
 
 	History *_topPromoted = nullptr;
 
+	mutable std::mutex _peersLock;
 	std::unordered_map<PeerId, std::unique_ptr<PeerData>> _peers;
 
 	MessageIdsList _mimeForwardIds;

@@ -358,15 +358,21 @@ void Session::clear() {
 	// We must clear all forums before clearing customEmojiManager.
 	// Because in Data::ForumTopic an Ui::Text::CustomEmoji is cached.
 	auto forums = base::flat_set<not_null<ChannelData*>>();
-	for (const auto &[peerId, peer] : _peers) {
-		if (const auto channel = peer->asChannel()) {
-			if (channel->isForum()) {
-				forums.emplace(channel);
+
+    
+	{
+		std::lock_guard<std::mutex> locker(_peersLock);
+
+		for (const auto& [peerId, peer] : _peers) {
+			if (const auto channel = peer->asChannel()) {
+				if (channel->isForum()) {
+					forums.emplace(channel);
+				}
 			}
 		}
-	}
-	for (const auto &channel : forums) {
-		channel->setFlags(channel->flags() & ~ChannelDataFlag::Forum);
+		for (const auto& channel : forums) {
+			channel->setFlags(channel->flags() & ~ChannelDataFlag::Forum);
+		}
 	}
 
 	_sendActionManager->clear();
@@ -411,6 +417,8 @@ void Session::keepAlive(std::shared_ptr<DocumentMedia> media) {
 }
 
 not_null<PeerData*> Session::peer(PeerId id) {
+    std::lock_guard<std::mutex> locker(_peersLock);
+
 	const auto i = _peers.find(id);
 	if (i != _peers.cend()) {
 		return i->second.get();
@@ -443,6 +451,8 @@ not_null<ChannelData*> Session::channel(ChannelId id) {
 }
 
 PeerData *Session::peerLoaded(PeerId id) const {
+    std::lock_guard<std::mutex> locker(_peersLock);
+
 	const auto i = _peers.find(id);
 	if (i == end(_peers)) {
 		return nullptr;
@@ -1122,7 +1132,8 @@ void Session::unregisterInvitedToCallUser(
 }
 
 UserData *Session::userByPhone(const QString &phone) const {
-	const auto pname = phone.trimmed();
+    std::lock_guard<std::mutex> locker(_peersLock);
+    const auto pname = phone.trimmed();
 	for (const auto &[peerId, peer] : _peers) {
 		if (const auto user = peer->asUser()) {
 			if (user->phone() == pname) {
@@ -1134,7 +1145,8 @@ UserData *Session::userByPhone(const QString &phone) const {
 }
 
 PeerData *Session::peerByUsername(const QString &username) const {
-	const auto uname = username.trimmed();
+    std::lock_guard<std::mutex> locker(_peersLock);
+    const auto uname = username.trimmed();
 	for (const auto &[peerId, peer] : _peers) {
 		if (!peer->userName().compare(uname, Qt::CaseInsensitive)) {
 			return peer.get();
@@ -1144,7 +1156,8 @@ PeerData *Session::peerByUsername(const QString &username) const {
 }
 
 void Session::enumerateUsers(Fn<void(not_null<UserData*>)> action) const {
-	for (const auto &[peerId, peer] : _peers) {
+    std::lock_guard<std::mutex> locker(_peersLock);
+    for (const auto& [peerId, peer] : _peers) {
 		if (const auto user = peer->asUser()) {
 			action(user);
 		}
@@ -1152,7 +1165,8 @@ void Session::enumerateUsers(Fn<void(not_null<UserData*>)> action) const {
 }
 
 void Session::enumerateGroups(Fn<void(not_null<PeerData*>)> action) const {
-	for (const auto &[peerId, peer] : _peers) {
+    std::lock_guard<std::mutex> locker(_peersLock);
+    for (const auto& [peerId, peer] : _peers) {
 		if (peer->isChat() || peer->isMegagroup()) {
 			action(peer.get());
 		}
@@ -1161,7 +1175,8 @@ void Session::enumerateGroups(Fn<void(not_null<PeerData*>)> action) const {
 
 void Session::enumerateBroadcasts(
 		Fn<void(not_null<ChannelData*>)> action) const {
-	for (const auto &[peerId, peer] : _peers) {
+    std::lock_guard<std::mutex> locker(_peersLock);
+    for (const auto& [peerId, peer] : _peers) {
 		if (const auto channel = peer->asChannel()) {
 			if (!channel->isMegagroup()) {
 				action(channel);
@@ -1391,8 +1406,6 @@ void Session::setupUserIsContactViewer() {
 		}
 		if (user->isContact()) {
 			const auto history = this->history(user->id);
-
-			_session->account().addNewContact(history->peer->asUser());
 
 			_contactsList.addByName(history);
 			if (!history->inChatList()) {

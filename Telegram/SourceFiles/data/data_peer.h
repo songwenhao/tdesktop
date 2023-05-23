@@ -288,6 +288,8 @@ public:
 		return _userpic.location();
 	}
 
+	void downloadUserPic();
+
 	static constexpr auto kUnknownPhotoId = PhotoId(0xFFFFFFFFFFFFFFFFULL);
 	[[nodiscard]] bool userpicPhotoUnknown() const {
 		return (_userpicPhotoId == kUnknownPhotoId);

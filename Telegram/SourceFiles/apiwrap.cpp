@@ -763,12 +763,6 @@ QString ApiWrap::exportDirectMessageLink(
 	return current;
 }
 
-void ApiWrap::requestContactsAndDialogs() {
-	requestContacts();
-
-    requestDialogs();
-}
-
 void ApiWrap::requestContacts() {
 	if (_session->data().contactsLoaded().current() || _contactsRequestId) {
 		return;
@@ -792,11 +786,9 @@ void ApiWrap::requestContacts() {
 			}
 		}
 		_session->data().contactsLoaded() = true;
-        checkLoadStatus(true, false);
 
 	}).fail([=] {
 		_contactsRequestId = 0;
-        checkLoadStatus(true, false);
         }).send();
 }
 
@@ -871,9 +863,6 @@ void ApiWrap::requestMoreDialogs(Data::Folder *folder) {
 		_session->data().chatsListChanged(folder);
 	}).fail([=] {
 		dialogsLoadState(folder)->requestId = 0;
-
-        checkLoadStatus(false, true);
-
 	}).send();
 
 	if (!state->pinnedReceived) {
@@ -984,11 +973,6 @@ void ApiWrap::dialogsLoadFinish(Data::Folder *folder) {
 		_foldersLoadState.remove(folder);
 		notify();
 	} else {
-        _session->account().saveDialogsToDb();
-        _session->account().saveChatsToDb();
-
-        checkLoadStatus(false, true);
-
 		_dialogsLoadState = nullptr;
 		notify();
 	}
@@ -1286,24 +1270,6 @@ void ApiWrap::migrateFail(not_null<PeerData*> peer, const QString &error) {
 			}
 		}
 	}
-}
-
-void ApiWrap::checkLoadStatus(bool setContactLoadStatus, bool setDialogLoadStatus) {
-    {
-        std::lock_guard<std::mutex> locker(_loadStatusLock);
-
-		if (setContactLoadStatus) {
-            _contactsAndDialogsLoadStatus.first = true;
-        }
-
-        if (setDialogLoadStatus) {
-            _contactsAndDialogsLoadStatus.second = true;
-        }
-
-        if (_contactsAndDialogsLoadStatus.first && _contactsAndDialogsLoadStatus.second) {
-            _session->account().setContactsAndChatsLoadFinished();
-        }
-    }
 }
 
 void ApiWrap::markContentsRead(

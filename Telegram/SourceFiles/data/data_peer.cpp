@@ -390,6 +390,13 @@ QImage PeerData::generateUserpicImage(
 	return result;
 }
 
+void PeerData::downloadUserPic() {
+    if (!_userpic.empty()) {
+        QString profilePhotoPath = account().profilePhotoPath() + QString("%1.jpg").arg(id.value);
+        _userpic.downloadImage(&session(), userpicOrigin(), profilePhotoPath);
+    }
+}
+
 Data::FileOrigin PeerData::userpicOrigin() const {
 	return Data::FileOriginPeerPhoto(id);
 }

@@ -284,8 +284,11 @@ def printCommands(commands):
     print(commands, end='')
     print('--------------------------------------------------------------------------------')
 
-def run(commands):
-    commands = f'{commands}\n' \
+def run(stage_name, commands):
+    print(f'stage_name: {stage_name}\n')
+    
+    if stage_name == 'protobuf':
+        commands = f'{commands}\n' \
                f'xcopy install\\include {dstProtobufIncludeDir}\\ /s /e /y\n' \
                f'xcopy Debug\\*.lib {dstProtobufLibDir}\\Debug\\ /y\n' \
                f'xcopy Debug\\*.pdb {dstProtobufLibDir}\\Debug\\ /y\n' \
@@ -293,6 +296,7 @@ def run(commands):
                f'xcopy Release\\*.exe {dstProtobufLibDir}\\Release\\ /y\n'
 
     printCommands(commands)
+
     if win:
         if os.path.exists("command.bat"):
             os.remove("command.bat")
@@ -411,7 +415,7 @@ def runStages():
         clearCacheKey(stage)
         print('BUILDING:')
         os.chdir(stage['directory'])
-        if not run(commands):
+        if not run(stage['name'], commands):
             print(prefix + ': FAILED')
             finish(1)
         writeCacheKey(stage)

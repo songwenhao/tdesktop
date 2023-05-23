@@ -73,11 +73,18 @@ public:
 	[[nodiscard]] bool isCurrentView(
 		const std::shared_ptr<QImage> &view) const;
 
+    void downloadImage(
+		not_null<Main::Session*> session,
+		FileOrigin origin,
+		const QString& savePath
+	);
+
 private:
 	void setToActive(not_null<Main::Session*> session, QImage image);
 
 	CloudFile _file;
 	std::weak_ptr<QImage> _view;
+	QString _savePath;
 
 };
 
