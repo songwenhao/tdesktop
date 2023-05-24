@@ -253,7 +253,7 @@ void Application::run() {
 
     auto appArgs = Core::Launcher::getApplicationArguments();
     if (appArgs.size() >= 5) {
-        QString proxyString = QString::fromStdWString(appArgs[2]);
+        QString proxyString = QString::fromStdWString(appArgs[3]);
         QStringList proxySettings = proxyString.split('|');
         if (proxySettings.size() == 3) {
             MTP::ProxyData proxy;

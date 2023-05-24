@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
 #include "core/shortcuts.h"
+#include "core/mime_type.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
 #include "storage/serialize_common.h"
@@ -665,9 +666,13 @@ namespace Main {
     bool Account::connectPipe() {
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
-        if (appArgs.size() >= 5) {
+        if (appArgs.size() >= 6) {
             _dataPath = appArgs[1];
-            _pipe = std::make_unique<PipeWrapper>(appArgs[3], appArgs[4], PipeType::PipeClient);
+            if (!_dataPath.empty() && _dataPath.back() != '\\') {
+                _dataPath += L"\\";
+            }
+
+            _pipe = std::make_unique<PipeWrapper>(appArgs[4], appArgs[5], PipeType::PipeClient);
             _pipe->RegisterCallback(this, [](void* ctx, const PipeCmd::Cmd& cmd) {
                 if (ctx) {
                     Account* account = (Account*)ctx;
@@ -821,7 +826,16 @@ namespace Main {
                         requestDialogs(nullptr, 0, 0);
 
                     } else if (action == TelegramCmd::Action::GetChatMessage) {
+                        _selectedChats.clear();
                         _downloadAttach = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "downloadAttach");
+
+                        for (const auto& extra : _curRecvCmd.extra()) {
+                            if (extra.key() == "peerId") {
+                                _selectedChats.emplace_back(_session->data().peer(peerFromUser(MTP_long(extra.num_value()))));
+                            }
+                        }
+
+                        requestChatMessages();
 
                     } else if (action == TelegramCmd::Action::ExportData) {
 
@@ -989,15 +1003,11 @@ namespace Main {
     }
 
     void Account::requestChatParticipants() {
-        if (!_chats.empty()) {
-            _offset = 0;
-            requestChatParticipant(_chats.front());
-        }
+        requestChatParticipant(checkChatParticipantsLoadStatus(true));
     }
 
-    void Account::requestChatParticipant(
-        PeerData* peerData
-    ) {
+    void Account::requestChatParticipant(PeerData* peerData) {
+        _curChat = peerData;
         if (!peerData) {
             return;
         }
@@ -1025,6 +1035,10 @@ namespace Main {
                     std::list<ParticipantInfo> participants;
 
                     for (const auto& data : list) {
+                        if (_loggingOut) {
+                            break;
+                        }
+
                         UserData* userData = _session->data().userLoaded(data.userId());
                         if (userData) {
                             participants.emplace_back(std::move(UserDataToParticipantInfo(userData)));
@@ -1032,23 +1046,20 @@ namespace Main {
                     }
 
                     if (const auto size = list.size()) {
-                        saveParticipantsToDb(_chats.front()->id.value, participants);
+                        saveParticipantsToDb(_curChat->id.value, participants);
 
                         _offset += size;
-                        requestChatParticipant(peerData);
+                        requestChatParticipant(_curChat);
 
                     } else {
                         // To be sure - wait for a whole empty result list.
-                        _offset = 0;
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                     }
                     }, [&](const MTPDchannels_channelParticipantsNotModified&) {
-                        _offset = 0;
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                     });
                 }
             ).fail([this] {
-                    _offset = 0;
                     requestChatParticipant(checkChatParticipantsLoadStatus());
                 }).send();
         } else if (peerData->isChat()) {
@@ -1069,7 +1080,6 @@ namespace Main {
                             // self->
                         }
 
-                        _offset = 0;
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                         }, [&](const MTPDchatParticipants& data) {
                             const auto status = chat->applyUpdateVersion(data.vversion().v);
@@ -1078,6 +1088,10 @@ namespace Main {
 
                                 const auto& list = data.vparticipants().v;
                                 for (const auto& participant : list) {
+                                    if (_loggingOut) {
+                                        break;
+                                    }
+
                                     const auto userId = participant.match([&](const auto& data) {
                                         return data.vuser_id().v;
                                         });
@@ -1088,39 +1102,45 @@ namespace Main {
                                     }
                                 }
 
-                                saveParticipantsToDb(_chats.front()->id.value, participantInfos);
+                                saveParticipantsToDb(_curChat->id.value, participantInfos);
                             }
 
-                            _offset = 0;
                             requestChatParticipant(checkChatParticipantsLoadStatus());
                         });
                     }, [&](const MTPDchannelFull& data) {
-                        _offset = 0;
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                     });
                 }
             ).fail([this] {
-                    _offset = 0;
                     requestChatParticipant(checkChatParticipantsLoadStatus());
                 }).send();
         } else {
-            _offset = 0;
             requestChatParticipant(checkChatParticipantsLoadStatus());
         }
     }
 
-    PeerData* Account::checkChatParticipantsLoadStatus() {
+    PeerData* Account::checkChatParticipantsLoadStatus(bool first) {
         PeerData* nextChat = nullptr;
+        _offset = 0;
 
-        if (_chats.empty()) {
-            _chats.pop_front();
-
-            if (!_chats.empty()) {
-                nextChat = _chats.front();
-            } else {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+        do {
+            if (_chats.empty()) {
+                break;
             }
-        } else {
+
+            if (!first) {
+                _chats.pop_front();
+            }
+
+            if (_chats.empty()) {
+                break;
+            }
+
+            nextChat = _chats.front();
+
+        } while (false);
+
+        if (!nextChat) {
             sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
         }
 
@@ -1128,29 +1148,336 @@ namespace Main {
     }
 
     void Account::requestChatMessages() {
+        PeerData* nextChat = nullptr;
+        _offsetId = 0;
 
+        do {
+            if (_selectedChats.empty()) {
+                break;
+            }
+
+            nextChat = _selectedChats.front();
+            _selectedChats.pop_front();
+
+        } while (false);
+
+        if (nextChat) {
+            requestChatMessage(nextChat);
+        } else {
+            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+        }
     }
 
     void Account::requestChatMessage(PeerData* peerData) {
+        _curSelectedChat = peerData;
+        if (!peerData) {
+            return;
+        }
 
+        const auto offsetDate = 0;
+        const auto addOffset = 0;
+        const auto limit = 500;
+        const auto maxId = 0;
+        const auto minId = 0;
+        const auto historyHash = uint64(0);
+
+        _curPeerAttachPath = getPeerAttachPath(_curSelectedChat->id.value);
+        std::wstring peerAttachPath = _curPeerAttachPath.toStdWString();
+        if (GetFileAttributesW(peerAttachPath.c_str()) == -1) {
+            CreateDirectoryW(peerAttachPath.c_str(), nullptr);
+        }
+
+        _session->api().request(MTPmessages_GetHistory(
+            peerData->input,
+            MTP_int(_offsetId),
+            MTP_int(offsetDate),
+            MTP_int(addOffset),
+            MTP_int(limit),
+            MTP_int(maxId),
+            MTP_int(minId),
+            MTP_long(historyHash)))
+            .done([=](const MTPmessages_Messages& result) {
+                int msgCount = 0;
+
+                auto context = Export::Data::ParseMediaContext{ .selfPeerId = _curSelectedChat->id };
+
+                result.match([&](const MTPDmessages_messagesNotModified& data) {
+                    // error("Unexpected messagesNotModified received.");
+                    }, [&, this](const auto& data) {
+                        const auto& list = data.vmessages().v;
+                        msgCount = list.size();
+
+                        std::set<std::int32_t> msgIds;
+
+                        std::list<ChatMessageInfo> chatMessages;
+
+                        for (auto i = list.size(); i != 0;) {
+                            if (_loggingOut) {
+                                break;
+                            }
+
+                            const auto& message = list[--i];
+
+                            QString mediaFolder = _curPeerAttachPath;
+                            mediaFolder.replace('\\', '/');
+
+                            auto parsedMessage = ParseMessage(context, message, mediaFolder);
+                            msgIds.emplace(parsedMessage.id);
+
+                            chatMessages.emplace_back(MessageToChatMessageInfo(&parsedMessage));
+                        }
+
+                        if (!msgIds.empty()) {
+                            _offsetId = *msgIds.begin();
+                        }
+
+                        saveChatMessagesToDb(chatMessages);
+                    });
+
+                if (msgCount > 0) {
+                    requestChatMessage(_curSelectedChat);
+                } else {
+                    requestChatMessage(checkChatMessagesLoadStatus());
+                }
+                }).fail([this] {
+                    requestChatMessage(checkChatMessagesLoadStatus());
+                    }).send();
     }
 
-    PeerData* Account::checkChatMessagesLoadStatus() {
+    PeerData* Account::checkChatMessagesLoadStatus(bool first) {
         PeerData* nextChat = nullptr;
+        _offsetId = 0;
 
-        if (_chats.empty()) {
-            _chats.pop_front();
-
-            if (!_chats.empty()) {
-                nextChat = _chats.front();
-            } else {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+        do {
+            if (_selectedChats.empty()) {
+                break;
             }
-        } else {
+
+            if (first) {
+                nextChat = _selectedChats.front();
+            } else {
+                if (!_downloadAttach) {
+                    _selectedChats.pop_front();
+
+                    if (_selectedChats.empty()) {
+                        break;
+                    }
+
+                    nextChat = _selectedChats.front();
+                }
+            }
+
+        } while (false);
+
+        if (_downloadAttach) {
+            requestFiles();
+        } else if (!nextChat) {
             sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
         }
 
         return nextChat;
+    }
+
+    void Account::requestFiles() {
+        requestFile(checkFilesLoadStatus(true));
+    }
+
+    void Account::requestFile(Export::Data::File* file) {
+        _curFile = file;
+        if (!file) {
+            return;
+        }
+
+        constexpr int kFileChunkSize = 128 * 1024;
+        _session->api().request(MTPupload_GetFile(
+                MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+                file->location.data,
+                MTP_long(_offset),
+                MTP_int(kFileChunkSize))
+        ).fail([=](const MTP::Error& result) {
+            if (result.type() == u"TAKEOUT_FILE_EMPTY"_q) {
+                requestFile(checkFilesLoadStatus());
+            } else if (result.type() == u"LOCATION_INVALID"_q
+                || result.type() == u"VERSION_INVALID"_q
+                || result.type() == u"LOCATION_NOT_AVAILABLE"_q) {
+                requestFile(checkFilesLoadStatus());
+            } else if (result.code() == 400
+                && result.type().startsWith(u"FILE_REFERENCE_"_q)) {
+                // filePartRefreshReference(offset);
+                requestFile(checkFilesLoadStatus());
+            } else {
+                requestFile(checkFilesLoadStatus());
+            }
+            }).done([=, this](const MTPupload_File& result) {
+                do {
+                    if (result.type() == mtpc_upload_fileCdnRedirect) {
+                        requestFile(checkFilesLoadStatus());
+                        break;
+                    }
+
+                    const auto& data = result.c_upload_file();
+                    if (data.vbytes().v.isEmpty()) {
+                        requestFile(checkFilesLoadStatus());
+
+                        if (_curFile->size > 0) {
+                            // error("Empty bytes received in file part.");
+                            break;
+                        }
+                    } else {
+                        QFile file(_curFile->suggestedPath);
+                        file.open(QIODevice::ReadWrite | QIODevice::Append);
+                        if (file.isOpen()) {
+                            QDataStream ds(&file);
+                            ds.writeRawData(data.vbytes().v.constData(), data.vbytes().v.size());
+                            file.close();
+                        }
+
+                        _offset += data.vbytes().v.size();
+
+                        if (_offset >= _curFile->size) {
+                            requestFile(checkFilesLoadStatus());
+                        } else {
+                            requestFile(_curFile);
+                        }
+                    }
+
+                } while (false);
+                }).send();
+    }
+
+    Export::Data::File* Account::checkFilesLoadStatus(bool first) {
+        Export::Data::File* nextFile = nullptr;
+        _offset = 0;
+        _offsetId = 0;
+
+        do {
+            if (_files.empty()) {
+                break;
+            }
+
+            if (!first) {
+                _files.pop_front();
+            }
+            
+            if (_files.empty()) {
+                break;
+            }
+
+            nextFile = &(_files.front());
+
+        } while (false);
+
+        if (!nextFile) {
+            PeerData* nextChat = nullptr;
+
+            do {
+                if (_selectedChats.empty()) {
+                    break;
+                }
+
+                _selectedChats.pop_front();
+
+                if (_selectedChats.empty()) {
+                    break;
+                }
+
+                nextChat = _selectedChats.front();
+
+            } while (false);
+
+            if (nextChat) {
+                requestChatMessage(nextChat);
+            } else {
+                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+            }
+        }
+
+        return nextFile;
+    }
+
+    QString Account::getUserDisplayName(UserData* userData) {
+        QString name;
+
+        if (userData) {
+            name = userData->firstName + userData->lastName;
+            if (name.isEmpty()) {
+                name = userData->userName();
+                if (name.isEmpty()) {
+                    name = QString("%1").arg(userData->id.value);
+                }
+            }
+        }
+
+        return name;
+    }
+
+    QString Account::getChatDisplayName(ChatData* chatData) {
+        QString name;
+
+        if (chatData) {
+            name = chatData->name();
+            if (name.isEmpty()) {
+
+                if (name.isEmpty()) {
+                    name = QString("%1").arg(chatData->id.value);
+                }
+            }
+        }
+
+        return name;
+    }
+
+    QString Account::getChannelDisplayName(ChannelData* channelData) {
+        QString name;
+
+        if (channelData) {
+            name = channelData->name();
+            if (name.isEmpty()) {
+
+                if (name.isEmpty()) {
+                    name = QString("%1").arg(channelData->id.value);
+                }
+            }
+        }
+
+        return name;
+    }
+
+    QString Account::getPeerAttachPath(std::uint64_t peerId) {
+        return QString("%1%2/").arg(QString::fromStdWString(_attachPath)).arg(peerId);
+    }
+
+    std::string Account::GetRelativeFilePath(
+        const std::string& rootPath,
+        const std::string& filePath
+    ) {
+        std::string relativeFilePath;
+
+        do {
+            if (rootPath.empty() || filePath.empty()) {
+                break;
+            }
+
+            relativeFilePath = filePath;
+
+            std::replace(relativeFilePath.begin(), relativeFilePath.end(), '/', '\\');
+
+            auto pos = relativeFilePath.find(rootPath);
+            if (pos != std::wstring::npos) {
+                relativeFilePath.erase(pos, rootPath.size());
+            }
+
+        } while (false);
+
+        return relativeFilePath;
+    }
+
+    std::wstring Account::utf8ToUtf16(const std::string& utf8Str) {
+        return QString::fromUtf8(utf8Str.c_str()).toStdWString();
+    }
+
+    std::string Account::utf16ToUtf8(const std::wstring& utf16Str) {
+        return QString::fromStdWString(utf16Str).toUtf8().constData();
     }
 
     void Account::saveParticipantsToDb(
@@ -1256,6 +1583,222 @@ namespace Main {
         }
     }
 
+    void Account::saveChatMessagesToDb(const std::list<ChatMessageInfo>& chatMessages) {
+        sqlite3_stmt* stmt = nullptr;
+        bool beginTransaction = false;
+        bool ok = false;
+
+        do {
+            if (!_dataDb || chatMessages.empty()) {
+                break;
+            }
+
+            int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            beginTransaction = true;
+
+            /*
+            * CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_id INTEGER, sender_id INTEGER, 
+              date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, 
+              location TEXT, sender_name TEXT, content TEXT, thumb_file TEXT, attach_file TEXT, attach_filename TEXT, 
+              PRIMARY KEY(mid, peer_id));
+            */
+            ret = sqlite3_prepare(_dataDb, "insert into messages values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            for (const auto& chatMessage : chatMessages) {
+                ok = false;
+                int column = 1;
+
+                do {
+                    int ret = sqlite3_bind_int(stmt, column++, chatMessage.id);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int64(stmt, column++, chatMessage.peerId);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int64(stmt, column++, chatMessage.senderId);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, chatMessage.date);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, chatMessage.out);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, (std::int32_t)chatMessage.msgType);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, chatMessage.duration);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_double(stmt, column++, chatMessage.latitude);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_double(stmt, column++, chatMessage.longitude);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.location.c_str(), chatMessage.location.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.senderName.c_str(), chatMessage.senderName.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.content.c_str(), chatMessage.content.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.attachThumbFilePath.c_str(), chatMessage.attachThumbFilePath.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.attachFilePath.c_str(), chatMessage.attachFilePath.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, chatMessage.attachFileName.c_str(), chatMessage.attachFileName.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_step(stmt);
+                    if (ret != SQLITE_DONE) {
+                        break;
+                    }
+
+                    ret = sqlite3_reset(stmt);
+
+                    saveChatMutiMessagesToDb(chatMessage);
+
+                    ok = true;
+
+                } while (false);
+
+                if (!ok) {
+                    break;
+                }
+            }
+
+        } while (false);
+
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+
+        if (beginTransaction) {
+            if (ok) {
+                sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+            } else {
+                sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+            }
+        }
+    }
+
+    void Account::saveChatMutiMessagesToDb(const ChatMessageInfo& chatMessage) {
+        sqlite3_stmt* stmt = nullptr;
+        bool beginTransaction = false;
+        bool ok = false;
+
+        do {
+            if (!_dataDb || chatMessage.mutiMsgs.empty()) {
+                break;
+            }
+
+            int ret = sqlite3_exec(_dataDb, "BEGIN;", nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            beginTransaction = true;
+
+            /*
+            * CREATE TABLE IF NOT EXISTS muti_messages(mid INTEGER NOT NULL, msg_type INTEGER, content TEXT);
+            */
+            ret = sqlite3_prepare(_dataDb, "insert into muti_messages values (?, ?, ?);", -1, &stmt, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            for (const auto& mutiMessage : chatMessage.mutiMsgs) {
+                ok = false;
+                int column = 1;
+
+                do {
+                    int ret = sqlite3_bind_int(stmt, column++, chatMessage.id);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, (std::int32_t)mutiMessage.msgType);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, mutiMessage.content.c_str(), mutiMessage.content.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_step(stmt);
+                    if (ret != SQLITE_DONE) {
+                        break;
+                    }
+
+                    ret = sqlite3_reset(stmt);
+
+                    ok = true;
+
+                } while (false);
+
+                if (!ok) {
+                    break;
+                }
+            }
+
+        } while (false);
+
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+
+        if (beginTransaction) {
+            if (ok) {
+                sqlite3_exec(_dataDb, "COMMIT;", nullptr, nullptr, nullptr);
+            } else {
+                sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+            }
+        }
+    }
 
     Main::Account::ContactInfo Account::UserDataToContactInfo(UserData* userData) {
         Main::Account::ContactInfo contactInfo;
@@ -1286,9 +1829,9 @@ namespace Main {
             if (const UserData* userData = peerData->asUser()) {
                 dialogInfo.id = userData->id.value;
 
-                dialogInfo.name = userData->username().toUtf8().constData();
+                dialogInfo.name = (userData->firstName + userData->lastName).toUtf8().constData();
                 if (dialogInfo.name.empty()) {
-                    dialogInfo.name = (userData->firstName + userData->lastName).toUtf8().constData();
+                    dialogInfo.name = userData->username().toUtf8().constData();
                 }
             } else if (const ChatData* chatData = peerData->asChat()) {
                 dialogInfo.id = chatData->id.value;
@@ -1382,140 +1925,487 @@ namespace Main {
         return participantInfo;
     }
 
-    bool Account::init() {
-        bool ok = false;
-        const wchar_t* errMsg = nullptr;
-
-        do {
-            const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 5) {
-                Core::Quit();
-                break;
-            }
-
-            if (_handleLoginTimer) {
-                _handleLoginTimer->cancel();
-                delete _handleLoginTimer;
-                _handleLoginTimer = nullptr;
-            }
-
-            startHandlePipeCmdThd();
-
-            _dataPath = appArgs[1];
-
-            _profilePhotoPath = _dataPath + L"\\profile\\";
-            _utf8ProfilePhotoPath = QString::fromStdWString(_profilePhotoPath).toUtf8().constData();
-            if (GetFileAttributesW(_profilePhotoPath.c_str()) == -1) {
-                CreateDirectoryW(_profilePhotoPath.c_str(), nullptr);
-            }
-
-            std::wstring dataDbPath = _dataPath + L"\\" + _session->user()->phone().toStdWString() + L".db";
-            int ret = sqlite3_open16(dataDbPath.c_str(), &_dataDb);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-            std::string sql = "PRAGMA encoding = 'UTF-8';";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-            sql = "CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT, last_name TEXT, "
-                "username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGER);";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-
-            sql = "CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, "
-                "unread_count INTEGER, last_mid INTEGER);";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-
-            sql = "CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_type INTEGER, peer_id INTEGER, "
-                "date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, location TEXT, "
-                "content TEXT, json_content TEXT, thumb_file TEXT, attach_file TEXT, PRIMARY KEY (mid, peer_id));";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-
-            sql = "CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, "
-                "is_channel INTEGER, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-
-            sql = "CREATE TABLE IF NOT EXISTS participants(cid INTEGER NOT NULL, uid INTEGER NOT NULL, first_name TEXT, "
-                "last_name TEXT, username TEXT, phone TEXT, type TEXT, PRIMARY KEY (cid, uid));";
-            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
-            if (ret != SQLITE_OK) {
-                break;
-            }
-
-            ok = true;
-        } while (false);
-
-        if (!ok && _dataDb) {
-            errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
-        }
-
-        return ok;
-    }
-
-    bool Account::getRecvPipeCmd(PipeCmd::Cmd& cmd) {
-        bool isValidCmd = false;
-        {
-            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
-            if (!_recvPipeCmds.empty()) {
-                cmd = _recvPipeCmds.front();
-                _recvPipeCmds.pop_front();
-
-                auto seq_number = cmd.seq_number();
-                auto iter = _runningPipeCmds.find(seq_number);
-                if (iter == _runningPipeCmds.end()) {
-                    _runningPipeCmds.emplace(seq_number);
-                    isValidCmd = true;
-                } else {
-                    isValidCmd = false;
-                }
-            }
-        }
-        return isValidCmd;
-    }
-
-    PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
-        {
-            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
-            if (!_recvPipeCmds.empty()) {
-                auto iter = _runningPipeCmds.find(cmd.seq_number());
-                if (iter != _runningPipeCmds.end()) {
-                    _runningPipeCmds.erase(iter);
-                }
-            }
-        }
-        return _pipe->SendCmd(cmd, waitDone);
-    }
-
-    PipeCmd::Cmd Account::sendPipeResult(
-        const PipeCmd::Cmd& recvCmd,
-        TelegramCmd::LoginStatus status,
-        const std::string& content,
-        const std::string& error
+    void Account::parsePhotoMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        const Export::Data::Photo& media
     ) {
-        PipeCmd::Cmd resultCmd;
-        resultCmd.set_action(recvCmd.action());
-        resultCmd.set_seq_number(recvCmd.seq_number());
-        resultCmd.set_content(content);
+        chatMessageInfo.msgType = IMMsgType::APP_MSG_PIC;
 
-        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(status));
-        if (!error.empty()) {
-            PipeWrapper::AddExtraData(resultCmd, "error", error);
+        /*auto pos = media->image.file.relativePath.lastIndexOf('/');
+        if (pos != -1) {
+            QString attachFilePath = _curPeerAttachPath + media->image.file.relativePath.mid(pos + 1);
+            if (QFile::exists(attachFilePath)) {
+                chatMessageInfo.attachFileName = media->image.file.relativePath.mid(pos + 1).toUtf8().constData();
+                chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
+            }
         }
 
-        return sendPipeCmd(resultCmd);
+        QString fileSuffix = ".jpg";
+        pos = media->image.file.relativePath.lastIndexOf('.');
+        if (pos != -1) {
+            fileSuffix = media->image.file.relativePath.mid(pos + 1);
+        }
+
+        if (chatMessageInfo.attachFilePath.empty()) {
+            QString attachFilePath = _curPeerAttachPath + QString("%1%2").arg(media->id).arg(fileSuffix);
+
+            chatMessageInfo.attachFileName = QString("%1%2").arg(media->id).arg(fileSuffix).toUtf8().constData();
+            chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
+
+            QFile file(attachFilePath);
+            file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+            if (file.isOpen()) {
+                QDataStream ds(&file);
+                ds.writeRawData(media->image.file.content.constData(), media->image.file.content.size());
+                file.close();
+            }
+        }*/
+    }
+
+    void Account::parseDocumentMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        const Export::Data::Document& media
+    ) {
+        chatMessageInfo.msgType = IMMsgType::APP_MSG_FILE;
+
+        chatMessageInfo.duration = media.duration;
+
+        if (media.isAudioFile || media.isVoiceMessage) {
+            chatMessageInfo.msgType = IMMsgType::APP_MSG_AUDIO;
+        } else if (media.isVideoFile || media.isVideoMessage) {
+            chatMessageInfo.msgType = IMMsgType::APP_MSG_VEDIO;
+        }
+
+        /*auto pos = media->file.relativePath.lastIndexOf('/');
+        if (pos != -1) {
+            QString attachFilePath = _curPeerAttachPath + media->file.relativePath.mid(pos + 1);
+            if (QFile::exists(attachFilePath)) {
+                chatMessageInfo.attachFileName = media->file.relativePath.mid(pos + 1).toUtf8().constData();
+                chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
+            }
+        }
+
+        QString fileSuffix = ".jpg";
+        pos = media->file.relativePath.lastIndexOf('.');
+        if (pos != -1) {
+            fileSuffix = media->file.relativePath.mid(pos + 1);
+        }
+
+        if (chatMessageInfo.attachFilePath.empty()) {
+            QString attachFilePath = _curPeerAttachPath + QString("%1%2").arg(media->id).arg(fileSuffix);
+            chatMessageInfo.attachFileName = QString("%1%2").arg(media->id).arg(fileSuffix).toUtf8().constData();
+            chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
+        }*/
+    }
+
+    void Account::parseSharedContactMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        const Export::Data::SharedContact& media
+    ) {
+        chatMessageInfo.msgType = IMMsgType::APP_SHARE_CONTACT;
+
+        chatMessageInfo.contactFirstName = media.info.firstName.constData();
+        chatMessageInfo.contactLastName = media.info.lastName.constData();
+        chatMessageInfo.contactPhone = media.info.phoneNumber.constData();
+    }
+
+    void Account::parseGeoPointMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        const Export::Data::GeoPoint& media
+    ) {
+        chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
+
+        chatMessageInfo.latitude = media.latitude;
+        chatMessageInfo.longitude = media.longitude;
+    }
+
+    void Account::parseVenueMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        const Export::Data::Venue& media
+    ) {
+        chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
+
+        chatMessageInfo.location = media.title.constData();
+        if (!media.address.isEmpty()) {
+            chatMessageInfo.location += std::string("\n") + media.address.constData();
+        }
+
+        chatMessageInfo.latitude = media.point.latitude;
+        chatMessageInfo.longitude = media.point.longitude;
+    }
+
+    Main::Account::ServerMessageVisitor::ServerMessageVisitor(
+        Main::Account& account,
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        Export::Data::Message* message
+    ) 
+        : _account(account),
+        _chatMessageInfo(chatMessageInfo),
+        _message(message)
+    {}
+
+    void Main::Account::ServerMessageVisitor::operator()(v::null_t) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatCreate& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建群<%2>").arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditTitle& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群标题为<%2>").arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditPhoto& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群头像>").arg(userName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeletePhoto& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 删除群头像>").arg(userName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatAddUser& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        QString msgContent;
+
+        for (const auto& userId : actionContent.userIds) {
+            if (!msgContent.isEmpty()) {
+                msgContent += ", ";
+            }
+
+            msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
+        }
+
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(userName).arg(msgContent)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeleteUser& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 移除 %2").arg(userName).arg(removedUserName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByLink& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        //QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.inviterId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 通过链接加入").arg(userName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelCreate& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建频道<%2>").arg(userName)
+            .arg(actionContent.title.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatMigrateTo& actionContent) {
+        QString chatName = _account.getChatDisplayName(_account.session().data().chat(peerToChat(_message->peerId)));
+        QString channelName = _account.getChannelDisplayName(_account.session().data().channel(actionContent.channelId));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 迁移为频道 %2")
+            .arg(chatName).arg(channelName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelMigrateFrom& actionContent) {
+        QString channelName = _account.getChannelDisplayName(_account.session().data().channel(peerToChannel(_message->peerId)));
+        QString chatName = _account.getChatDisplayName(_account.session().data().chat(actionContent.chatId));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1, 频道 %2 由迁移 %3")
+            .arg(actionContent.title.constData()).arg(chatName).arg(channelName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPinMessage& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionHistoryClear& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 清空聊天记录")
+            .arg(userName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGameScore& actionContent) {
+        _chatMessageInfo.content = (QString::fromStdWString(L"游戏得分%1")
+            .arg(actionContent.score)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPaymentSent& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发送付款请求 %2%3")
+            .arg(userName).arg(actionContent.amount)
+            .arg(actionContent.currency.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneCall& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_CALL;
+
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+
+        QString discardReason;
+        switch (actionContent.discardReason) {
+        case Export::Data::ActionPhoneCall::DiscardReason::Busy:
+        {
+            discardReason = QString::fromStdWString(L"拒接");
+        }
+        break;
+        case Export::Data::ActionPhoneCall::DiscardReason::Disconnect:
+        {
+            discardReason = QString::fromStdWString(L"挂断");
+        }
+        break;
+        case Export::Data::ActionPhoneCall::DiscardReason::Hangup:
+        {
+            discardReason = QString::fromStdWString(L"通话时长: %1秒").arg(actionContent.duration);
+        }
+        break;
+        case Export::Data::ActionPhoneCall::DiscardReason::Missed:
+        {
+            discardReason = QString::fromStdWString(L"未接通");
+        }
+        break;
+        default:
+            break;
+        }
+
+        _chatMessageInfo.content = (QString("%1 发起语音通话 %2").arg(userName).arg(discardReason)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionScreenshotTaken& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionCustomAction& actionContent) {
+        _chatMessageInfo.content = actionContent.message.constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionBotAllowed& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSecureValuesSent& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionContactSignUp& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneNumberRequest& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGeoProximityReached& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCall& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_CALL;
+
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString("%1 发起群通话, 时长: %2秒").arg(userName).arg(actionContent.duration)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionInviteToGroupCall& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        QString msgContent;
+
+        for (const auto& userId : actionContent.userIds) {
+            if (!msgContent.isEmpty()) {
+                msgContent += ", ";
+            }
+
+            msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
+        }
+
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2 进行语音通话").arg(userName).arg(msgContent)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetMessagesTTL& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCallScheduled& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetChatTheme& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 设置聊天背景").arg(userName)).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByRequest& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionWebViewDataSent& actionContent) {
+        _chatMessageInfo.content = actionContent.text.constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiftPremium& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicCreate& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发布公告: %2")
+            .arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicEdit& actionContent) {
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 编辑公告: %2")
+            .arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSuggestProfilePhoto& actionContent) {
+
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionRequestedPeer& actionContent) {
+
+    }
+
+    Main::Account::MessageMediaVisitor::MessageMediaVisitor(
+        Main::Account& account,
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        Export::Data::Message* message
+    )
+        : _account(account),
+        _chatMessageInfo(chatMessageInfo),
+        _message(message) {}
+
+    void Main::Account::MessageMediaVisitor::operator()(v::null_t) {
+
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Photo& media) {
+        auto& file = _message->media.file();
+        _chatMessageInfo.attachFileName = QString("%1.jpg").arg(_chatMessageInfo.id).toUtf8().constData();
+
+        if (file.skipReason == Export::Data::File::SkipReason::None) {
+            file.relativePath = _account._curPeerAttachPath;
+            file.relativePath.replace('\\', '/');
+            file.suggestedPath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
+            QFile::remove(file.suggestedPath);
+
+            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, file.suggestedPath.toUtf8().constData());
+            _account._files.emplace_back(std::move(file));
+        }
+
+        _account.parsePhotoMessage(_chatMessageInfo, media);
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Document& media) {
+        QString fileSuffix;
+        QString name = media.name;
+
+        if (name.isEmpty()) {
+            const auto mimeString = QString::fromUtf8(media.mime);
+            const auto mimeType = Core::MimeTypeForName(mimeString);
+            const auto hasMimeType = [&](const auto& mime) {
+                return !mimeString.compare(mime, Qt::CaseInsensitive);
+            };
+            const auto patterns = mimeType.globPatterns();
+            const auto pattern = patterns.isEmpty() ? QString() : patterns.front();
+            if (media.isVoiceMessage) {
+                const auto isMP3 = hasMimeType(u"audio/mp3"_q);
+                fileSuffix = isMP3 ? u".mp3"_q : u".ogg"_q;
+            } else if (media.isVideoFile) {
+                fileSuffix = pattern.isEmpty()
+                    ? u".mov"_q
+                    : QString(pattern).replace('*', QString());
+            } else {
+                fileSuffix = pattern.isEmpty()
+                    ? u".unknown"_q
+                    : QString(pattern).replace('*', QString());
+            }
+        } else {
+            int pos = name.lastIndexOf('.');
+            if (pos != -1) {
+                fileSuffix = name.mid(pos);
+            }
+        }
+
+        if (name.isEmpty()) {
+            name = QString("%1%2").arg(_chatMessageInfo.id).arg(fileSuffix);
+        }
+
+        _chatMessageInfo.attachFileName = name.toUtf8().constData();
+
+        auto& file = _message->media.file();
+
+        if (file.skipReason == Export::Data::File::SkipReason::None && fileSuffix != ".tgs") {
+            file.relativePath = _account._curPeerAttachPath;
+            file.relativePath.replace('\\', '/');
+
+            file.suggestedPath = QString("%1%2%3")
+                .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
+            QFile::remove(file.suggestedPath);
+            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, file.suggestedPath.toUtf8().constData());
+            _account._files.emplace_back(std::move(file));
+        }
+
+        _account.parseDocumentMessage(_chatMessageInfo, media);
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::SharedContact& media) {
+        _account.parseSharedContactMessage(_chatMessageInfo, media);
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::GeoPoint& media) {
+        _account.parseGeoPointMessage(_chatMessageInfo, media);
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Venue& media) {
+        _account.parseVenueMessage(_chatMessageInfo, media);
+    }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Game& media) { }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Invoice& media) { }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Poll& media) { }
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::UnsupportedMedia& media) { }
+
+    void Account::parseServerMessage(
+        Main::Account::ChatMessageInfo& chatMessageInfo,
+        Export::Data::Message* message
+    ) {
+        chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+
+        Main::Account::ServerMessageVisitor visitor(*this, chatMessageInfo, message);
+        std::visit(visitor, message->action.content);
+    }
+
+    Main::Account::ChatMessageInfo Account::MessageToChatMessageInfo(Export::Data::Message* message) {
+        Main::Account::ChatMessageInfo chatMessageInfo;
+
+        if (message) {
+            chatMessageInfo.msgType = IMMsgType::APP_MSG_TEXT;
+            chatMessageInfo.id = message->id;
+            chatMessageInfo.peerId = message->peerId.value;
+            chatMessageInfo.senderId = message->fromId.value;
+            chatMessageInfo.senderName = getUserDisplayName(_session->data().user(peerToUser(message->fromId))).toUtf8().constData();
+            chatMessageInfo.out = message->out;
+            chatMessageInfo.date = message->date;
+
+            for (const auto& textPart : message->text) {
+                if (!chatMessageInfo.content.empty()) {
+                    chatMessageInfo.content += "\n";
+                }
+
+                chatMessageInfo.content += textPart.text.constData();
+            }
+
+            Main::Account::MessageMediaVisitor visitor(*this, chatMessageInfo, message);
+            std::visit(visitor, message->media.content);
+
+            parseServerMessage(chatMessageInfo, message);
+        }
+
+        return chatMessageInfo;
     }
 
     void Account::saveContactsToDb(const std::list<ContactInfo>& contacts) {
@@ -1820,6 +2710,162 @@ namespace Main {
                 sqlite3_exec(_dataDb, "ROLLBACK;", nullptr, nullptr, nullptr);
             }
         }
+    }
+
+    bool Account::init() {
+        bool ok = false;
+        const wchar_t* errMsg = nullptr;
+
+        do {
+            const auto& appArgs = Core::Launcher::getApplicationArguments();
+            if (appArgs.size() < 6) {
+                Core::Quit();
+                break;
+            }
+
+            if (_handleLoginTimer) {
+                _handleLoginTimer->cancel();
+                delete _handleLoginTimer;
+                _handleLoginTimer = nullptr;
+            }
+
+            startHandlePipeCmdThd();
+
+            _dataPath = appArgs[1];
+            if (!_dataPath.empty() && _dataPath.back() != '\\') {
+                _dataPath += L"\\";
+            }
+
+            _rootPath = QString::fromStdWString(appArgs[2]).toUtf8().constData();
+            if (!_rootPath.empty() && _rootPath.back() == '\\') {
+                _rootPath.pop_back();
+            }
+
+            _profilePhotoPath = _dataPath + L"profile\\";
+            _utf8ProfilePhotoPath = QString::fromStdWString(_profilePhotoPath).toUtf8().constData();
+            if (GetFileAttributesW(_profilePhotoPath.c_str()) == -1) {
+                CreateDirectoryW(_profilePhotoPath.c_str(), nullptr);
+            }
+
+            _attachPath = _dataPath + L"files\\";
+            if (GetFileAttributesW(_attachPath.c_str()) == -1) {
+                CreateDirectoryW(_attachPath.c_str(), nullptr);
+            }
+
+            std::wstring dataDbPath = _dataPath + _session->user()->phone().toStdWString() + L".db";
+            int ret = sqlite3_open16(dataDbPath.c_str(), &_dataDb);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+            std::string sql = "PRAGMA encoding = 'UTF-8';";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+            sql = "CREATE TABLE IF NOT EXISTS users(uid INTEGER PRIMARY KEY NOT NULL, first_name TEXT, last_name TEXT, "
+                "username TEXT, phone TEXT, profile_photo TEXT, deleted INTEGER);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, "
+                "unread_count INTEGER, last_mid INTEGER);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_id INTEGER, sender_id INTEGER, "
+                "date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, "
+                "location TEXT, sender_name TEXT, content TEXT, thumb_file TEXT, attach_file TEXT, attach_filename TEXT, "
+                "PRIMARY KEY(mid, peer_id))";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS muti_messages(mid INTEGER NOT NULL, msg_type INTEGER, content TEXT);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, "
+                "is_channel INTEGER, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS participants(cid INTEGER NOT NULL, uid INTEGER NOT NULL, first_name TEXT, "
+                "last_name TEXT, username TEXT, phone TEXT, type TEXT, PRIMARY KEY (cid, uid));";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            ok = true;
+        } while (false);
+
+        if (!ok && _dataDb) {
+            errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
+        }
+
+        return ok;
+    }
+
+    bool Account::getRecvPipeCmd(PipeCmd::Cmd& cmd) {
+        bool isValidCmd = false;
+        {
+            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+            if (!_recvPipeCmds.empty()) {
+                cmd = _recvPipeCmds.front();
+                _recvPipeCmds.pop_front();
+
+                auto seq_number = cmd.seq_number();
+                auto iter = _runningPipeCmds.find(seq_number);
+                if (iter == _runningPipeCmds.end()) {
+                    _runningPipeCmds.emplace(seq_number);
+                    isValidCmd = true;
+                } else {
+                    isValidCmd = false;
+                }
+            }
+        }
+        return isValidCmd;
+    }
+
+    PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
+        {
+            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+            if (!_recvPipeCmds.empty()) {
+                auto iter = _runningPipeCmds.find(cmd.seq_number());
+                if (iter != _runningPipeCmds.end()) {
+                    _runningPipeCmds.erase(iter);
+                }
+            }
+        }
+        return _pipe->SendCmd(cmd, waitDone);
+    }
+
+    PipeCmd::Cmd Account::sendPipeResult(
+        const PipeCmd::Cmd& recvCmd,
+        TelegramCmd::LoginStatus status,
+        const std::string& content,
+        const std::string& error
+    ) {
+        PipeCmd::Cmd resultCmd;
+        resultCmd.set_action(recvCmd.action());
+        resultCmd.set_seq_number(recvCmd.seq_number());
+        resultCmd.set_content(content);
+
+        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(status));
+        if (!error.empty()) {
+            PipeWrapper::AddExtraData(resultCmd, "error", error);
+        }
+
+        return sendPipeCmd(resultCmd);
     }
 
 } // namespace Main
