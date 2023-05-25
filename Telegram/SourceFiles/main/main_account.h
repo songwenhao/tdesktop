@@ -184,6 +184,7 @@ namespace Main {
                 date = 0;
                 unread_count = 0;
                 lastMid = 0;
+                left = 0;
             }
 
             std::uint64_t id;
@@ -191,6 +192,7 @@ namespace Main {
             std::int32_t date;
             std::int32_t unread_count;
             std::int64_t lastMid;
+            std::int32_t left;
         };
 
         struct ChatInfo {
@@ -199,6 +201,7 @@ namespace Main {
                 date = 0;
                 isChannel = 0;
                 membersCount = 0;
+                left = 0;
             }
 
             std::uint64_t id;
@@ -208,6 +211,7 @@ namespace Main {
             std::int32_t membersCount;
             std::string channelName;
             std::string chatType;
+            std::int32_t left;
         };
 
         struct ParticipantInfo {
@@ -443,10 +447,18 @@ namespace Main {
         void requestContacts();
 
         void requestDialogs(
-            PeerData* offsetPeer,
+            MTPInputPeer peer,
             int offsetDate,
             int offsetId
         );
+
+        void requestDialogs(
+            PeerData* peer,
+            int offsetDate,
+            int offsetId
+        );
+
+        void requestLeftChannels(int offset);
 
         void requestChatParticipants();
         void requestChatParticipant(PeerData* peerData);
@@ -480,11 +492,18 @@ namespace Main {
 
         std::string utf16ToUtf8(const std::wstring& utf16Str);
 
+
         Main::Account::ContactInfo UserDataToContactInfo(UserData* userData);
 
-        Main::Account::DialogInfo PeerDataToDialogInfo(PeerData* peerData);
+        Main::Account::DialogInfo PeerDataToDialogInfo(
+            PeerData* peerData,
+            std::int32_t left = 0
+        );
 
-        Main::Account::ChatInfo PeerDataToChatInfo(PeerData* peerData);
+        Main::Account::ChatInfo PeerDataToChatInfo(
+            PeerData* peerData,
+            std::int32_t left = 0
+        );
 
         Main::Account::ParticipantInfo UserDataToParticipantInfo(UserData* userData);
 
@@ -534,6 +553,13 @@ namespace Main {
         void saveChatMessagesToDb(const std::list<ChatMessageInfo>& chatMessages);
 
         void saveChatMutiMessagesToDb(const ChatMessageInfo& chatMessage);
+
+        void processExportDialog(
+            const std::vector<Export::Data::DialogInfo>& parsedDialogs,
+            std::int32_t left,
+            std::list<DialogInfo>& dialogs,
+            std::list<ChatInfo>& chats
+        );
 
         static constexpr auto kDefaultSaveDelay = crl::time(1000);
         enum class DestroyReason {
@@ -610,6 +636,7 @@ namespace Main {
 
         std::list<Export::Data::File> _files;
         Export::Data::File* _curFile;
+        FILE* _curFileHandle;
 
         int _offset;
         int _offsetId;

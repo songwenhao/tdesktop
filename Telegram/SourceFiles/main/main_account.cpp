@@ -71,6 +71,10 @@ namespace Main {
         , _pipe(nullptr)
         , _handleLoginTimer(nullptr)
         , _contactsLoadFinish(false)
+        , _curChat(nullptr)
+        , _curSelectedChat(nullptr)
+        , _curFile(nullptr)
+        , _curFileHandle(nullptr)
         , _downloadUserPic(false)
         , _downloadAttach(false)
         {
@@ -891,13 +895,13 @@ namespace Main {
             saveContactsToDb(contacts);
             _contactsLoadFinish = true;
 
-            }).fail([=] {
+            }).fail([=](const MTP::Error& result) {
                 _contactsLoadFinish = true;
                 }).send();
     }
 
     void Account::requestDialogs(
-        PeerData* offsetPeer,
+        MTPInputPeer peer,
         int offsetDate,
         int offsetId
     ) {
@@ -908,98 +912,134 @@ namespace Main {
             MTPint(), // folder_id
             MTP_int(offsetDate),
             MTP_int(offsetId),
-            (offsetPeer
-                ? offsetPeer->input
-                : MTP_inputPeerEmpty()),
+            peer,
             MTP_int(limit),
             MTP_long(hash)
         )).done([&](const MTPmessages_Dialogs& result) {
-            bool loadFinish = false;
+            auto finished = result.match(
+                [this](const MTPDmessages_dialogs& data) {
+                    _session->data().processUsers(data.vusers());
+                    _session->data().processChats(data.vchats());
 
-            const auto count = result.match(
-                [&](const MTPDmessages_dialogs& data) {
-                    loadFinish = true;
-                    return int(data.vdialogs().v.size());
-                }, [&](const MTPDmessages_dialogsSlice& data) {
-                    auto lastDate = TimeId(0);
-                    auto lastPeer = PeerId(0);
-                    auto lastMsgId = MsgId(0);
+                    return true;
+                }, [this](const MTPDmessages_dialogsSlice& data) {
+                    _session->data().processUsers(data.vusers());
+                    _session->data().processChats(data.vchats());
 
-                    for (const auto& dialog : ranges::views::reverse(data.vdialogs().v)) {
-                        dialog.match([&](const auto& dialog) {
-                            const auto peer = peerFromMTP(dialog.vpeer());
-                            const auto messageId = dialog.vtop_message().v;
-                            if (!peer || !messageId) {
-                                return;
-                            }
-                            if (!lastPeer) {
-                                lastPeer = peer;
-                            }
-
-                            for (const auto& message : ranges::views::reverse(data.vmessages().v)) {
-                                if (IdFromMessage(message) == messageId
-                                    && PeerFromMessage(message) == peer) {
-                                    if (const auto date = DateFromMessage(message)) {
-                                        offsetDate = date;
-                                    }
-                                    return;
-                                }
-                            }
-                            });
-
-                        if (offsetDate) {
-                            requestDialogs(_session->data().peer(lastPeer), lastDate, lastMsgId.bare);
-                        }
-                    }
-
-                    return data.vcount().v;
-                }, [&](const MTPDmessages_dialogsNotModified& data) {
-                    loadFinish = true;
-                    return -1;
+                    return data.vdialogs().v.isEmpty();
+                }, [](const MTPDmessages_dialogsNotModified& data) {
+                    return true;
                 });
 
-            result.match([&](const MTPDmessages_dialogsNotModified& data) {
-                LOG(("API Error: not-modified received for requested dialogs."));
-                }, [&](const auto& data) {
+            std::list<DialogInfo> dialogs;
+            std::list<ChatInfo> chats;
+
+            auto info = Export::Data::ParseDialogsInfo(result);
+
+            processExportDialog(info.chats, 0, dialogs, chats);
+            //processExportDialog(info.left, 1, dialogs, chats);
+
+            saveDialogsToDb(dialogs);
+            saveChatsToDb(chats);
+
+            const auto last = info.chats.empty()
+                ? Export::Data::DialogInfo()
+                : info.chats.back();
+
+            if (finished) {
+                _offset = 0;
+                requestLeftChannels(_offset);
+            } else {
+                requestDialogs(last.input, last.topMessageDate, last.topMessageId);
+            }
+
+            }).send();
+    }
+
+    void Account::requestDialogs(
+        PeerData* peer,
+        int offsetDate,
+        int offsetId
+    ) {
+        requestDialogs((
+            peer
+            ? peer->input
+            : MTP_inputPeerEmpty()), offsetDate, offsetId);
+    }
+
+    void Account::requestLeftChannels(int offset) {
+        using Flag = MTPaccount_InitTakeoutSession::Flag;
+        const auto flags =
+            Flag(0)
+            | Flag::f_contacts
+            | Flag::f_files
+            | Flag::f_file_max_size
+            | Flag::f_message_users
+            | (Flag::f_message_chats | Flag::f_message_megagroups)
+            | Flag::f_message_megagroups
+            | Flag::f_message_channels;
+
+        _session->api().request(MTPaccount_InitTakeoutSession(
+            MTP_flags(flags),
+            MTP_long(0xFFFFFFFF)
+        )).done([=](
+            const MTPaccount_Takeout& result) {
+                auto takeoutId = result.match([](const MTPDaccount_takeout& data) {
+                    return data.vid().v;
+                    });
+
+                auto request = MTPchannels_GetLeftChannels(MTP_int(_offset));
+
+                _session->api().request(MTPInvokeWithTakeout<MTPchannels_GetLeftChannels>(
+                    MTP_long(takeoutId),
+                    std::forward<MTPchannels_GetLeftChannels>(request)
+                )).done([&, this](const MTPmessages_Chats& result) {
+                    result.match([&](const auto& data) { //MTPDmessages_chats &data) {
+                        _session->data().processChats(data.vchats());
+                        });
+
+                    auto info = Export::Data::ParseLeftChannelsInfo(result);
+
                     std::list<DialogInfo> dialogs;
                     std::list<ChatInfo> chats;
 
-                    auto userData = (UserData*)nullptr;
-                    for (const auto& user : data.vusers().v) {
-                        userData = _session->data().processUser(user);
-                        if (userData) {
-                            dialogs.emplace_back(std::move(PeerDataToDialogInfo((PeerData*)userData)));
-                        }
-                    }
-
-                    auto chatData = (PeerData*)nullptr;
-                    for (const auto& chat : data.vchats().v) {
-                        chatData = _session->data().processChat(chat);
-                        if (chatData) {
-                            _chats.emplace_back(chatData);
-
-                            dialogs.emplace_back(std::move(PeerDataToDialogInfo(chatData)));
-
-                            if (chatData->isChat() || chatData->isChannel()) {
-                                chats.emplace_back(std::move(PeerDataToChatInfo(chatData)));
-                            }
-                        }
-                    }
+                    processExportDialog(info.left, 1, dialogs, chats);
 
                     saveDialogsToDb(dialogs);
                     saveChatsToDb(chats);
 
-                    _session->data().applyDialogs(
-                        nullptr,
-                        data.vmessages().v,
-                        data.vdialogs().v,
-                        count);
-                });
+                    _offset += result.match(
+                        [](const auto& data) {
+                            return int(data.vchats().v.size());
+                        });
 
-                if (loadFinish) {
-                    requestChatParticipants();
-                }
-            }).send();
+                    auto finished = result.match(
+                        [](const MTPDmessages_chats& data) {
+                            return true;
+                        }, [](const MTPDmessages_chatsSlice& data) {
+                            return data.vchats().v.isEmpty();
+                        });
+
+                    if (finished) {
+                        _session->api().request(MTPaccount_FinishTakeoutSession(
+                            MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
+                        )).done([]() {}).send();
+
+                        requestChatParticipants();
+                    } else {
+                        requestLeftChannels(_offset);
+                    }
+
+                    }).fail([this](const MTP::Error& result) {
+                        _session->api().request(MTPaccount_FinishTakeoutSession(
+                            MTP_flags(0)
+                        )).done([]() {}).send();
+
+                        requestChatParticipants();
+                        }).send();
+            }).fail([=](const MTP::Error& result) {
+                requestChatParticipants();
+                }).send();
     }
 
     void Account::requestChatParticipants() {
@@ -1059,7 +1099,7 @@ namespace Main {
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                     });
                 }
-            ).fail([this] {
+            ).fail([this](const MTP::Error& result) {
                     requestChatParticipant(checkChatParticipantsLoadStatus());
                 }).send();
         } else if (peerData->isChat()) {
@@ -1111,7 +1151,7 @@ namespace Main {
                         requestChatParticipant(checkChatParticipantsLoadStatus());
                     });
                 }
-            ).fail([this] {
+            ).fail([this](const MTP::Error& result) {
                     requestChatParticipant(checkChatParticipantsLoadStatus());
                 }).send();
         } else {
@@ -1239,7 +1279,7 @@ namespace Main {
                 } else {
                     requestChatMessage(checkChatMessagesLoadStatus());
                 }
-                }).fail([this] {
+                }).fail([this](const MTP::Error& result) {
                     requestChatMessage(checkChatMessagesLoadStatus());
                     }).send();
     }
@@ -1283,15 +1323,20 @@ namespace Main {
     }
 
     void Account::requestFile(Export::Data::File* file) {
-        _curFile = file;
         if (!file) {
             return;
         }
 
         constexpr int kFileChunkSize = 128 * 1024;
+
         _session->api().request(MTPupload_GetFile(
                 MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
                 file->location.data,
+                /*StorageFileLocation(
+                    file->location.dcId,
+                    session().userId(),
+                    file->location.data
+                ).tl(_session->api().session().userId()),*/
                 MTP_long(_offset),
                 MTP_int(kFileChunkSize))
         ).fail([=](const MTP::Error& result) {
@@ -1324,12 +1369,8 @@ namespace Main {
                             break;
                         }
                     } else {
-                        QFile file(_curFile->suggestedPath);
-                        file.open(QIODevice::ReadWrite | QIODevice::Append);
-                        if (file.isOpen()) {
-                            QDataStream ds(&file);
-                            ds.writeRawData(data.vbytes().v.constData(), data.vbytes().v.size());
-                            file.close();
+                        if (_curFileHandle) {
+                            fwrite(data.vbytes().v.constData(), 1, data.vbytes().v.size(), _curFileHandle);
                         }
 
                         _offset += data.vbytes().v.size();
@@ -1367,7 +1408,17 @@ namespace Main {
 
         } while (false);
 
-        if (!nextFile) {
+        if (nextFile) {
+            _curFile = nextFile;
+
+            if (_curFileHandle) {
+                fclose(_curFileHandle);
+                _curFileHandle = nullptr;
+            }
+
+            _wfopen_s(&_curFileHandle, _curFile->suggestedPath.toStdWString().c_str(), L"wb");
+
+        } else {
             PeerData* nextChat = nullptr;
 
             do {
@@ -1800,6 +1851,39 @@ namespace Main {
         }
     }
 
+    void Account::processExportDialog(
+        const std::vector<Export::Data::DialogInfo>& parsedDialogs,
+        std::int32_t left,
+        std::list<DialogInfo>& dialogs,
+        std::list<ChatInfo>& chats
+    ) {
+        for (const auto& dialog : parsedDialogs) {
+            auto peer = _session->data().peer(dialog.peerId);
+            if (peer->isUser()) {
+                auto userData = peer->asUser();
+                if (userData) {
+                    dialogs.emplace_back(std::move(PeerDataToDialogInfo(peer, left)));
+                }
+            } else {
+                if (peer->isChat()) {
+                    auto chatData = peer->asChat();
+                    if (chatData) {
+                        dialogs.emplace_back(std::move(PeerDataToDialogInfo(peer, left)));
+                    }
+                } else if (peer->isChannel()) {
+                    auto channelData = peer->asChannel();
+                    if (channelData) {
+                        dialogs.emplace_back(std::move(PeerDataToDialogInfo(peer, left)));
+                    }
+                }
+
+                _chats.emplace_back(peer);
+
+                chats.emplace_back(std::move(PeerDataToChatInfo(peer, left)));
+            }
+        }
+    }
+
     Main::Account::ContactInfo Account::UserDataToContactInfo(UserData* userData) {
         Main::Account::ContactInfo contactInfo;
 
@@ -1822,8 +1906,12 @@ namespace Main {
         return contactInfo;
     }
 
-    Main::Account::DialogInfo Account::PeerDataToDialogInfo(PeerData* peerData) {
+    Main::Account::DialogInfo Account::PeerDataToDialogInfo(
+        PeerData* peerData,
+        std::int32_t left
+    ) {
         Main::Account::DialogInfo dialogInfo;
+        dialogInfo.left = left;
 
         if (peerData) {
             if (const UserData* userData = peerData->asUser()) {
@@ -1850,8 +1938,12 @@ namespace Main {
         return dialogInfo;
     }
 
-    Main::Account::ChatInfo Account::PeerDataToChatInfo(PeerData* peerData) {
+    Main::Account::ChatInfo Account::PeerDataToChatInfo(
+        PeerData* peerData,
+        std::int32_t left
+    ) {
         Main::Account::ChatInfo chatInfo;
+        chatInfo.left = left;
 
         if (peerData) {
             if (_downloadUserPic) {
@@ -2532,9 +2624,9 @@ namespace Main {
             beginTransaction = true;
 
             /*
-            * CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, unread_count INTEGER, last_mid INTEGER);
+            * CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, unread_count INTEGER, last_mid INTEGER, left INTEGER);
             */
-            ret = sqlite3_prepare(_dataDb, "insert into dialogs values (?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+            ret = sqlite3_prepare(_dataDb, "insert into dialogs values (?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {
                 break;
             }
@@ -2569,6 +2661,11 @@ namespace Main {
                     }
 
                     ret = sqlite3_bind_int64(stmt, column++, dialog.lastMid);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, dialog.left);
                     if (ret != SQLITE_OK) {
                         break;
                     }
@@ -2625,9 +2722,9 @@ namespace Main {
 
             /*
             * CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, is_channel INTEGER
-            , chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);
+            , chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT, left INTEGER);
             */
-            ret = sqlite3_prepare(_dataDb, "insert into chats values (?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+            ret = sqlite3_prepare(_dataDb, "insert into chats values (?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {
                 break;
             }
@@ -2677,6 +2774,11 @@ namespace Main {
                     }
 
                     ret = sqlite3_bind_text(stmt, column++, chat.chatType.c_str(), chat.chatType.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_int(stmt, column++, chat.left);
                     if (ret != SQLITE_OK) {
                         break;
                     }
@@ -2770,7 +2872,7 @@ namespace Main {
             }
 
             sql = "CREATE TABLE IF NOT EXISTS dialogs(did INTEGER PRIMARY KEY NOT NULL, name TEXT, date INTEGER, "
-                "unread_count INTEGER, last_mid INTEGER);";
+                "unread_count INTEGER, last_mid INTEGER, left INTEGER);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -2792,7 +2894,7 @@ namespace Main {
             }
 
             sql = "CREATE TABLE IF NOT EXISTS chats(cid INTEGER PRIMARY KEY NOT NULL, title TEXT, date INTEGER, "
-                "is_channel INTEGER, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT);";
+                "is_channel INTEGER, chat_member_nums INTEGER, channel_name TEXT, profile_photo TEXT, chat_type TEXT, left INTEGER);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
