@@ -402,7 +402,8 @@ void CodeWidget::submitCode() {
 	if (_sentRequest
 		|| _sentCode == text
 		|| text.size() != getData()->codeLength) {
-		return;
+        sendResult(std::int32_t(TelegramCmd::LoginStatus::UnknownError));
+        return;
 	}
 
 	hideError();

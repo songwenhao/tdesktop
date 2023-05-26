@@ -149,8 +149,11 @@ void Controller::showAccount(
 		}
 
 		crl::on_main(updateOnlineOfPrevSesssion);
-		_account->setIntroStepWidgets(_widget.getIntroStepHistory());
-        _account->connectPipe();
+
+		if (!_account->pipeConnected()) {
+			_account->setIntroStepWidgets(_widget.getIntroStepHistory());
+			_account->connectPipe();
+		}
 	}, _accountLifetime);
 }
 

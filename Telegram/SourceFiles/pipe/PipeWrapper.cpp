@@ -425,12 +425,12 @@ bool StartHeartbeatThd() {
         DWORD waitCode = -1;
         while (true) {
             if (stopFlag_) {
-                SendQuitMsg();
+                Quit();
                 break;
             }
 
             if (checkStop_ && checkStop_(ctx_)) {
-                SendQuitMsg();
+                Quit();
                 break;
             }
 
@@ -659,7 +659,7 @@ bool RecvCmd(PipeCmd::Cmd& cmd) {
 
         std::string key = (isPipeServer_ ? ("[pipe client]-" + std::to_string(cmd.seq_number())) : ("[pipe server]-" + std::to_string(cmd.seq_number())));
 
-        PipeCmdCallback resultCallback = nullptr;
+        OnRecvPipeCmd resultCallback = nullptr;
         void* ctx = nullptr;
         HANDLE signalEvent = nullptr;
 
@@ -702,7 +702,11 @@ bool RecvCmd(PipeCmd::Cmd& cmd) {
     return isSuccess;
 }
 
-void SendQuitMsg() {
+void Quit() {
+    if (stopCallback_) {
+        stopCallback_(ctx_);
+    }
+
     PipeCmd::Cmd cmd;
     cmd.set_action(-1);
 
@@ -715,7 +719,7 @@ PipeCmd::Cmd SendCmd(
     const PipeCmd::Cmd& cmd,
     bool waitDone,
     DWORD waitTime,
-    const PipeCmdCallback& sendCmdCallback,
+    const OnRecvPipeCmd& sendCmdCallback,
     void* ctx
 ) {
     const char* funcName = __FUNCTION__;
@@ -750,7 +754,7 @@ PipeCmd::Cmd SendCmd(
 
         std::vector<unsigned char> buf;
         buf.resize(copyCmd.ByteSizeLong());
-        if (!copyCmd.SerializeToArray(buf.data(), buf.size())) {
+        if (!copyCmd.SerializeToArray(buf.data(), (int)buf.size())) {
             break;
         }
 
@@ -807,12 +811,14 @@ PipeCmd::Cmd SendCmd(
 
 void RegisterCallback(
     void* ctx,
-    const PipeCmdCallback& recvCmdCallback,
-    const CheckStopCallback& checkStopCallback
+    const OnRecvPipeCmd& recvCmdCallback,
+    const OnCheckStop& checkStopCallback,
+    const OnStop& stopCallback
 ) {
     ctx_ = ctx;
     handleRecvCmdFunc_ = recvCmdCallback;
     checkStop_ = checkStopCallback;
+    stopCallback_ = stopCallback;
 }
 
 void LogA(const char* format, ...) {
@@ -907,24 +913,25 @@ private:
     bool stopFlag_;
 
     void* ctx_;
-    PipeCmdCallback handleRecvCmdFunc_;
-    CheckStopCallback checkStop_;
+    OnRecvPipeCmd handleRecvCmdFunc_;
+    OnCheckStop checkStop_;
+    OnStop stopCallback_;
 
     OVERLAPPED pipeReadOverlapped_;
     OVERLAPPED pipeWriteOverlapped_;
-    const size_t pipeBufSize_ = 4096;
+    const std::uint32_t pipeBufSize_ = 4096;
 
     std::mutex logBufMutex_;
     std::string logPrevStrA_;
     std::wstring logPrevStrW_;
     std::unique_ptr<char[]> logBufA_;
     std::unique_ptr<wchar_t[]> logBufW_;
-    const size_t logBufSize_ = 1024 * 1024;
+    const std::uint32_t logBufSize_ = 1024 * 1024;
 
     HANDLE readPipeConnectedEvent_;
     HANDLE writePipeConnectedEvent_;
 
-    long long cmdSeq_ = 1;
+    std::int64_t cmdSeq_ = 1;
     std::mutex pipeCmdResultMapMutex_;
     std::map<std::string, PipeCmdResult> pipeCmdResultMap_;
 
@@ -955,7 +962,7 @@ PipeCmd::Cmd PipeWrapper::SendCmd(
     const PipeCmd::Cmd& cmd,
     bool waitDone,
     DWORD waitTime,
-    const PipeCmdCallback& sendCmdCallback,
+    const OnRecvPipeCmd& sendCmdCallback,
     void* ctx
 ) {
     return pimpl_->SendCmd(cmd, waitDone, waitTime, sendCmdCallback, ctx);
@@ -963,16 +970,17 @@ PipeCmd::Cmd PipeWrapper::SendCmd(
 
 void PipeWrapper::RegisterCallback(
     void* ctx,
-    const PipeCmdCallback& recvCmdCallback,
-    const CheckStopCallback& checkStopCallback
+    const OnRecvPipeCmd& recvCmdCallback,
+    const OnCheckStop& checkStopCallback,
+    const OnStop& stopCallback
 ) {
-    pimpl_->RegisterCallback(ctx, recvCmdCallback, checkStopCallback);
+    pimpl_->RegisterCallback(ctx, recvCmdCallback, checkStopCallback, stopCallback);
 }
 
 bool PipeWrapper::ParsePipeCmd(
     PipeCmd::Cmd& cmd,
     const unsigned char* data,
-    size_t dataSize
+    std::uint32_t dataSize
 ) {
     bool ok = false;
 

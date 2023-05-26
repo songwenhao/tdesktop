@@ -148,11 +148,15 @@ namespace Main {
 
         void setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory);
 
+        bool pipeConnected();
+
         bool connectPipe();
 
         bool init();
 
-        bool getRecvPipeCmd(PipeCmd::Cmd& cmd);
+        bool getRecvPipeCmd();
+
+        void goBackCurPipeCmd();
 
         PipeCmd::Cmd sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone = false);
 
@@ -623,7 +627,12 @@ namespace Main {
         std::wstring _profilePhotoPath;
         std::wstring _attachPath;
         std::string _utf8ProfilePhotoPath;
+
+        std::int32_t _checkLoginBeginTime;
+        bool _checkLoginDone;
+
         std::unique_ptr<PipeWrapper> _pipe;
+        bool _pipeConnected;
         base::Timer* _handleLoginTimer;
         std::vector<Intro::details::Step*>* _stepHistory;
 

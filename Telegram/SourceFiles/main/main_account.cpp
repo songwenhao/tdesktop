@@ -69,6 +69,7 @@ namespace Main {
             ComposeDataString(dataName, index)))
         , _dataDb(nullptr)
         , _pipe(nullptr)
+        , _pipeConnected(false)
         , _handleLoginTimer(nullptr)
         , _contactsLoadFinish(false)
         , _curChat(nullptr)
@@ -667,7 +668,15 @@ namespace Main {
         _stepHistory = stepHistory;
     }
 
+    bool Account::pipeConnected() {
+        return _pipeConnected;
+    }
+
     bool Account::connectPipe() {
+        _pipeConnected = true;
+        _checkLoginBeginTime = 0;
+        _checkLoginDone = false;
+
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
         if (appArgs.size() >= 6) {
@@ -686,45 +695,57 @@ namespace Main {
                     }
                 }
                 }, [](void* ctx)->bool {
-                    if (ctx) {
-                        return ((Account*)ctx)->_loggingOut;
-                    }
                     return false;
+                }, [](void* ctx) {
+                    Core::Quit();
                 });
 
             if (_pipe->ConnectPipe(30 * 1000)) {
-                if (!sessionExists()) {
-                    _handleLoginTimer = new base::Timer([this] { handleLoginPipeCmd(); });
-                    if (_handleLoginTimer) {
-                        _handleLoginTimer->callEach(1000);
-                    }
+                _handleLoginTimer = new base::Timer([this] { handleLoginPipeCmd(); });
+                if (_handleLoginTimer) {
+                    _handleLoginTimer->callEach(1000);
                 }
             }
 
+        } else {
+            Core::Quit();
         }
+
         return connected;
     }
 
     void Account::handleLoginPipeCmd() {
         do {
-            PipeCmd::Cmd recvCmd;
-            bool isValidCmd = getRecvPipeCmd(recvCmd);
+            if (_checkLoginDone && sessionExists()) {
+                break;
+            }
+
+            bool isValidCmd = getRecvPipeCmd();
             if (!isValidCmd) {
                 break;
             }
 
-            _curRecvCmd.Clear();
-            _curRecvCmd = std::move(recvCmd);
-
             TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action();
             if (action == TelegramCmd::Action::CheckIsLogin) {
-                std::string content;
+                // 5秒后检查登录状态
+                if (_checkLoginBeginTime == 0) {
+                    _checkLoginBeginTime = QDateTime::currentSecsSinceEpoch();
+                    goBackCurPipeCmd();
+                } else {
+                    if ((QDateTime::currentSecsSinceEpoch() - _checkLoginBeginTime) >= 5) {
+                        _checkLoginDone = true;
 
-                if (sessionExists()) {
-                    content = _session->user()->phone().toUtf8().constData();
+                        std::string content;
+
+                        if (sessionExists()) {
+                            content = _session->user()->phone().toUtf8().constData();
+                        }
+
+                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, content);
+                    } else {
+                        goBackCurPipeCmd();
+                    }
                 }
-
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, content);
 
             } else if (action == TelegramCmd::Action::SendPhoneCode) {
                 if (_stepHistory) {
@@ -791,22 +812,21 @@ namespace Main {
                 }
             } else if (action == TelegramCmd::Action::Unknown) {
                 Core::Quit();
+            } else {
+                // 登录成功后收到的其它命令不作处理，重新放入命令队列
+                goBackCurPipeCmd();
             }
         } while (false);
     }
 
     void Account::startHandlePipeCmdThd() {
         std::thread thd([this]() {
-            while (!_loggingOut) {
+            while (true) {
                 do {
-                    PipeCmd::Cmd recvCmd;
-                    bool isValidCmd = getRecvPipeCmd(recvCmd);
+                    bool isValidCmd = getRecvPipeCmd();
                     if (!isValidCmd) {
                         break;
                     }
-
-                    _curRecvCmd.Clear();
-                    _curRecvCmd = std::move(recvCmd);
 
                     TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action();
                     if (action == TelegramCmd::Action::CheckIsLogin) {
@@ -850,9 +870,8 @@ namespace Main {
                     } else if (action == TelegramCmd::Action::Unknown) {
                         Core::Quit();
                     }
-                } while (false);
 
-                Sleep(100);
+                } while (false);
             }
             });
 
@@ -1038,6 +1057,9 @@ namespace Main {
                         requestChatParticipants();
                         }).send();
             }).fail([=](const MTP::Error& result) {
+                if (result.type().indexOf("TAKEOUT_INIT_DELAY") != -1) {
+                    // 等待24小时
+                }
                 requestChatParticipants();
                 }).send();
     }
@@ -1075,10 +1097,6 @@ namespace Main {
                     std::list<ParticipantInfo> participants;
 
                     for (const auto& data : list) {
-                        if (_loggingOut) {
-                            break;
-                        }
-
                         UserData* userData = _session->data().userLoaded(data.userId());
                         if (userData) {
                             participants.emplace_back(std::move(UserDataToParticipantInfo(userData)));
@@ -1128,10 +1146,6 @@ namespace Main {
 
                                 const auto& list = data.vparticipants().v;
                                 for (const auto& participant : list) {
-                                    if (_loggingOut) {
-                                        break;
-                                    }
-
                                     const auto userId = participant.match([&](const auto& data) {
                                         return data.vuser_id().v;
                                         });
@@ -1252,10 +1266,6 @@ namespace Main {
                         std::list<ChatMessageInfo> chatMessages;
 
                         for (auto i = list.size(); i != 0;) {
-                            if (_loggingOut) {
-                                break;
-                            }
-
                             const auto& message = list[--i];
 
                             QString mediaFolder = _curPeerAttachPath;
@@ -2529,10 +2539,6 @@ namespace Main {
             }
 
             for (const auto& contact : contacts) {
-                if (_loggingOut) {
-                    break;
-                }
-
                 ok = false;
                 int column = 1;
 
@@ -2632,10 +2638,6 @@ namespace Main {
             }
 
             for (const auto& dialog : dialogs) {
-                if (_loggingOut) {
-                    break;
-                }
-
                 ok = false;
                 int column = 1;
 
@@ -2730,10 +2732,6 @@ namespace Main {
             }
 
             for (const auto& chat : chats) {
-                if (_loggingOut) {
-                    break;
-                }
-
                 ok = false;
                 int column = 1;
 
@@ -2819,17 +2817,21 @@ namespace Main {
         const wchar_t* errMsg = nullptr;
 
         do {
+            if (!_checkLoginDone || !sessionExists()) {
+                break;
+            }
+
             const auto& appArgs = Core::Launcher::getApplicationArguments();
             if (appArgs.size() < 6) {
                 Core::Quit();
                 break;
             }
 
-            if (_handleLoginTimer) {
+            /*if (_handleLoginTimer) {
                 _handleLoginTimer->cancel();
                 delete _handleLoginTimer;
                 _handleLoginTimer = nullptr;
-            }
+            }*/
 
             startHandlePipeCmdThd();
 
@@ -2917,35 +2919,43 @@ namespace Main {
         return ok;
     }
 
-    bool Account::getRecvPipeCmd(PipeCmd::Cmd& cmd) {
+    bool Account::getRecvPipeCmd() {
         bool isValidCmd = false;
         {
             std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
             if (!_recvPipeCmds.empty()) {
-                cmd = _recvPipeCmds.front();
-                _recvPipeCmds.pop_front();
-
-                auto seq_number = cmd.seq_number();
-                auto iter = _runningPipeCmds.find(seq_number);
-                if (iter == _runningPipeCmds.end()) {
-                    _runningPipeCmds.emplace(seq_number);
-                    isValidCmd = true;
-                } else {
+                auto iter = _runningPipeCmds.find(_curRecvCmd.seq_number());
+                if (iter != _runningPipeCmds.end()) {
                     isValidCmd = false;
+                } else {
+                    _curRecvCmd.Clear();
+                    _curRecvCmd = _recvPipeCmds.front();
+                    _recvPipeCmds.pop_front();
+                    _runningPipeCmds.emplace(_curRecvCmd.seq_number());
+                    isValidCmd = true;
                 }
             }
         }
         return isValidCmd;
     }
 
+    void Account::goBackCurPipeCmd() {
+        {
+            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+            auto iter = _runningPipeCmds.find(_curRecvCmd.seq_number());
+            if (iter != _runningPipeCmds.end()) {
+                _runningPipeCmds.erase(iter);
+                _recvPipeCmds.emplace_back(std::move(_curRecvCmd));
+            }
+        }
+    }
+
     PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
         {
             std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
-            if (!_recvPipeCmds.empty()) {
-                auto iter = _runningPipeCmds.find(cmd.seq_number());
-                if (iter != _runningPipeCmds.end()) {
-                    _runningPipeCmds.erase(iter);
-                }
+            auto iter = _runningPipeCmds.find(cmd.seq_number());
+            if (iter != _runningPipeCmds.end()) {
+                _runningPipeCmds.erase(iter);
             }
         }
         return _pipe->SendCmd(cmd, waitDone);
