@@ -614,6 +614,14 @@ namespace Main {
 
         rpl::lifetime _lifetime;
 
+        sqlite3* _dataDb;
+        std::unique_ptr<PipeWrapper> _pipe;
+        bool _pipeConnected;
+        std::int32_t _checkLoginBeginTime;
+        bool _checkLoginDone;
+        base::Timer* _handleLoginTimer;
+        std::vector<Intro::details::Step*>* _stepHistory;
+
         std::deque<PipeCmd::Cmd> _recvPipeCmds;
         std::mutex _recvPipeCmdsLock;
         std::set<std::int64_t> _runningPipeCmds;
@@ -621,20 +629,10 @@ namespace Main {
         PipeCmd::Cmd _curRecvCmd;
         QString _curPeerAttachPath;
 
-        sqlite3* _dataDb;
         std::wstring _dataPath;
         std::string _rootPath;
         std::wstring _profilePhotoPath;
         std::wstring _attachPath;
-        std::string _utf8ProfilePhotoPath;
-
-        std::int32_t _checkLoginBeginTime;
-        bool _checkLoginDone;
-
-        std::unique_ptr<PipeWrapper> _pipe;
-        bool _pipeConnected;
-        base::Timer* _handleLoginTimer;
-        std::vector<Intro::details::Step*>* _stepHistory;
 
         bool _contactsLoadFinish;
         std::list<PeerData*> _chats;

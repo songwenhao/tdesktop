@@ -70,12 +70,17 @@ namespace Main {
         , _dataDb(nullptr)
         , _pipe(nullptr)
         , _pipeConnected(false)
+        , _checkLoginBeginTime(0)
+        , _checkLoginDone(false)
         , _handleLoginTimer(nullptr)
+        , _stepHistory(nullptr)
         , _contactsLoadFinish(false)
         , _curChat(nullptr)
         , _curSelectedChat(nullptr)
         , _curFile(nullptr)
         , _curFileHandle(nullptr)
+        , _offset(0)
+        , _offsetId(0)
         , _downloadUserPic(false)
         , _downloadAttach(false)
         {
@@ -738,6 +743,7 @@ namespace Main {
                         std::string content;
 
                         if (sessionExists()) {
+                            init();
                             content = _session->user()->phone().toUtf8().constData();
                         }
 
@@ -2846,7 +2852,6 @@ namespace Main {
             }
 
             _profilePhotoPath = _dataPath + L"profile\\";
-            _utf8ProfilePhotoPath = QString::fromStdWString(_profilePhotoPath).toUtf8().constData();
             if (GetFileAttributesW(_profilePhotoPath.c_str()) == -1) {
                 CreateDirectoryW(_profilePhotoPath.c_str(), nullptr);
             }
