@@ -76,7 +76,8 @@ public:
 		uint64 photoId) const;
 
 	[[nodiscard]] int32 dcId() const;
-	[[nodiscard]] uint64 objectId() const;
+    [[nodiscard]] uint64 objectId() const;
+    [[nodiscard]] uint64 accessHash() const;
 	[[nodiscard]] MTPInputFileLocation tl(UserId self) const;
 
 	[[nodiscard]] QByteArray serialize() const;

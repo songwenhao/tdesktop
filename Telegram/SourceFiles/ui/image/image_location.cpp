@@ -210,6 +210,10 @@ uint64 StorageFileLocation::objectId() const {
 	return _id;
 }
 
+uint64 StorageFileLocation::accessHash() const {
+	return _accessHash;
+}
+
 MTPInputFileLocation StorageFileLocation::tl(UserId self) const {
 	switch (_type) {
 	case Type::Legacy:

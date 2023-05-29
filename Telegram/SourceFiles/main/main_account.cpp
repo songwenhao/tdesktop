@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_photo.h"
 #include "data/data_file_origin.h"
+#include "data/data_document.h"
 #include "window/window_controller.h"
 #include "media/audio/media_audio.h"
 #include "mtproto/mtproto_config.h"
@@ -77,8 +78,8 @@ namespace Main {
         , _contactsLoadFinish(false)
         , _curChat(nullptr)
         , _curSelectedChat(nullptr)
-        , _curFile(nullptr)
-        , _curFileHandle(nullptr)
+        , _curDownloadFile(nullptr)
+        , _curDocumentData(nullptr)
         , _offset(0)
         , _offsetId(0)
         , _downloadUserPic(false)
@@ -878,6 +879,8 @@ namespace Main {
                     }
 
                 } while (false);
+
+                Sleep(100);
             }
             });
 
@@ -956,8 +959,8 @@ namespace Main {
                     return true;
                 });
 
-            std::list<DialogInfo> dialogs;
-            std::list<ChatInfo> chats;
+            std::list<Main::Account::DialogInfo> dialogs;
+            std::list<Main::Account::ChatInfo> chats;
 
             auto info = Export::Data::ParseDialogsInfo(result);
 
@@ -1025,8 +1028,8 @@ namespace Main {
 
                     auto info = Export::Data::ParseLeftChannelsInfo(result);
 
-                    std::list<DialogInfo> dialogs;
-                    std::list<ChatInfo> chats;
+                    std::list<Main::Account::DialogInfo> dialogs;
+                    std::list<Main::Account::ChatInfo> chats;
 
                     processExportDialog(info.left, 1, dialogs, chats);
 
@@ -1100,7 +1103,7 @@ namespace Main {
                         ? Api::ChatParticipants::ParseRecent(channel, data)
                         : Api::ChatParticipants::Parse(channel, data);
 
-                    std::list<ParticipantInfo> participants;
+                    std::list<Main::Account::ParticipantInfo> participants;
 
                     for (const auto& data : list) {
                         UserData* userData = _session->data().userLoaded(data.userId());
@@ -1148,7 +1151,7 @@ namespace Main {
                         }, [&](const MTPDchatParticipants& data) {
                             const auto status = chat->applyUpdateVersion(data.vversion().v);
                             if (status != ChatData::UpdateStatus::TooOld) {
-                                std::list<ParticipantInfo> participantInfos;
+                                std::list<Main::Account::ParticipantInfo> participantInfos;
 
                                 const auto& list = data.vparticipants().v;
                                 for (const auto& participant : list) {
@@ -1338,102 +1341,63 @@ namespace Main {
         requestFile(checkFilesLoadStatus(true));
     }
 
-    void Account::requestFile(Export::Data::File* file) {
-        if (!file) {
-            return;
-        }
+    void Account::requestFile(Main::Account::DownloadFileInfo* file) {
+        bool requestNext = true;
 
-        constexpr int kFileChunkSize = 128 * 1024;
-
-        _session->api().request(MTPupload_GetFile(
-                MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
-                file->location.data,
-                /*StorageFileLocation(
-                    file->location.dcId,
-                    session().userId(),
-                    file->location.data
-                ).tl(_session->api().session().userId()),*/
-                MTP_long(_offset),
-                MTP_int(kFileChunkSize))
-        ).fail([=](const MTP::Error& result) {
-            if (result.type() == u"TAKEOUT_FILE_EMPTY"_q) {
-                requestFile(checkFilesLoadStatus());
-            } else if (result.type() == u"LOCATION_INVALID"_q
-                || result.type() == u"VERSION_INVALID"_q
-                || result.type() == u"LOCATION_NOT_AVAILABLE"_q) {
-                requestFile(checkFilesLoadStatus());
-            } else if (result.code() == 400
-                && result.type().startsWith(u"FILE_REFERENCE_"_q)) {
-                // filePartRefreshReference(offset);
-                requestFile(checkFilesLoadStatus());
-            } else {
-                requestFile(checkFilesLoadStatus());
+        do {
+            if (!file) {
+                break;
             }
-            }).done([=, this](const MTPupload_File& result) {
-                do {
-                    if (result.type() == mtpc_upload_fileCdnRedirect) {
-                        requestFile(checkFilesLoadStatus());
-                        break;
-                    }
 
-                    const auto& data = result.c_upload_file();
-                    if (data.vbytes().v.isEmpty()) {
-                        requestFile(checkFilesLoadStatus());
+            if (_curDocumentData) {
+                if (!_curDocumentData->loading()) {
+                    delete _curDocumentData;
+                    _curDocumentData = nullptr;
+                } else {
+                    requestNext = false;
+                }
+            }
 
-                        if (_curFile->size > 0) {
-                            // error("Empty bytes received in file part.");
-                            break;
-                        }
-                    } else {
-                        if (_curFileHandle) {
-                            fwrite(data.vbytes().v.constData(), 1, data.vbytes().v.size(), _curFileHandle);
-                        }
+            _curDocumentData = new DocumentData(&_session->data(), file->docId);
+            if (_curDocumentData) {
+                requestNext = false;
+                _curDocumentData->setRemoteLocation(file->dcId, file->accessHash, file->fileReference);
+                _curDocumentData->save(file->msgId, file->saveFilePath, LoadFromCloudOrLocal, true);
+            } else {
+                break;
+            }
 
-                        _offset += data.vbytes().v.size();
+        } while (false);
 
-                        if (_offset >= _curFile->size) {
-                            requestFile(checkFilesLoadStatus());
-                        } else {
-                            requestFile(_curFile);
-                        }
-                    }
-
-                } while (false);
-                }).send();
+        if (requestNext) {
+            requestFile(checkFilesLoadStatus());
+        }
     }
 
-    Export::Data::File* Account::checkFilesLoadStatus(bool first) {
-        Export::Data::File* nextFile = nullptr;
+    Main::Account::DownloadFileInfo* Account::checkFilesLoadStatus(bool first) {
+        Main::Account::DownloadFileInfo* nextFile = nullptr;
         _offset = 0;
         _offsetId = 0;
 
         do {
-            if (_files.empty()) {
+            if (_downloadFiles.empty()) {
                 break;
             }
 
             if (!first) {
-                _files.pop_front();
+                _downloadFiles.pop_front();
             }
             
-            if (_files.empty()) {
+            if (_downloadFiles.empty()) {
                 break;
             }
 
-            nextFile = &(_files.front());
+            nextFile = &(_downloadFiles.front());
 
         } while (false);
 
         if (nextFile) {
-            _curFile = nextFile;
-
-            if (_curFileHandle) {
-                fclose(_curFileHandle);
-                _curFileHandle = nullptr;
-            }
-
-            _wfopen_s(&_curFileHandle, _curFile->suggestedPath.toStdWString().c_str(), L"wb");
-
+            _curDownloadFile = nextFile;
         } else {
             PeerData* nextChat = nullptr;
 
@@ -1549,7 +1513,7 @@ namespace Main {
 
     void Account::saveParticipantsToDb(
         uint64_t peerId,
-        const std::list<ParticipantInfo>& participants
+        const std::list<Main::Account::ParticipantInfo>& participants
     ) {
         sqlite3_stmt* stmt = nullptr;
         bool beginTransaction = false;
@@ -1870,8 +1834,8 @@ namespace Main {
     void Account::processExportDialog(
         const std::vector<Export::Data::DialogInfo>& parsedDialogs,
         std::int32_t left,
-        std::list<DialogInfo>& dialogs,
-        std::list<ChatInfo>& chats
+        std::list<Main::Account::DialogInfo>& dialogs,
+        std::list<Main::Account::ChatInfo>& chats
     ) {
         for (const auto& dialog : parsedDialogs) {
             auto peer = _session->data().peer(dialog.peerId);
@@ -2394,11 +2358,23 @@ namespace Main {
         if (file.skipReason == Export::Data::File::SkipReason::None) {
             file.relativePath = _account._curPeerAttachPath;
             file.relativePath.replace('\\', '/');
-            file.suggestedPath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
-            QFile::remove(file.suggestedPath);
+            
+            Main::Account::DownloadFileInfo downloadFileInfo;
+            downloadFileInfo.docId = media.id;
+            downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+            downloadFileInfo.dcId = file.location.dcId;
 
-            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, file.suggestedPath.toUtf8().constData());
-            _account._files.emplace_back(std::move(file));
+            StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
+            downloadFileInfo.accessHash = fileLocation.accessHash();
+            downloadFileInfo.fileReference = fileLocation.fileReference();
+            downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
+            downloadFileInfo.saveFilePath.replace('\\', '/');
+
+            QFile::remove(downloadFileInfo.saveFilePath);
+
+            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
+
+            _account._downloadFiles.emplace_back(downloadFileInfo);
         }
 
         _account.parsePhotoMessage(_chatMessageInfo, media);
@@ -2447,11 +2423,23 @@ namespace Main {
             file.relativePath = _account._curPeerAttachPath;
             file.relativePath.replace('\\', '/');
 
-            file.suggestedPath = QString("%1%2%3")
+            Main::Account::DownloadFileInfo downloadFileInfo;
+            downloadFileInfo.docId = media.id;
+            downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+            downloadFileInfo.dcId = file.location.dcId;
+
+            StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
+            downloadFileInfo.accessHash = fileLocation.accessHash();
+            downloadFileInfo.fileReference = fileLocation.fileReference();
+            downloadFileInfo.saveFilePath = QString("%1%2%3")
                 .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
-            QFile::remove(file.suggestedPath);
-            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, file.suggestedPath.toUtf8().constData());
-            _account._files.emplace_back(std::move(file));
+            downloadFileInfo.saveFilePath.replace('\\', '/');
+
+            QFile::remove(downloadFileInfo.saveFilePath);
+
+            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
+
+            _account._downloadFiles.emplace_back(downloadFileInfo);
         }
 
         _account.parseDocumentMessage(_chatMessageInfo, media);
@@ -2516,7 +2504,7 @@ namespace Main {
         return chatMessageInfo;
     }
 
-    void Account::saveContactsToDb(const std::list<ContactInfo>& contacts) {
+    void Account::saveContactsToDb(const std::list<Main::Account::ContactInfo>& contacts) {
         sqlite3_stmt* stmt = nullptr;
 
         bool beginTransaction = false;
@@ -2616,7 +2604,7 @@ namespace Main {
         }
     }
 
-    void Account::saveDialogsToDb(const std::list<DialogInfo>& dialogs) {
+    void Account::saveDialogsToDb(const std::list<Main::Account::DialogInfo>& dialogs) {
         sqlite3_stmt* stmt = nullptr;
 
         bool beginTransaction = false;
@@ -2709,7 +2697,7 @@ namespace Main {
         }
     }
 
-    void Account::saveChatsToDb(const std::list<ChatInfo>& chats) {
+    void Account::saveChatsToDb(const std::list<Main::Account::ChatInfo>& chats) {
         sqlite3_stmt* stmt = nullptr;
 
         bool beginTransaction = false;

@@ -327,7 +327,24 @@ namespace Main {
             std::string attachFilePath;
             std::string attachThumbFilePath;
             std::string attachFileName;
-            std::list<ChatMutiMessageInfo> mutiMsgs;
+            std::list<Main::Account::ChatMutiMessageInfo> mutiMsgs;
+        };
+
+        struct DownloadFileInfo {
+            DownloadFileInfo() {
+                docId = 0;
+                fileSize = 0;
+                dcId = 0;
+                accessHash = 0;
+            }
+
+            FullMsgId msgId;
+            uint64 docId;
+            int64 fileSize;
+            int dcId;
+            uint64 accessHash;
+            QByteArray fileReference;
+            QString saveFilePath;
         };
 
         struct ServerMessageVisitor {
@@ -475,9 +492,9 @@ namespace Main {
         PeerData* checkChatMessagesLoadStatus(bool first = false);
 
         void requestFiles();
-        void requestFile(Export::Data::File* file);
+        void requestFile(Main::Account::DownloadFileInfo* file);
 
-        Export::Data::File* checkFilesLoadStatus(bool first = false);
+        Main::Account::DownloadFileInfo* checkFilesLoadStatus(bool first = false);
 
         QString getUserDisplayName(UserData* userData);
 
@@ -495,7 +512,6 @@ namespace Main {
         std::wstring utf8ToUtf16(const std::string& utf8Str);
 
         std::string utf16ToUtf8(const std::wstring& utf16Str);
-
 
         Main::Account::ContactInfo UserDataToContactInfo(UserData* userData);
 
@@ -543,26 +559,26 @@ namespace Main {
 
         Main::Account::ChatMessageInfo MessageToChatMessageInfo(Export::Data::Message* message);
 
-        void saveContactsToDb(const std::list<ContactInfo>& contacts);
+        void saveContactsToDb(const std::list<Main::Account::ContactInfo>& contacts);
 
-        void saveDialogsToDb(const std::list<DialogInfo>& dialogs);
+        void saveDialogsToDb(const std::list<Main::Account::DialogInfo>& dialogs);
 
-        void saveChatsToDb(const std::list<ChatInfo>& chats);
+        void saveChatsToDb(const std::list<Main::Account::ChatInfo>& chats);
 
         void saveParticipantsToDb(
             uint64_t peerId,
-            const std::list<ParticipantInfo>& participants
+            const std::list<Main::Account::ParticipantInfo>& participants
         );
 
-        void saveChatMessagesToDb(const std::list<ChatMessageInfo>& chatMessages);
+        void saveChatMessagesToDb(const std::list<Main::Account::ChatMessageInfo>& chatMessages);
 
-        void saveChatMutiMessagesToDb(const ChatMessageInfo& chatMessage);
+        void saveChatMutiMessagesToDb(const Main::Account::ChatMessageInfo& chatMessage);
 
         void processExportDialog(
             const std::vector<Export::Data::DialogInfo>& parsedDialogs,
             std::int32_t left,
-            std::list<DialogInfo>& dialogs,
-            std::list<ChatInfo>& chats
+            std::list<Main::Account::DialogInfo>& dialogs,
+            std::list<Main::Account::ChatInfo>& chats
         );
 
         static constexpr auto kDefaultSaveDelay = crl::time(1000);
@@ -641,9 +657,9 @@ namespace Main {
         std::list<PeerData*> _selectedChats;
         PeerData* _curSelectedChat;
 
-        std::list<Export::Data::File> _files;
-        Export::Data::File* _curFile;
-        FILE* _curFileHandle;
+        std::list<Main::Account::DownloadFileInfo> _downloadFiles;
+        Main::Account::DownloadFileInfo* _curDownloadFile;
+        DocumentData* _curDocumentData;
 
         int _offset;
         int _offsetId;

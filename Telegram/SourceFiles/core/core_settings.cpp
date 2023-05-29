@@ -790,6 +790,7 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 			|| Ui::GL::LastCrashCheckFailed());
 	}
 	_groupCallNoiseSuppression = (groupCallNoiseSuppression == 1);
+	workMode = static_cast<qint32>(WorkMode::WindowOnly);
 	const auto uncheckedWorkMode = static_cast<WorkMode>(workMode);
 	switch (uncheckedWorkMode) {
 	case WorkMode::WindowAndTray:
