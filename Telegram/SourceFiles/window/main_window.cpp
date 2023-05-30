@@ -494,10 +494,12 @@ void MainWindow::init() {
 	updateTitle();
 	updateWindowIcon();
 
+#ifndef SHOW_WINDOW
 	{
 		// hide taskbar icon
         SetWindowLong((HWND)winId(), GWL_EXSTYLE, WS_EX_TOOLWINDOW);
 	}
+#endif
 }
 
 void MainWindow::handleStateChanged(Qt::WindowState state) {
@@ -800,6 +802,7 @@ void MainWindow::initGeometry() {
 		).arg(geometry.width()
 		).arg(geometry.height()));
 
+#ifndef SHOW_WINDOW
     int y = 0;
     const auto primaryScreen = QGuiApplication::primaryScreen();
     if (primaryScreen) {
@@ -817,6 +820,9 @@ void MainWindow::initGeometry() {
     changedGeometry.setHeight(geometry.height());
 
 	setGeometry(changedGeometry);
+#else
+    setGeometry(geometry);
+#endif
 }
 
 void MainWindow::positionUpdated() {

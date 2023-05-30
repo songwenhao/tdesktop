@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_file_origin.h"
 #include "data/data_document.h"
+#include "data/data_file_click_handler.h"
 #include "window/window_controller.h"
 #include "media/audio/media_audio.h"
 #include "mtproto/mtproto_config.h"
@@ -68,6 +69,7 @@ namespace Main {
         , _local(std::make_unique<Storage::Account>(
             this,
             ComposeDataString(dataName, index)))
+        , _stop(false)
         , _dataDb(nullptr)
         , _pipe(nullptr)
         , _pipeConnected(false)
@@ -79,7 +81,7 @@ namespace Main {
         , _curChat(nullptr)
         , _curSelectedChat(nullptr)
         , _curDownloadFile(nullptr)
-        , _curDocumentData(nullptr)
+        , _curSignaledEvent(nullptr)
         , _offset(0)
         , _offsetId(0)
         , _downloadUserPic(false)
@@ -679,6 +681,11 @@ namespace Main {
     }
 
     bool Account::connectPipe() {
+#if 0
+        _pipeConnected = true;
+        _checkLoginDone = true;
+        return true;
+#endif
         _pipeConnected = true;
         _checkLoginBeginTime = 0;
         _checkLoginDone = false;
@@ -722,6 +729,22 @@ namespace Main {
 
     void Account::handleLoginPipeCmd() {
         do {
+            if (_stop) {
+                Core::Quit();
+                break;
+            }
+
+            if (_curSignaledEvent) {
+                DWORD waitCode = WaitForSingleObject(_curSignaledEvent, 0);
+                if (waitCode != WAIT_TIMEOUT) {
+                    CloseHandle(_curSignaledEvent);
+                    _curSignaledEvent = nullptr;
+                    _session->data().removeDocument(_curDownloadFile->docId);
+
+                    requestFile();
+                }
+            }
+
             if (_checkLoginDone && sessionExists()) {
                 break;
             }
@@ -866,7 +889,7 @@ namespace Main {
                             }
                         }
 
-                        requestChatMessages();
+                        requestChatMessage(true);
 
                     } else if (action == TelegramCmd::Action::ExportData) {
 
@@ -875,7 +898,7 @@ namespace Main {
                             sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
                             });
                     } else if (action == TelegramCmd::Action::Unknown) {
-                        Core::Quit();
+                        _stop = true;
                     }
 
                 } while (false);
@@ -976,7 +999,12 @@ namespace Main {
 
             if (finished) {
                 _offset = 0;
+
+#ifdef SHOW_WINDOW
+                requestChatParticipant(true);
+#else
                 requestLeftChannels(_offset);
+#endif
             } else {
                 requestDialogs(last.input, last.topMessageDate, last.topMessageId);
             }
@@ -1053,7 +1081,7 @@ namespace Main {
                             MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
                         )).done([]() {}).send();
 
-                        requestChatParticipants();
+                        requestChatParticipant(true);
                     } else {
                         requestLeftChannels(_offset);
                     }
@@ -1063,29 +1091,54 @@ namespace Main {
                             MTP_flags(0)
                         )).done([]() {}).send();
 
-                        requestChatParticipants();
+                        requestChatParticipant(true);
                         }).send();
             }).fail([=](const MTP::Error& result) {
                 if (result.type().indexOf("TAKEOUT_INIT_DELAY") != -1) {
                     // 等待24小时
                 }
-                requestChatParticipants();
+                requestChatParticipant(true);
                 }).send();
     }
 
-    void Account::requestChatParticipants() {
-        requestChatParticipant(checkChatParticipantsLoadStatus(true));
+    void Account::requestChatParticipant(bool first) {
+        PeerData* nextChat = nullptr;
+
+        do {
+            if (_chats.empty()) {
+                break;
+            }
+
+            if (!first) {
+                _chats.pop_front();
+            }
+
+            if (_chats.empty()) {
+                break;
+            }
+
+            nextChat = _chats.front();
+
+        } while (false);
+
+        if (nextChat) {
+            _offset = 0;
+            _curChat = nextChat;
+
+            requestChatParticipantEx();
+        } else {
+            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+        }
     }
 
-    void Account::requestChatParticipant(PeerData* peerData) {
-        _curChat = peerData;
-        if (!peerData) {
+    void Account::requestChatParticipantEx() {
+        if (!_curChat) {
             return;
         }
 
-        if (peerData->isChannel()) {
+        if (_curChat->isChannel()) {
             const auto participantsHash = uint64(0);
-            const auto channel = peerData->asChannel();
+            const auto channel = _curChat->asChannel();
 
             _session->api().request(MTPchannels_GetParticipants(
                 channel->inputChannel,
@@ -1116,21 +1169,21 @@ namespace Main {
                         saveParticipantsToDb(_curChat->id.value, participants);
 
                         _offset += size;
-                        requestChatParticipant(_curChat);
+                        requestChatParticipantEx();
 
                     } else {
                         // To be sure - wait for a whole empty result list.
-                        requestChatParticipant(checkChatParticipantsLoadStatus());
+                        requestChatParticipant();
                     }
                     }, [&](const MTPDchannels_channelParticipantsNotModified&) {
-                        requestChatParticipant(checkChatParticipantsLoadStatus());
+                        requestChatParticipant();
                     });
                 }
             ).fail([this](const MTP::Error& result) {
-                    requestChatParticipant(checkChatParticipantsLoadStatus());
+                    requestChatParticipant();
                 }).send();
-        } else if (peerData->isChat()) {
-            const auto chat = peerData->asChat();
+        } else if (_curChat->isChat()) {
+            const auto chat = _curChat->asChat();
             _session->api().request(MTPmessages_GetFullChat(
                 chat->inputChat
             )).done([=](const MTPmessages_ChatFull& result) {
@@ -1147,7 +1200,7 @@ namespace Main {
                             // self->
                         }
 
-                        requestChatParticipant(checkChatParticipantsLoadStatus());
+                        requestChatParticipant();
                         }, [&](const MTPDchatParticipants& data) {
                             const auto status = chat->applyUpdateVersion(data.vversion().v);
                             if (status != ChatData::UpdateStatus::TooOld) {
@@ -1168,49 +1221,21 @@ namespace Main {
                                 saveParticipantsToDb(_curChat->id.value, participantInfos);
                             }
 
-                            requestChatParticipant(checkChatParticipantsLoadStatus());
+                            requestChatParticipant();
                         });
                     }, [&](const MTPDchannelFull& data) {
-                        requestChatParticipant(checkChatParticipantsLoadStatus());
+                        requestChatParticipant();
                     });
                 }
             ).fail([this](const MTP::Error& result) {
-                    requestChatParticipant(checkChatParticipantsLoadStatus());
+                    requestChatParticipant();
                 }).send();
         } else {
-            requestChatParticipant(checkChatParticipantsLoadStatus());
+            requestChatParticipant();
         }
     }
 
-    PeerData* Account::checkChatParticipantsLoadStatus(bool first) {
-        PeerData* nextChat = nullptr;
-        _offset = 0;
-
-        do {
-            if (_chats.empty()) {
-                break;
-            }
-
-            if (!first) {
-                _chats.pop_front();
-            }
-
-            if (_chats.empty()) {
-                break;
-            }
-
-            nextChat = _chats.front();
-
-        } while (false);
-
-        if (!nextChat) {
-            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
-        }
-
-        return nextChat;
-    }
-
-    void Account::requestChatMessages() {
+    void Account::requestChatMessage(bool first) {
         PeerData* nextChat = nullptr;
         _offsetId = 0;
 
@@ -1219,21 +1244,38 @@ namespace Main {
                 break;
             }
 
-            nextChat = _selectedChats.front();
-            _selectedChats.pop_front();
+            if (first) {
+                nextChat = _selectedChats.front();
+            } else {
+                _selectedChats.pop_front();
+
+                if (!_downloadAttach) {
+                    if (_selectedChats.empty()) {
+                        break;
+                    }
+
+                    nextChat = _selectedChats.front();
+                }
+            }
 
         } while (false);
 
-        if (nextChat) {
-            requestChatMessage(nextChat);
+        if (_downloadAttach && !first) {
+            requestFile(first);
         } else {
-            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+            if (nextChat) {
+                _curSelectedChat = nextChat;
+                _offsetId = 0;
+
+                requestChatMessageEx();
+            } else {
+                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+            }
         }
     }
 
-    void Account::requestChatMessage(PeerData* peerData) {
-        _curSelectedChat = peerData;
-        if (!peerData) {
+    void Account::requestChatMessageEx() {
+        if (!_curSelectedChat) {
             return;
         }
 
@@ -1246,12 +1288,13 @@ namespace Main {
 
         _curPeerAttachPath = getPeerAttachPath(_curSelectedChat->id.value);
         std::wstring peerAttachPath = _curPeerAttachPath.toStdWString();
+        std::replace(peerAttachPath.begin(), peerAttachPath.end(), L'/', L'\\');
         if (GetFileAttributesW(peerAttachPath.c_str()) == -1) {
             CreateDirectoryW(peerAttachPath.c_str(), nullptr);
         }
 
         _session->api().request(MTPmessages_GetHistory(
-            peerData->input,
+            _curSelectedChat->input,
             MTP_int(_offsetId),
             MTP_int(offsetDate),
             MTP_int(addOffset),
@@ -1277,10 +1320,17 @@ namespace Main {
                         for (auto i = list.size(); i != 0;) {
                             const auto& message = list[--i];
 
-                            QString mediaFolder = _curPeerAttachPath;
-                            mediaFolder.replace('\\', '/');
+                            message.match([&](const MTPDmessage& data) {
+                                if (const auto media = data.vmedia()) {
+                                    media->match([&](const MTPDmessageMediaDocument& data) {
+                                        auto documentData = _session->data().processDocument(*data.vdocument());
+                                        documentData = _session->data().document(documentData->id);
+                                        }, [&](const auto& data) {
+                                        });
+                                }
+                                }, [&](const auto& data) {});
 
-                            auto parsedMessage = ParseMessage(context, message, mediaFolder);
+                            auto parsedMessage = ParseMessage(context, message, _curPeerAttachPath);
                             msgIds.emplace(parsedMessage.id);
 
                             chatMessages.emplace_back(MessageToChatMessageInfo(&parsedMessage));
@@ -1294,90 +1344,17 @@ namespace Main {
                     });
 
                 if (msgCount > 0) {
-                    requestChatMessage(_curSelectedChat);
+                    requestChatMessageEx();
                 } else {
-                    requestChatMessage(checkChatMessagesLoadStatus());
+                    requestChatMessage();
                 }
                 }).fail([this](const MTP::Error& result) {
-                    requestChatMessage(checkChatMessagesLoadStatus());
+                    requestChatMessage();
                     }).send();
     }
 
-    PeerData* Account::checkChatMessagesLoadStatus(bool first) {
-        PeerData* nextChat = nullptr;
-        _offsetId = 0;
-
-        do {
-            if (_selectedChats.empty()) {
-                break;
-            }
-
-            if (first) {
-                nextChat = _selectedChats.front();
-            } else {
-                if (!_downloadAttach) {
-                    _selectedChats.pop_front();
-
-                    if (_selectedChats.empty()) {
-                        break;
-                    }
-
-                    nextChat = _selectedChats.front();
-                }
-            }
-
-        } while (false);
-
-        if (_downloadAttach) {
-            requestFiles();
-        } else if (!nextChat) {
-            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
-        }
-
-        return nextChat;
-    }
-
-    void Account::requestFiles() {
-        requestFile(checkFilesLoadStatus(true));
-    }
-
-    void Account::requestFile(Main::Account::DownloadFileInfo* file) {
-        bool requestNext = true;
-
-        do {
-            if (!file) {
-                break;
-            }
-
-            if (_curDocumentData) {
-                if (!_curDocumentData->loading()) {
-                    delete _curDocumentData;
-                    _curDocumentData = nullptr;
-                } else {
-                    requestNext = false;
-                }
-            }
-
-            _curDocumentData = new DocumentData(&_session->data(), file->docId);
-            if (_curDocumentData) {
-                requestNext = false;
-                _curDocumentData->setRemoteLocation(file->dcId, file->accessHash, file->fileReference);
-                _curDocumentData->save(file->msgId, file->saveFilePath, LoadFromCloudOrLocal, true);
-            } else {
-                break;
-            }
-
-        } while (false);
-
-        if (requestNext) {
-            requestFile(checkFilesLoadStatus());
-        }
-    }
-
-    Main::Account::DownloadFileInfo* Account::checkFilesLoadStatus(bool first) {
+    void Account::requestFile(bool first) {
         Main::Account::DownloadFileInfo* nextFile = nullptr;
-        _offset = 0;
-        _offsetId = 0;
 
         do {
             if (_downloadFiles.empty()) {
@@ -1386,8 +1363,12 @@ namespace Main {
 
             if (!first) {
                 _downloadFiles.pop_front();
+
+                if (_curFileHandle.isOpen()) {
+                    _curFileHandle.close();
+                }
             }
-            
+
             if (_downloadFiles.empty()) {
                 break;
             }
@@ -1397,33 +1378,94 @@ namespace Main {
         } while (false);
 
         if (nextFile) {
+            _offset = 0;
+            _offsetId = 0;
             _curDownloadFile = nextFile;
+            _curFileHandle.setFileName(_curDownloadFile->saveFilePath);
+            _curFileHandle.open(QIODevice::WriteOnly);
+
+            requestFileEx();
         } else {
-            PeerData* nextChat = nullptr;
-
-            do {
-                if (_selectedChats.empty()) {
-                    break;
-                }
-
-                _selectedChats.pop_front();
-
-                if (_selectedChats.empty()) {
-                    break;
-                }
-
-                nextChat = _selectedChats.front();
-
-            } while (false);
-
-            if (nextChat) {
-                requestChatMessage(nextChat);
+            if (!_selectedChats.empty()) {
+                requestChatMessage();
             } else {
                 sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
             }
         }
+    }
 
-        return nextFile;
+    void Account::requestFileEx() {
+        if (!_curDownloadFile) {
+            return;
+        }
+
+        QFile::remove(_curDownloadFile->saveFilePath);
+
+        if (!_curDownloadFile->fileReference.isEmpty()) {
+            auto documentData = _session->data().document(_curDownloadFile->docId);
+            if (documentData) {
+                _curSignaledEvent = CreateEventW(nullptr, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
+                DocumentSaveClickHandler::SaveFile(_curDownloadFile->msgId, _curDownloadFile->fileOrigin, documentData, _curDownloadFile->saveFilePath);
+            } else {
+                requestFile();
+            }
+        } else {
+            constexpr int kFileChunkSize = 128 * 1024;
+            _session->api().request(MTPupload_GetFile(
+                MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+                _curDownloadFile->fileLocation,
+                MTP_long(_offset),
+                MTP_int(kFileChunkSize))
+            ).fail([=](const MTP::Error& result) {
+                if (result.type() == u"TAKEOUT_FILE_EMPTY"_q) {
+                } else if (result.type() == u"LOCATION_INVALID"_q
+                    || result.type() == u"VERSION_INVALID"_q
+                    || result.type() == u"LOCATION_NOT_AVAILABLE"_q) {
+                } else if (result.code() == 400
+                    && result.type().startsWith(u"FILE_REFERENCE_"_q)) {
+                    // filePartRefreshReference(offset);
+                } else {
+                }
+
+                requestFile();
+
+                }).done([=, this](const MTPupload_File& result) {
+                    bool hasErr = true;
+
+                    do {
+                        if (result.type() == mtpc_upload_fileCdnRedirect) {
+                            break;
+                        }
+
+                        const auto& data = result.c_upload_file();
+                        if (data.vbytes().v.isEmpty()) {
+                            break;
+                        } else {
+                            if (_curFileHandle.isOpen()) {
+                                _curFileHandle.seek(_offset);
+
+                                const char* rawData = data.vbytes().v.constData();
+                                int rawDataSize = data.vbytes().v.size();
+                                if (rawData && _curFileHandle.write(rawData, rawDataSize) == qint64(rawDataSize)) {
+                                    hasErr = false;
+                                    _offset += rawDataSize;
+                                }
+                            }
+                        }
+
+                    } while (false);
+
+                    if (!hasErr) {
+                        if (_offset >= _curDownloadFile->fileSize) {
+                            requestFile();
+                        } else {
+                            requestFileEx();
+                        }
+                    } else {
+                        requestFile();
+                    }
+                    }).send();
+        }
     }
 
     QString Account::getUserDisplayName(UserData* userData) {
@@ -1475,7 +1517,7 @@ namespace Main {
     }
 
     QString Account::getPeerAttachPath(std::uint64_t peerId) {
-        return QString("%1%2/").arg(QString::fromStdWString(_attachPath)).arg(peerId);
+        return QString("%1%2/").arg(QString::fromStdWString(_attachPath)).arg(peerId).replace('\\', '/');
     }
 
     std::string Account::GetRelativeFilePath(
@@ -1997,115 +2039,6 @@ namespace Main {
         return participantInfo;
     }
 
-    void Account::parsePhotoMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        const Export::Data::Photo& media
-    ) {
-        chatMessageInfo.msgType = IMMsgType::APP_MSG_PIC;
-
-        /*auto pos = media->image.file.relativePath.lastIndexOf('/');
-        if (pos != -1) {
-            QString attachFilePath = _curPeerAttachPath + media->image.file.relativePath.mid(pos + 1);
-            if (QFile::exists(attachFilePath)) {
-                chatMessageInfo.attachFileName = media->image.file.relativePath.mid(pos + 1).toUtf8().constData();
-                chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
-            }
-        }
-
-        QString fileSuffix = ".jpg";
-        pos = media->image.file.relativePath.lastIndexOf('.');
-        if (pos != -1) {
-            fileSuffix = media->image.file.relativePath.mid(pos + 1);
-        }
-
-        if (chatMessageInfo.attachFilePath.empty()) {
-            QString attachFilePath = _curPeerAttachPath + QString("%1%2").arg(media->id).arg(fileSuffix);
-
-            chatMessageInfo.attachFileName = QString("%1%2").arg(media->id).arg(fileSuffix).toUtf8().constData();
-            chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
-
-            QFile file(attachFilePath);
-            file.open(QIODevice::WriteOnly | QIODevice::Truncate);
-            if (file.isOpen()) {
-                QDataStream ds(&file);
-                ds.writeRawData(media->image.file.content.constData(), media->image.file.content.size());
-                file.close();
-            }
-        }*/
-    }
-
-    void Account::parseDocumentMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        const Export::Data::Document& media
-    ) {
-        chatMessageInfo.msgType = IMMsgType::APP_MSG_FILE;
-
-        chatMessageInfo.duration = media.duration;
-
-        if (media.isAudioFile || media.isVoiceMessage) {
-            chatMessageInfo.msgType = IMMsgType::APP_MSG_AUDIO;
-        } else if (media.isVideoFile || media.isVideoMessage) {
-            chatMessageInfo.msgType = IMMsgType::APP_MSG_VEDIO;
-        }
-
-        /*auto pos = media->file.relativePath.lastIndexOf('/');
-        if (pos != -1) {
-            QString attachFilePath = _curPeerAttachPath + media->file.relativePath.mid(pos + 1);
-            if (QFile::exists(attachFilePath)) {
-                chatMessageInfo.attachFileName = media->file.relativePath.mid(pos + 1).toUtf8().constData();
-                chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
-            }
-        }
-
-        QString fileSuffix = ".jpg";
-        pos = media->file.relativePath.lastIndexOf('.');
-        if (pos != -1) {
-            fileSuffix = media->file.relativePath.mid(pos + 1);
-        }
-
-        if (chatMessageInfo.attachFilePath.empty()) {
-            QString attachFilePath = _curPeerAttachPath + QString("%1%2").arg(media->id).arg(fileSuffix);
-            chatMessageInfo.attachFileName = QString("%1%2").arg(media->id).arg(fileSuffix).toUtf8().constData();
-            chatMessageInfo.attachFilePath = GetRelativeFilePath(_rootPath, attachFilePath.toUtf8().constData());
-        }*/
-    }
-
-    void Account::parseSharedContactMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        const Export::Data::SharedContact& media
-    ) {
-        chatMessageInfo.msgType = IMMsgType::APP_SHARE_CONTACT;
-
-        chatMessageInfo.contactFirstName = media.info.firstName.constData();
-        chatMessageInfo.contactLastName = media.info.lastName.constData();
-        chatMessageInfo.contactPhone = media.info.phoneNumber.constData();
-    }
-
-    void Account::parseGeoPointMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        const Export::Data::GeoPoint& media
-    ) {
-        chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
-
-        chatMessageInfo.latitude = media.latitude;
-        chatMessageInfo.longitude = media.longitude;
-    }
-
-    void Account::parseVenueMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        const Export::Data::Venue& media
-    ) {
-        chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
-
-        chatMessageInfo.location = media.title.constData();
-        if (!media.address.isEmpty()) {
-            chatMessageInfo.location += std::string("\n") + media.address.constData();
-        }
-
-        chatMessageInfo.latitude = media.point.latitude;
-        chatMessageInfo.longitude = media.point.longitude;
-    }
-
     Main::Account::ServerMessageVisitor::ServerMessageVisitor(
         Main::Account& account,
         Main::Account::ChatMessageInfo& chatMessageInfo,
@@ -2354,30 +2287,24 @@ namespace Main {
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Photo& media) {
         auto& file = _message->media.file();
         _chatMessageInfo.attachFileName = QString("%1.jpg").arg(_chatMessageInfo.id).toUtf8().constData();
+        _chatMessageInfo.msgType = IMMsgType::APP_MSG_PIC;
 
-        if (file.skipReason == Export::Data::File::SkipReason::None) {
-            file.relativePath = _account._curPeerAttachPath;
-            file.relativePath.replace('\\', '/');
-            
-            Main::Account::DownloadFileInfo downloadFileInfo;
-            downloadFileInfo.docId = media.id;
-            downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
-            downloadFileInfo.dcId = file.location.dcId;
+        file.relativePath = _account._curPeerAttachPath;
 
-            StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
-            downloadFileInfo.accessHash = fileLocation.accessHash();
-            downloadFileInfo.fileReference = fileLocation.fileReference();
-            downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
-            downloadFileInfo.saveFilePath.replace('\\', '/');
+        Main::Account::DownloadFileInfo downloadFileInfo;
+        downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+        downloadFileInfo.docId = media.id;
+        downloadFileInfo.dcId = file.location.dcId;
+        downloadFileInfo.fileSize = file.size;
 
-            QFile::remove(downloadFileInfo.saveFilePath);
+        StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
+        downloadFileInfo.accessHash = fileLocation.accessHash();
+        downloadFileInfo.fileLocation = file.location.data;
+        downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
 
-            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
+        _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
 
-            _account._downloadFiles.emplace_back(downloadFileInfo);
-        }
-
-        _account.parsePhotoMessage(_chatMessageInfo, media);
+        _account._downloadFiles.emplace_back(downloadFileInfo);
     }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Document& media) {
@@ -2419,42 +2346,73 @@ namespace Main {
 
         auto& file = _message->media.file();
 
-        if (file.skipReason == Export::Data::File::SkipReason::None && fileSuffix != ".tgs") {
-            file.relativePath = _account._curPeerAttachPath;
-            file.relativePath.replace('\\', '/');
+        file.relativePath = _account._curPeerAttachPath;
 
-            Main::Account::DownloadFileInfo downloadFileInfo;
-            downloadFileInfo.docId = media.id;
-            downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
-            downloadFileInfo.dcId = file.location.dcId;
+        Main::Account::DownloadFileInfo downloadFileInfo;
+        downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+        downloadFileInfo.docId = media.id;
 
-            StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
-            downloadFileInfo.accessHash = fileLocation.accessHash();
-            downloadFileInfo.fileReference = fileLocation.fileReference();
-            downloadFileInfo.saveFilePath = QString("%1%2%3")
-                .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
-            downloadFileInfo.saveFilePath.replace('\\', '/');
+        if (!media.isSticker) {
+            downloadFileInfo.fileOrigin = Data::FileOrigin(Data::FileOriginMessage(_message->peerId, _message->id));
+        } else {
+            downloadFileInfo.isSticker = true;
+            auto documentData = _account.session().data().document(media.id);
+            if (documentData) {
+                downloadFileInfo.fileOrigin = documentData->stickerSetOrigin();
+            }
+        }
 
-            QFile::remove(downloadFileInfo.saveFilePath);
+        StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
+        downloadFileInfo.dcId = file.location.dcId;
+        downloadFileInfo.fileSize = file.size;
+        downloadFileInfo.accessHash = fileLocation.accessHash();
+        downloadFileInfo.fileReference = fileLocation.fileReference();
+        downloadFileInfo.fileLocation = file.location.data;
+        downloadFileInfo.saveFilePath = QString("%1%2%3")
+            .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
 
-            _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
+        _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
 
+        if (downloadFileInfo.fileOrigin && !downloadFileInfo.fileReference.isEmpty()) {
             _account._downloadFiles.emplace_back(downloadFileInfo);
         }
 
-        _account.parseDocumentMessage(_chatMessageInfo, media);
+        _chatMessageInfo.msgType = IMMsgType::APP_MSG_FILE;
+
+        _chatMessageInfo.duration = media.duration;
+
+        if (media.isAudioFile || media.isVoiceMessage) {
+            _chatMessageInfo.msgType = IMMsgType::APP_MSG_AUDIO;
+        } else if (media.isVideoFile || media.isVideoMessage) {
+            _chatMessageInfo.msgType = IMMsgType::APP_MSG_VEDIO;
+        }
     }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::SharedContact& media) {
-        _account.parseSharedContactMessage(_chatMessageInfo, media);
+        _chatMessageInfo.msgType = IMMsgType::APP_SHARE_CONTACT;
+
+        _chatMessageInfo.contactFirstName = media.info.firstName.constData();
+        _chatMessageInfo.contactLastName = media.info.lastName.constData();
+        _chatMessageInfo.contactPhone = media.info.phoneNumber.constData();
     }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::GeoPoint& media) {
-        _account.parseGeoPointMessage(_chatMessageInfo, media);
+        _chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
+
+        _chatMessageInfo.latitude = media.latitude;
+        _chatMessageInfo.longitude = media.longitude;
     }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Venue& media) {
-        _account.parseVenueMessage(_chatMessageInfo, media);
+        _chatMessageInfo.msgType = IMMsgType::APP_MSG_MAP;
+
+        _chatMessageInfo.location = media.title.constData();
+        if (!media.address.isEmpty()) {
+            _chatMessageInfo.location += std::string("\n") + media.address.constData();
+        }
+
+        _chatMessageInfo.latitude = media.point.latitude;
+        _chatMessageInfo.longitude = media.point.longitude;
     }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Game& media) { }
@@ -2938,7 +2896,7 @@ namespace Main {
             auto iter = _runningPipeCmds.find(_curRecvCmd.seq_number());
             if (iter != _runningPipeCmds.end()) {
                 _runningPipeCmds.erase(iter);
-                _recvPipeCmds.emplace_back(std::move(_curRecvCmd));
+                _recvPipeCmds.emplace_front(std::move(_curRecvCmd));
             }
         }
     }

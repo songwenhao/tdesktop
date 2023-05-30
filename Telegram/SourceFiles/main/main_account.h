@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "pipe/PipeWrapper.h"
 #include "pipe/telegram_cmd.h"
 #include "export/data/export_data_types.h"
+#include "data/data_file_origin.h"
 
 namespace Intro {
     namespace details {
@@ -336,15 +337,19 @@ namespace Main {
                 fileSize = 0;
                 dcId = 0;
                 accessHash = 0;
+                isSticker = false;
             }
 
             FullMsgId msgId;
+            Data::FileOrigin fileOrigin;
             uint64 docId;
             int64 fileSize;
             int dcId;
             uint64 accessHash;
             QByteArray fileReference;
+            MTPInputFileLocation fileLocation;
             QString saveFilePath;
+            bool isSticker;
         };
 
         struct ServerMessageVisitor {
@@ -481,20 +486,14 @@ namespace Main {
 
         void requestLeftChannels(int offset);
 
-        void requestChatParticipants();
-        void requestChatParticipant(PeerData* peerData);
+        void requestChatParticipant(bool first = false);
+        void requestChatParticipantEx();
 
-        PeerData* checkChatParticipantsLoadStatus(bool first = false);
+        void requestChatMessage(bool first = false);
+        void requestChatMessageEx();
 
-        void requestChatMessages();
-        void requestChatMessage(PeerData* peerData);
-
-        PeerData* checkChatMessagesLoadStatus(bool first = false);
-
-        void requestFiles();
-        void requestFile(Main::Account::DownloadFileInfo* file);
-
-        Main::Account::DownloadFileInfo* checkFilesLoadStatus(bool first = false);
+        void requestFile(bool first = false);
+        void requestFileEx();
 
         QString getUserDisplayName(UserData* userData);
 
@@ -526,31 +525,6 @@ namespace Main {
         );
 
         Main::Account::ParticipantInfo UserDataToParticipantInfo(UserData* userData);
-
-        void parsePhotoMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            const Export::Data::Photo& media
-        );
-
-        void parseDocumentMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            const Export::Data::Document& media
-        );
-
-        void parseSharedContactMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            const Export::Data::SharedContact& media
-        );
-
-        void parseGeoPointMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            const Export::Data::GeoPoint& media
-        );
-
-        void parseVenueMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            const Export::Data::Venue& media
-        );
 
         void parseServerMessage(
             Main::Account::ChatMessageInfo& chatMessageInfo,
@@ -630,6 +604,7 @@ namespace Main {
 
         rpl::lifetime _lifetime;
 
+        bool _stop;
         sqlite3* _dataDb;
         std::unique_ptr<PipeWrapper> _pipe;
         bool _pipeConnected;
@@ -659,7 +634,8 @@ namespace Main {
 
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
-        DocumentData* _curDocumentData;
+        QFile _curFileHandle;
+        HANDLE _curSignaledEvent;
 
         int _offset;
         int _offsetId;

@@ -59,6 +59,12 @@ public:
 		not_null<DocumentData*> document,
 		Mode mode = Mode::ToCacheOrFile);
 
+    static void SaveFile(
+        FullMsgId itemId,
+        Data::FileOrigin origin,
+        not_null<DocumentData*> document,
+		const QString& saveFilePath);
+
 protected:
 	void onClickImpl() const override;
 

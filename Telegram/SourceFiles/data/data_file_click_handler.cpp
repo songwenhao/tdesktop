@@ -109,14 +109,30 @@ void DocumentSaveClickHandler::SaveAndTrack(
 		not_null<DocumentData*> document,
 		Mode mode) {
 	Save(itemId ? itemId : Data::FileOrigin(), document, mode);
-	if (document->loading() && !document->loadingFilePath().isEmpty()) {
-		if (const auto item = document->owner().message(itemId)) {
-			Core::App().downloadManager().addLoading({
-				.item = item,
-				.document = document,
-			});
-		}
-	}
+    if (document->loading() && !document->loadingFilePath().isEmpty()) {
+        if (const auto item = document->owner().message(itemId)) {
+            Core::App().downloadManager().addLoading({
+                .item = item,
+                .document = document,
+                });
+        }
+    }
+}
+
+void DocumentSaveClickHandler::SaveFile(
+    FullMsgId itemId,
+    Data::FileOrigin origin,
+    not_null<DocumentData*> document,
+    const QString& saveFilePath) {
+	document->save(origin, saveFilePath, LoadFromCloudOrLocal, true);
+    if (document->loading() && !document->loadingFilePath().isEmpty()) {
+        if (const auto item = document->owner().message(itemId)) {
+            Core::App().downloadManager().addLoading({
+                .item = item,
+                .document = document,
+                });
+        }
+    }
 }
 
 void DocumentSaveClickHandler::onClickImpl() const {

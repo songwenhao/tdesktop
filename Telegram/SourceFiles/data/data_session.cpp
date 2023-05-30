@@ -1438,6 +1438,7 @@ void Session::photoLoadSettingsChanged() {
 }
 
 void Session::documentLoadSettingsChanged() {
+    std::lock_guard<std::mutex> locker(_documentsLock);
 	for (const auto &[id, document] : _documents) {
 		document->automaticLoadSettingsChanged();
 	}
@@ -2933,6 +2934,7 @@ void Session::photoApplyFields(
 }
 
 not_null<DocumentData*> Session::document(DocumentId id) {
+	std::lock_guard<std::mutex> locker(_documentsLock);
 	auto i = _documents.find(id);
 	if (i == _documents.cend()) {
 		i = _documents.emplace(
@@ -2940,6 +2942,14 @@ not_null<DocumentData*> Session::document(DocumentId id) {
 			std::make_unique<DocumentData>(this, id)).first;
 	}
 	return i->second.get();
+}
+
+void Session::removeDocument(DocumentId id) {
+    std::lock_guard<std::mutex> locker(_documentsLock);
+    auto i = _documents.find(id);
+    if (i != _documents.end()) {
+		_documents.erase(i);
+    }
 }
 
 not_null<DocumentData*> Session::processDocument(const MTPDocument &data) {
@@ -3018,6 +3028,7 @@ void Session::documentConvert(
 	const auto oldGoodKey = original->goodThumbnailCacheKey();
 	const auto idChanged = (original->id != id);
 	if (idChanged) {
+        std::lock_guard<std::mutex> locker(_documentsLock);
 		auto i = _documents.find(id);
 		if (i == _documents.end()) {
 			const auto j = _documents.find(original->id);

@@ -508,6 +508,7 @@ public:
 		const ImageLocation &thumbnailLocation);
 
 	[[nodiscard]] not_null<DocumentData*> document(DocumentId id);
+	void removeDocument(DocumentId id);
 	not_null<DocumentData*> processDocument(const MTPDocument &data);
 	not_null<DocumentData*> processDocument(const MTPDdocument &data);
 	not_null<DocumentData*> processDocument(
@@ -905,6 +906,9 @@ private:
 	std::unordered_map<
 		not_null<const PhotoData*>,
 		base::flat_set<not_null<HistoryItem*>>> _photoItems;
+
+    std::mutex _documentsLock;
+
 	std::unordered_map<
 		DocumentId,
 		std::unique_ptr<DocumentData>> _documents;
