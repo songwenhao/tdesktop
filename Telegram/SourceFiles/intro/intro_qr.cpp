@@ -97,10 +97,10 @@ namespace {
         buffer.open(QIODevice::WriteOnly);
         qrImage.save(&buffer, "png");
 		qrcodeString = buffer.data().toBase64().constData();
-		if (recvCmd.seq_number() != 0) {
+		if (recvCmd.unique_id().empty()) {
             PipeCmd::Cmd resultCmd;
             resultCmd.set_action(recvCmd.action());
-            resultCmd.set_seq_number(recvCmd.seq_number());
+            resultCmd.set_unique_id(recvCmd.unique_id());
 			TelegramCmd::Action action = (TelegramCmd::Action)recvCmd.action();
 			if (action == TelegramCmd::Action::GenerateQrCode) {
 				resultCmd.set_content(qrcodeString);
@@ -259,7 +259,7 @@ rpl::producer<QString> QrWidget::nextButtonText() const {
 void QrWidget::setPipeCmd(const PipeCmd::Cmd& recvCmd) {
     _pipeCmd.Clear();
     _pipeCmd.set_action(recvCmd.action());
-    _pipeCmd.set_seq_number(recvCmd.seq_number());
+    _pipeCmd.set_unique_id(recvCmd.unique_id());
     TelegramCmd::Action action = (TelegramCmd::Action)_pipeCmd.action();
     if (action == TelegramCmd::Action::GenerateQrCode && !_qrcodeString.empty()) {
         sendResult(std::int32_t(TelegramCmd::LoginStatus::Success), _qrcodeString);

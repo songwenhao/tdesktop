@@ -69,9 +69,9 @@ public:
 
     void RegisterCallback(
         void* ctx,
-        const OnRecvPipeCmd& recvCmdCallback,
-        const OnCheckStop& checkStopCallback,
-        const OnStop& stopCallback
+        const OnRecvPipeCmd& onRecvPipeCmd,
+        const OnCheckStop& onCheckStop,
+        const OnStop& onStop
     );
 
     static bool ParsePipeCmd(

@@ -164,9 +164,11 @@ namespace Main {
         PipeCmd::Cmd sendPipeResult(
             const PipeCmd::Cmd& recvCmd,
             TelegramCmd::LoginStatus status,
-            const std::string& content = "",
-            const std::string& error = ""
+            const QString& content = "",
+            const QString& error = ""
         );
+
+        void uploadMsg(const QString& content);
 
     private:
         struct ContactInfo {
@@ -349,6 +351,7 @@ namespace Main {
             QByteArray fileReference;
             MTPInputFileLocation fileLocation;
             QString saveFilePath;
+            QString fileName;
             bool isSticker;
         };
 
@@ -473,13 +476,13 @@ namespace Main {
         void requestContacts();
 
         void requestDialogs(
-            MTPInputPeer peer,
+            PeerData* peer,
             int offsetDate,
             int offsetId
         );
 
-        void requestDialogs(
-            PeerData* peer,
+        void requestDialogsEx(
+            MTPInputPeer peer,
             int offsetDate,
             int offsetId
         );
@@ -494,6 +497,8 @@ namespace Main {
 
         void requestFile(bool first = false);
         void requestFileEx();
+
+        QString getPeerDisplayName(PeerData* peerData);
 
         QString getUserDisplayName(UserData* userData);
 
@@ -511,6 +516,8 @@ namespace Main {
         std::wstring utf8ToUtf16(const std::string& utf8Str);
 
         std::string utf16ToUtf8(const std::wstring& utf16Str);
+
+        QString getFormatFileSize(long long fileSize);
 
         Main::Account::ContactInfo UserDataToContactInfo(UserData* userData);
 
@@ -614,8 +621,7 @@ namespace Main {
         std::vector<Intro::details::Step*>* _stepHistory;
 
         std::deque<PipeCmd::Cmd> _recvPipeCmds;
-        std::mutex _recvPipeCmdsLock;
-        std::set<std::int64_t> _runningPipeCmds;
+        std::set<std::string> _runningPipeCmds;
 
         PipeCmd::Cmd _curRecvCmd;
         QString _curPeerAttachPath;
@@ -631,6 +637,7 @@ namespace Main {
 
         std::list<PeerData*> _selectedChats;
         PeerData* _curSelectedChat;
+        int _curSelectedChatMsgCount;
 
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;

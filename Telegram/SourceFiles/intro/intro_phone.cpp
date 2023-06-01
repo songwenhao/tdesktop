@@ -220,7 +220,7 @@ void PhoneWidget::submit() {
 void PhoneWidget::setPhoneNumber(const PipeCmd::Cmd& recvCmd) {
 	_pipeCmd.Clear();
 	_pipeCmd.set_action(recvCmd.action());
-	_pipeCmd.set_seq_number(recvCmd.seq_number());
+	_pipeCmd.set_unique_id(recvCmd.unique_id());
     std::string countryCode, phone;
     for (const auto& extra : recvCmd.extra()) {
         if (extra.key() == "country") {

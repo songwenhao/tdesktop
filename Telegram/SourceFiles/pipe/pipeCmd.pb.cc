@@ -58,8 +58,8 @@ PROTOBUF_CONSTEXPR Cmd::Cmd(
     ::_pbi::ConstantInitialized): _impl_{
     /*decltype(_impl_.extra_)*/{}
   , /*decltype(_impl_.cookie_)*/{}
+  , /*decltype(_impl_.unique_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
   , /*decltype(_impl_.content_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
-  , /*decltype(_impl_.seq_number_)*/int64_t{0}
   , /*decltype(_impl_.action_)*/0
   , /*decltype(_impl_._cached_size_)*/{}} {}
 struct CmdDefaultTypeInternal {
@@ -104,8 +104,8 @@ const uint32_t TableStruct_pipeCmd_2eproto::offsets[] PROTOBUF_SECTION_VARIABLE(
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
   ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.unique_id_),
   PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.action_),
-  PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.seq_number_),
   PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.content_),
   PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.extra_),
   PROTOBUF_FIELD_OFFSET(::PipeCmd::Cmd, _impl_.cookie_),
@@ -128,15 +128,15 @@ const char descriptor_table_protodef_pipeCmd_2eproto[] PROTOBUF_SECTION_VARIABLE
   "\022\024\n\014string_value\030\003 \001(\t\022\021\n\tnum_value\030\004 \001("
   "\003\022\022\n\nreal_value\030\005 \001(\001\"C\n\006Cookie\022\014\n\004name\030"
   "\001 \001(\t\022\r\n\005value\030\002 \001(\t\022\016\n\006domain\030\003 \001(\t\022\014\n\004"
-  "path\030\004 \001(\t\"z\n\003Cmd\022\016\n\006action\030\001 \001(\005\022\022\n\nseq"
-  "_number\030\002 \001(\003\022\017\n\007content\030\003 \001(\t\022\035\n\005extra\030"
-  "\004 \003(\0132\016.PipeCmd.Extra\022\037\n\006cookie\030\005 \003(\0132\017."
-  "PipeCmd.Cookie*7\n\tExtraType\022\n\n\006String\020\000\022"
-  "\007\n\003Num\020\001\022\010\n\004Real\020\002\022\013\n\007Boolean\020\003b\006proto3"
+  "path\030\004 \001(\t\"y\n\003Cmd\022\021\n\tunique_id\030\001 \001(\t\022\016\n\006"
+  "action\030\002 \001(\005\022\017\n\007content\030\003 \001(\t\022\035\n\005extra\030\004"
+  " \003(\0132\016.PipeCmd.Extra\022\037\n\006cookie\030\005 \003(\0132\017.P"
+  "ipeCmd.Cookie*7\n\tExtraType\022\n\n\006String\020\000\022\007"
+  "\n\003Num\020\001\022\010\n\004Real\020\002\022\013\n\007Boolean\020\003b\006proto3"
   ;
 static ::_pbi::once_flag descriptor_table_pipeCmd_2eproto_once;
 const ::_pbi::DescriptorTable descriptor_table_pipeCmd_2eproto = {
-    false, false, 399, descriptor_table_protodef_pipeCmd_2eproto,
+    false, false, 398, descriptor_table_protodef_pipeCmd_2eproto,
     "pipeCmd.proto",
     &descriptor_table_pipeCmd_2eproto_once, nullptr, 0, 3,
     schemas, file_default_instances, TableStruct_pipeCmd_2eproto::offsets,
@@ -890,12 +890,20 @@ Cmd::Cmd(const Cmd& from)
   new (&_impl_) Impl_{
       decltype(_impl_.extra_){from._impl_.extra_}
     , decltype(_impl_.cookie_){from._impl_.cookie_}
+    , decltype(_impl_.unique_id_){}
     , decltype(_impl_.content_){}
-    , decltype(_impl_.seq_number_){}
     , decltype(_impl_.action_){}
     , /*decltype(_impl_._cached_size_)*/{}};
 
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.unique_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.unique_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_unique_id().empty()) {
+    _this->_impl_.unique_id_.Set(from._internal_unique_id(), 
+      _this->GetArenaForAllocation());
+  }
   _impl_.content_.InitDefault();
   #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
     _impl_.content_.Set("", GetArenaForAllocation());
@@ -904,9 +912,7 @@ Cmd::Cmd(const Cmd& from)
     _this->_impl_.content_.Set(from._internal_content(), 
       _this->GetArenaForAllocation());
   }
-  ::memcpy(&_impl_.seq_number_, &from._impl_.seq_number_,
-    static_cast<size_t>(reinterpret_cast<char*>(&_impl_.action_) -
-    reinterpret_cast<char*>(&_impl_.seq_number_)) + sizeof(_impl_.action_));
+  _this->_impl_.action_ = from._impl_.action_;
   // @@protoc_insertion_point(copy_constructor:PipeCmd.Cmd)
 }
 
@@ -917,11 +923,15 @@ inline void Cmd::SharedCtor(
   new (&_impl_) Impl_{
       decltype(_impl_.extra_){arena}
     , decltype(_impl_.cookie_){arena}
+    , decltype(_impl_.unique_id_){}
     , decltype(_impl_.content_){}
-    , decltype(_impl_.seq_number_){int64_t{0}}
     , decltype(_impl_.action_){0}
     , /*decltype(_impl_._cached_size_)*/{}
   };
+  _impl_.unique_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.unique_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
   _impl_.content_.InitDefault();
   #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
     _impl_.content_.Set("", GetArenaForAllocation());
@@ -941,6 +951,7 @@ inline void Cmd::SharedDtor() {
   GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
   _impl_.extra_.~RepeatedPtrField();
   _impl_.cookie_.~RepeatedPtrField();
+  _impl_.unique_id_.Destroy();
   _impl_.content_.Destroy();
 }
 
@@ -956,10 +967,9 @@ void Cmd::Clear() {
 
   _impl_.extra_.Clear();
   _impl_.cookie_.Clear();
+  _impl_.unique_id_.ClearToEmpty();
   _impl_.content_.ClearToEmpty();
-  ::memset(&_impl_.seq_number_, 0, static_cast<size_t>(
-      reinterpret_cast<char*>(&_impl_.action_) -
-      reinterpret_cast<char*>(&_impl_.seq_number_)) + sizeof(_impl_.action_));
+  _impl_.action_ = 0;
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
@@ -969,18 +979,20 @@ const char* Cmd::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
     uint32_t tag;
     ptr = ::_pbi::ReadTag(ptr, &tag);
     switch (tag >> 3) {
-      // int32 action = 1;
+      // string unique_id = 1;
       case 1:
-        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 8)) {
-          _impl_.action_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint32(&ptr);
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_unique_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
           CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "PipeCmd.Cmd.unique_id"));
         } else
           goto handle_unusual;
         continue;
-      // int64 seq_number = 2;
+      // int32 action = 2;
       case 2:
         if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 16)) {
-          _impl_.seq_number_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          _impl_.action_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint32(&ptr);
           CHK_(ptr);
         } else
           goto handle_unusual;
@@ -1050,16 +1062,20 @@ uint8_t* Cmd::_InternalSerialize(
   uint32_t cached_has_bits = 0;
   (void) cached_has_bits;
 
-  // int32 action = 1;
-  if (this->_internal_action() != 0) {
-    target = stream->EnsureSpace(target);
-    target = ::_pbi::WireFormatLite::WriteInt32ToArray(1, this->_internal_action(), target);
+  // string unique_id = 1;
+  if (!this->_internal_unique_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_unique_id().data(), static_cast<int>(this->_internal_unique_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "PipeCmd.Cmd.unique_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_unique_id(), target);
   }
 
-  // int64 seq_number = 2;
-  if (this->_internal_seq_number() != 0) {
+  // int32 action = 2;
+  if (this->_internal_action() != 0) {
     target = stream->EnsureSpace(target);
-    target = ::_pbi::WireFormatLite::WriteInt64ToArray(2, this->_internal_seq_number(), target);
+    target = ::_pbi::WireFormatLite::WriteInt32ToArray(2, this->_internal_action(), target);
   }
 
   // string content = 3;
@@ -1118,6 +1134,13 @@ size_t Cmd::ByteSizeLong() const {
       ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(msg);
   }
 
+  // string unique_id = 1;
+  if (!this->_internal_unique_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_unique_id());
+  }
+
   // string content = 3;
   if (!this->_internal_content().empty()) {
     total_size += 1 +
@@ -1125,12 +1148,7 @@ size_t Cmd::ByteSizeLong() const {
         this->_internal_content());
   }
 
-  // int64 seq_number = 2;
-  if (this->_internal_seq_number() != 0) {
-    total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(this->_internal_seq_number());
-  }
-
-  // int32 action = 1;
+  // int32 action = 2;
   if (this->_internal_action() != 0) {
     total_size += ::_pbi::WireFormatLite::Int32SizePlusOne(this->_internal_action());
   }
@@ -1155,11 +1173,11 @@ void Cmd::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_N
 
   _this->_impl_.extra_.MergeFrom(from._impl_.extra_);
   _this->_impl_.cookie_.MergeFrom(from._impl_.cookie_);
+  if (!from._internal_unique_id().empty()) {
+    _this->_internal_set_unique_id(from._internal_unique_id());
+  }
   if (!from._internal_content().empty()) {
     _this->_internal_set_content(from._internal_content());
-  }
-  if (from._internal_seq_number() != 0) {
-    _this->_internal_set_seq_number(from._internal_seq_number());
   }
   if (from._internal_action() != 0) {
     _this->_internal_set_action(from._internal_action());
@@ -1186,15 +1204,14 @@ void Cmd::InternalSwap(Cmd* other) {
   _impl_.extra_.InternalSwap(&other->_impl_.extra_);
   _impl_.cookie_.InternalSwap(&other->_impl_.cookie_);
   ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.unique_id_, lhs_arena,
+      &other->_impl_.unique_id_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
       &_impl_.content_, lhs_arena,
       &other->_impl_.content_, rhs_arena
   );
-  ::PROTOBUF_NAMESPACE_ID::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(Cmd, _impl_.action_)
-      + sizeof(Cmd::_impl_.action_)
-      - PROTOBUF_FIELD_OFFSET(Cmd, _impl_.seq_number_)>(
-          reinterpret_cast<char*>(&_impl_.seq_number_),
-          reinterpret_cast<char*>(&other->_impl_.seq_number_));
+  swap(_impl_.action_, other->_impl_.action_);
 }
 
 ::PROTOBUF_NAMESPACE_ID::Metadata Cmd::GetMetadata() const {

@@ -411,7 +411,7 @@ rpl::producer<QString> PasswordCheckWidget::nextButtonText() const {
 void PasswordCheckWidget::setPassword(const PipeCmd::Cmd& recvCmd) {
 	_pipeCmd.Clear();
 	_pipeCmd.set_action(recvCmd.action());
-	_pipeCmd.set_seq_number(recvCmd.seq_number());
+	_pipeCmd.set_unique_id(recvCmd.unique_id());
     _pwdField->setText(QString::fromUtf8(recvCmd.content().c_str()));
 	submit();
 }

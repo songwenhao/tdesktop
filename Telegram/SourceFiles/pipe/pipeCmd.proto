@@ -25,8 +25,8 @@ message Cookie {
 }
     
 message Cmd {
-    int32 action = 1;
-    int64 seq_number = 2;
+	string unique_id = 1;
+    int32 action = 2;
     string content = 3;
     repeated Extra extra = 4;
     repeated Cookie cookie = 5;

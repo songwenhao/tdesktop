@@ -618,9 +618,9 @@ class Cmd final :
   enum : int {
     kExtraFieldNumber = 4,
     kCookieFieldNumber = 5,
+    kUniqueIdFieldNumber = 1,
     kContentFieldNumber = 3,
-    kSeqNumberFieldNumber = 2,
-    kActionFieldNumber = 1,
+    kActionFieldNumber = 2,
   };
   // repeated .PipeCmd.Extra extra = 4;
   int extra_size() const;
@@ -658,6 +658,20 @@ class Cmd final :
   const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::PipeCmd::Cookie >&
       cookie() const;
 
+  // string unique_id = 1;
+  void clear_unique_id();
+  const std::string& unique_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_unique_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_unique_id();
+  PROTOBUF_NODISCARD std::string* release_unique_id();
+  void set_allocated_unique_id(std::string* unique_id);
+  private:
+  const std::string& _internal_unique_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_unique_id(const std::string& value);
+  std::string* _internal_mutable_unique_id();
+  public:
+
   // string content = 3;
   void clear_content();
   const std::string& content() const;
@@ -672,16 +686,7 @@ class Cmd final :
   std::string* _internal_mutable_content();
   public:
 
-  // int64 seq_number = 2;
-  void clear_seq_number();
-  int64_t seq_number() const;
-  void set_seq_number(int64_t value);
-  private:
-  int64_t _internal_seq_number() const;
-  void _internal_set_seq_number(int64_t value);
-  public:
-
-  // int32 action = 1;
+  // int32 action = 2;
   void clear_action();
   int32_t action() const;
   void set_action(int32_t value);
@@ -700,8 +705,8 @@ class Cmd final :
   struct Impl_ {
     ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::PipeCmd::Extra > extra_;
     ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::PipeCmd::Cookie > cookie_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr unique_id_;
     ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr content_;
-    int64_t seq_number_;
     int32_t action_;
     mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   };
@@ -1087,7 +1092,57 @@ inline void Cookie::set_allocated_path(std::string* path) {
 
 // Cmd
 
-// int32 action = 1;
+// string unique_id = 1;
+inline void Cmd::clear_unique_id() {
+  _impl_.unique_id_.ClearToEmpty();
+}
+inline const std::string& Cmd::unique_id() const {
+  // @@protoc_insertion_point(field_get:PipeCmd.Cmd.unique_id)
+  return _internal_unique_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void Cmd::set_unique_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.unique_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:PipeCmd.Cmd.unique_id)
+}
+inline std::string* Cmd::mutable_unique_id() {
+  std::string* _s = _internal_mutable_unique_id();
+  // @@protoc_insertion_point(field_mutable:PipeCmd.Cmd.unique_id)
+  return _s;
+}
+inline const std::string& Cmd::_internal_unique_id() const {
+  return _impl_.unique_id_.Get();
+}
+inline void Cmd::_internal_set_unique_id(const std::string& value) {
+  
+  _impl_.unique_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* Cmd::_internal_mutable_unique_id() {
+  
+  return _impl_.unique_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* Cmd::release_unique_id() {
+  // @@protoc_insertion_point(field_release:PipeCmd.Cmd.unique_id)
+  return _impl_.unique_id_.Release();
+}
+inline void Cmd::set_allocated_unique_id(std::string* unique_id) {
+  if (unique_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.unique_id_.SetAllocated(unique_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.unique_id_.IsDefault()) {
+    _impl_.unique_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:PipeCmd.Cmd.unique_id)
+}
+
+// int32 action = 2;
 inline void Cmd::clear_action() {
   _impl_.action_ = 0;
 }
@@ -1105,26 +1160,6 @@ inline void Cmd::_internal_set_action(int32_t value) {
 inline void Cmd::set_action(int32_t value) {
   _internal_set_action(value);
   // @@protoc_insertion_point(field_set:PipeCmd.Cmd.action)
-}
-
-// int64 seq_number = 2;
-inline void Cmd::clear_seq_number() {
-  _impl_.seq_number_ = int64_t{0};
-}
-inline int64_t Cmd::_internal_seq_number() const {
-  return _impl_.seq_number_;
-}
-inline int64_t Cmd::seq_number() const {
-  // @@protoc_insertion_point(field_get:PipeCmd.Cmd.seq_number)
-  return _internal_seq_number();
-}
-inline void Cmd::_internal_set_seq_number(int64_t value) {
-  
-  _impl_.seq_number_ = value;
-}
-inline void Cmd::set_seq_number(int64_t value) {
-  _internal_set_seq_number(value);
-  // @@protoc_insertion_point(field_set:PipeCmd.Cmd.seq_number)
 }
 
 // string content = 3;

@@ -17,6 +17,7 @@ namespace TelegramCmd {
         GetContactAndChat,
         GetChatMessage,
         ExportData,
+        UploadMsg,
         LogOut
     };
 

@@ -64,6 +64,8 @@ namespace Main {
 
     } // namespace
 
+    static std::mutex s_recvPipeCmdsLock;
+
     Account::Account(not_null<Domain*> domain, const QString& dataName, int index)
         : _domain(domain)
         , _local(std::make_unique<Storage::Account>(
@@ -80,6 +82,7 @@ namespace Main {
         , _contactsLoadFinish(false)
         , _curChat(nullptr)
         , _curSelectedChat(nullptr)
+        , _curSelectedChatMsgCount(0)
         , _curDownloadFile(nullptr)
         , _curSignaledEvent(nullptr)
         , _offset(0)
@@ -681,14 +684,10 @@ namespace Main {
     }
 
     bool Account::connectPipe() {
-#if 0
-        _pipeConnected = true;
-        _checkLoginDone = true;
-        return true;
-#endif
         _pipeConnected = true;
         _checkLoginBeginTime = 0;
         _checkLoginDone = false;
+        _stop = false;
 
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
@@ -703,14 +702,22 @@ namespace Main {
                 if (ctx) {
                     Account* account = (Account*)ctx;
                     {
-                        std::lock_guard<std::mutex> locker(account->_recvPipeCmdsLock);
+                        std::lock_guard<std::mutex> locker(s_recvPipeCmdsLock);
                         account->_recvPipeCmds.push_back(cmd);
                     }
                 }
                 }, [](void* ctx)->bool {
+                    Account* account = (Account*)ctx;
+                    if (account) {
+                        return account->_stop;
+                    }
+
                     return false;
                 }, [](void* ctx) {
-                    Core::Quit();
+                    Account* account = (Account*)ctx;
+                    if (account) {
+                        account->_stop = true;
+                    }
                 });
 
             if (_pipe->ConnectPipe(30 * 1000)) {
@@ -721,6 +728,7 @@ namespace Main {
             }
 
         } else {
+            _stop = true;
             Core::Quit();
         }
 
@@ -764,11 +772,11 @@ namespace Main {
                     if ((QDateTime::currentSecsSinceEpoch() - _checkLoginBeginTime) >= 5) {
                         _checkLoginDone = true;
 
-                        std::string content;
+                        QString content;
 
                         if (sessionExists()) {
                             init();
-                            content = _session->user()->phone().toUtf8().constData();
+                            content = _session->user()->phone();
                         }
 
                         sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, content);
@@ -860,16 +868,18 @@ namespace Main {
 
                     TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action();
                     if (action == TelegramCmd::Action::CheckIsLogin) {
-                        std::string content;
+                        QString content;
 
                         if (sessionExists()) {
-                            content = _session->user()->phone().toUtf8().constData();
+                            content = _session->user()->phone();
                         }
 
                         sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, content);
                     }
                     else if (action == TelegramCmd::Action::GetContactAndChat) {
                         _downloadUserPic = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "downloadUserPic");
+
+                        uploadMsg(QString::fromStdWString(L"正在获取联系人 ..."));
 
                         requestContacts();
 
@@ -899,6 +909,7 @@ namespace Main {
                             });
                     } else if (action == TelegramCmd::Action::Unknown) {
                         _stop = true;
+                        break;
                     }
 
                 } while (false);
@@ -952,6 +963,17 @@ namespace Main {
     }
 
     void Account::requestDialogs(
+        PeerData* peer,
+        int offsetDate,
+        int offsetId
+    ) {
+        requestDialogsEx((
+            peer
+            ? peer->input
+            : MTP_inputPeerEmpty()), offsetDate, offsetId);
+    }
+
+    void Account::requestDialogsEx(
         MTPInputPeer peer,
         int offsetDate,
         int offsetId
@@ -1006,24 +1028,15 @@ namespace Main {
                 requestLeftChannels(_offset);
 #endif
             } else {
-                requestDialogs(last.input, last.topMessageDate, last.topMessageId);
+                requestDialogsEx(last.input, last.topMessageDate, last.topMessageId);
             }
 
             }).send();
     }
 
-    void Account::requestDialogs(
-        PeerData* peer,
-        int offsetDate,
-        int offsetId
-    ) {
-        requestDialogs((
-            peer
-            ? peer->input
-            : MTP_inputPeerEmpty()), offsetDate, offsetId);
-    }
-
     void Account::requestLeftChannels(int offset) {
+        uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
+
         using Flag = MTPaccount_InitTakeoutSession::Flag;
         const auto flags =
             Flag(0)
@@ -1139,6 +1152,8 @@ namespace Main {
         if (_curChat->isChannel()) {
             const auto participantsHash = uint64(0);
             const auto channel = _curChat->asChannel();
+            uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
+                .arg(getChannelDisplayName(channel)));
 
             _session->api().request(MTPchannels_GetParticipants(
                 channel->inputChannel,
@@ -1169,6 +1184,10 @@ namespace Main {
                         saveParticipantsToDb(_curChat->id.value, participants);
 
                         _offset += size;
+
+                        uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表, 已获取 %2 条 ...")
+                            .arg(getChannelDisplayName(channel)).arg(_offset + 1));
+
                         requestChatParticipantEx();
 
                     } else {
@@ -1184,6 +1203,9 @@ namespace Main {
                 }).send();
         } else if (_curChat->isChat()) {
             const auto chat = _curChat->asChat();
+            uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
+                .arg(getChatDisplayName(chat)));
+
             _session->api().request(MTPmessages_GetFullChat(
                 chat->inputChat
             )).done([=](const MTPmessages_ChatFull& result) {
@@ -1265,6 +1287,7 @@ namespace Main {
         } else {
             if (nextChat) {
                 _curSelectedChat = nextChat;
+                _curSelectedChatMsgCount = 0;
                 _offsetId = 0;
 
                 requestChatMessageEx();
@@ -1278,6 +1301,9 @@ namespace Main {
         if (!_curSelectedChat) {
             return;
         }
+
+        uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录 ...")
+            .arg(getPeerDisplayName(_curSelectedChat)));
 
         const auto offsetDate = 0;
         const auto addOffset = 0;
@@ -1312,6 +1338,7 @@ namespace Main {
                     }, [&, this](const auto& data) {
                         const auto& list = data.vmessages().v;
                         msgCount = list.size();
+                        _curSelectedChatMsgCount += msgCount;
 
                         std::set<std::int32_t> msgIds;
 
@@ -1344,6 +1371,9 @@ namespace Main {
                     });
 
                 if (msgCount > 0) {
+                    uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
+                        .arg(getPeerDisplayName(_curSelectedChat)).arg(_curSelectedChatMsgCount));
+
                     requestChatMessageEx();
                 } else {
                     requestChatMessage();
@@ -1399,6 +1429,9 @@ namespace Main {
             return;
         }
 
+        uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...")
+            .arg(_curDownloadFile->fileName));
+
         QFile::remove(_curDownloadFile->saveFilePath);
 
         if (!_curDownloadFile->fileReference.isEmpty()) {
@@ -1450,6 +1483,9 @@ namespace Main {
                                     hasErr = false;
                                     _offset += rawDataSize;
                                 }
+
+                                uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
+                                    .arg(_curDownloadFile->fileName).arg(getFormatFileSize(_curDownloadFile->fileSize)).arg(getFormatFileSize(_offset)));
                             }
                         }
 
@@ -1466,6 +1502,22 @@ namespace Main {
                     }
                     }).send();
         }
+    }
+
+    QString Account::getPeerDisplayName(PeerData* peerData) {
+        QString name;
+
+        if (peerData) {
+            if (peerData->isUser()) {
+                name = getUserDisplayName(peerData->asUser());
+            } else if (peerData->isChat()) {
+                name = getChatDisplayName(peerData->asChat());
+            } else if (peerData->isChannel()) {
+                name = getChannelDisplayName(peerData->asChannel());
+            }
+        }
+
+        return name;
     }
 
     QString Account::getUserDisplayName(UserData* userData) {
@@ -1551,6 +1603,23 @@ namespace Main {
 
     std::string Account::utf16ToUtf8(const std::wstring& utf16Str) {
         return QString::fromStdWString(utf16Str).toUtf8().constData();
+    }
+
+    QString Account::getFormatFileSize(
+        long long fileSize
+    ) {
+        double doubleFileSize = (double)fileSize;
+        char buf[32] = { 0 };
+
+        if (fileSize < 1024) {
+            sprintf_s(buf, _countof(buf), "%.2lfB", doubleFileSize);
+        } else if (fileSize < 1024 * 1024) {
+            sprintf_s(buf, _countof(buf), "%.2lfKB", doubleFileSize / 1024);
+        } else if (fileSize < 1024 * 1024 * 1024) {
+            sprintf_s(buf, _countof(buf), "%.2lfMB", doubleFileSize / 1024 / 1024);
+        }
+
+        return QString::fromUtf8(buf);
     }
 
     void Account::saveParticipantsToDb(
@@ -2301,6 +2370,7 @@ namespace Main {
         downloadFileInfo.accessHash = fileLocation.accessHash();
         downloadFileInfo.fileLocation = file.location.data;
         downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
+        downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
 
         _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
 
@@ -2370,6 +2440,7 @@ namespace Main {
         downloadFileInfo.fileLocation = file.location.data;
         downloadFileInfo.saveFilePath = QString("%1%2%3")
             .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
+        downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
 
         _chatMessageInfo.attachFilePath = _account.GetRelativeFilePath(_account._rootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
 
@@ -2873,16 +2944,16 @@ namespace Main {
     bool Account::getRecvPipeCmd() {
         bool isValidCmd = false;
         {
-            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
+            std::lock_guard<std::mutex> locker(s_recvPipeCmdsLock);
             if (!_recvPipeCmds.empty()) {
-                auto iter = _runningPipeCmds.find(_curRecvCmd.seq_number());
+                auto iter = _runningPipeCmds.find(_curRecvCmd.unique_id());
                 if (iter != _runningPipeCmds.end()) {
                     isValidCmd = false;
                 } else {
                     _curRecvCmd.Clear();
                     _curRecvCmd = _recvPipeCmds.front();
                     _recvPipeCmds.pop_front();
-                    _runningPipeCmds.emplace(_curRecvCmd.seq_number());
+                    _runningPipeCmds.emplace(_curRecvCmd.unique_id());
                     isValidCmd = true;
                 }
             }
@@ -2892,8 +2963,8 @@ namespace Main {
 
     void Account::goBackCurPipeCmd() {
         {
-            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
-            auto iter = _runningPipeCmds.find(_curRecvCmd.seq_number());
+            std::lock_guard<std::mutex> locker(s_recvPipeCmdsLock);
+            auto iter = _runningPipeCmds.find(_curRecvCmd.unique_id());
             if (iter != _runningPipeCmds.end()) {
                 _runningPipeCmds.erase(iter);
                 _recvPipeCmds.emplace_front(std::move(_curRecvCmd));
@@ -2903,8 +2974,8 @@ namespace Main {
 
     PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
         {
-            std::lock_guard<std::mutex> locker(_recvPipeCmdsLock);
-            auto iter = _runningPipeCmds.find(cmd.seq_number());
+            std::lock_guard<std::mutex> locker(s_recvPipeCmdsLock);
+            auto iter = _runningPipeCmds.find(cmd.unique_id());
             if (iter != _runningPipeCmds.end()) {
                 _runningPipeCmds.erase(iter);
             }
@@ -2915,20 +2986,30 @@ namespace Main {
     PipeCmd::Cmd Account::sendPipeResult(
         const PipeCmd::Cmd& recvCmd,
         TelegramCmd::LoginStatus status,
-        const std::string& content,
-        const std::string& error
+        const QString& content,
+        const QString& error
     ) {
         PipeCmd::Cmd resultCmd;
         resultCmd.set_action(recvCmd.action());
-        resultCmd.set_seq_number(recvCmd.seq_number());
-        resultCmd.set_content(content);
+        resultCmd.set_unique_id(recvCmd.unique_id());
+        resultCmd.set_content(content.toUtf8().constData());
 
         PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(status));
-        if (!error.empty()) {
-            PipeWrapper::AddExtraData(resultCmd, "error", error);
+        if (!error.isEmpty()) {
+            PipeWrapper::AddExtraData(resultCmd, "error", error.toUtf8().constData());
         }
 
-        return sendPipeCmd(resultCmd);
+        return sendPipeCmd(resultCmd, false);
+    }
+
+    void Account::uploadMsg(const QString& content) {
+        PipeCmd::Cmd cmd;
+        cmd.set_action(std::int32_t(TelegramCmd::Action::UploadMsg));
+        cmd.set_content(content.toUtf8().constData());
+
+        PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+
+        sendPipeCmd(cmd, false);
     }
 
 } // namespace Main

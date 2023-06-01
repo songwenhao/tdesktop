@@ -250,7 +250,9 @@ Session::Session(not_null<Main::Session*> session)
 , _contactsNoChatsList(Dialogs::SortMode::Name)
 , _ttlCheckTimer([=] { checkTTLs(); })
 , _selfDestructTimer([=] { checkSelfDestructItems(); })
+, _documentsLock(std::make_unique<std::mutex>())
 , _pollsClosingTimer([=] { checkPollsClosings(); })
+, _peersLock(std::make_unique<std::mutex>())
 , _watchForOfflineTimer([=] { checkLocalUsersWentOffline(); })
 , _groups(this)
 , _chatsFilters(std::make_unique<ChatFilters>(this))
@@ -361,7 +363,7 @@ void Session::clear() {
 
     
 	{
-		std::lock_guard<std::mutex> locker(_peersLock);
+		std::lock_guard<std::mutex> locker(*_peersLock);
 
 		for (const auto& [peerId, peer] : _peers) {
 			if (const auto channel = peer->asChannel()) {
@@ -417,7 +419,7 @@ void Session::keepAlive(std::shared_ptr<DocumentMedia> media) {
 }
 
 not_null<PeerData*> Session::peer(PeerId id) {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
 
 	const auto i = _peers.find(id);
 	if (i != _peers.cend()) {
@@ -451,7 +453,7 @@ not_null<ChannelData*> Session::channel(ChannelId id) {
 }
 
 PeerData *Session::peerLoaded(PeerId id) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
 
 	const auto i = _peers.find(id);
 	if (i == end(_peers)) {
@@ -1132,7 +1134,7 @@ void Session::unregisterInvitedToCallUser(
 }
 
 UserData *Session::userByPhone(const QString &phone) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
     const auto pname = phone.trimmed();
 	for (const auto &[peerId, peer] : _peers) {
 		if (const auto user = peer->asUser()) {
@@ -1145,7 +1147,7 @@ UserData *Session::userByPhone(const QString &phone) const {
 }
 
 PeerData *Session::peerByUsername(const QString &username) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
     const auto uname = username.trimmed();
 	for (const auto &[peerId, peer] : _peers) {
 		if (!peer->userName().compare(uname, Qt::CaseInsensitive)) {
@@ -1156,7 +1158,7 @@ PeerData *Session::peerByUsername(const QString &username) const {
 }
 
 void Session::enumerateUsers(Fn<void(not_null<UserData*>)> action) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
     for (const auto& [peerId, peer] : _peers) {
 		if (const auto user = peer->asUser()) {
 			action(user);
@@ -1165,7 +1167,7 @@ void Session::enumerateUsers(Fn<void(not_null<UserData*>)> action) const {
 }
 
 void Session::enumerateGroups(Fn<void(not_null<PeerData*>)> action) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
     for (const auto& [peerId, peer] : _peers) {
 		if (peer->isChat() || peer->isMegagroup()) {
 			action(peer.get());
@@ -1175,7 +1177,7 @@ void Session::enumerateGroups(Fn<void(not_null<PeerData*>)> action) const {
 
 void Session::enumerateBroadcasts(
 		Fn<void(not_null<ChannelData*>)> action) const {
-    std::lock_guard<std::mutex> locker(_peersLock);
+    std::lock_guard<std::mutex> locker(*_peersLock);
     for (const auto& [peerId, peer] : _peers) {
 		if (const auto channel = peer->asChannel()) {
 			if (!channel->isMegagroup()) {
@@ -1438,7 +1440,7 @@ void Session::photoLoadSettingsChanged() {
 }
 
 void Session::documentLoadSettingsChanged() {
-    std::lock_guard<std::mutex> locker(_documentsLock);
+    std::lock_guard<std::mutex> locker(*_documentsLock);
 	for (const auto &[id, document] : _documents) {
 		document->automaticLoadSettingsChanged();
 	}
@@ -2934,7 +2936,7 @@ void Session::photoApplyFields(
 }
 
 not_null<DocumentData*> Session::document(DocumentId id) {
-	std::lock_guard<std::mutex> locker(_documentsLock);
+	std::lock_guard<std::mutex> locker(*_documentsLock);
 	auto i = _documents.find(id);
 	if (i == _documents.cend()) {
 		i = _documents.emplace(
@@ -2945,7 +2947,7 @@ not_null<DocumentData*> Session::document(DocumentId id) {
 }
 
 void Session::removeDocument(DocumentId id) {
-    std::lock_guard<std::mutex> locker(_documentsLock);
+    std::lock_guard<std::mutex> locker(*_documentsLock);
     auto i = _documents.find(id);
     if (i != _documents.end()) {
 		_documents.erase(i);
@@ -3028,7 +3030,7 @@ void Session::documentConvert(
 	const auto oldGoodKey = original->goodThumbnailCacheKey();
 	const auto idChanged = (original->id != id);
 	if (idChanged) {
-        std::lock_guard<std::mutex> locker(_documentsLock);
+        std::lock_guard<std::mutex> locker(*_documentsLock);
 		auto i = _documents.find(id);
 		if (i == _documents.end()) {
 			const auto j = _documents.find(original->id);

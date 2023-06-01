@@ -907,7 +907,7 @@ private:
 		not_null<const PhotoData*>,
 		base::flat_set<not_null<HistoryItem*>>> _photoItems;
 
-    std::mutex _documentsLock;
+	std::unique_ptr<std::mutex> _documentsLock;
 
 	std::unordered_map<
 		DocumentId,
@@ -980,7 +980,7 @@ private:
 
 	History *_topPromoted = nullptr;
 
-	mutable std::mutex _peersLock;
+	std::unique_ptr<std::mutex> _peersLock;
 	std::unordered_map<PeerId, std::unique_ptr<PeerData>> _peers;
 
 	MessageIdsList _mimeForwardIds;
