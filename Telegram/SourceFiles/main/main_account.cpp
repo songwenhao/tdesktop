@@ -1206,7 +1206,7 @@ namespace Main {
 
                         PipeCmd::Cmd resultCmd;
                         resultCmd.set_action(_curRecvCmd.action());
-
+                        resultCmd.set_unique_id(_curRecvCmd.unique_id());
                         PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
                         PipeWrapper::AddExtraData(resultCmd, "exportDone", true);
                         sendPipeCmd(resultCmd, false);
@@ -1221,7 +1221,7 @@ namespace Main {
 
                         PipeCmd::Cmd resultCmd;
                         resultCmd.set_action(_curRecvCmd.action());
-
+                        resultCmd.set_unique_id(_curRecvCmd.unique_id());
                         PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
                         PipeWrapper::AddExtraData(resultCmd, "exportDone", true);
                         sendPipeCmd(resultCmd, false);
@@ -1236,7 +1236,7 @@ namespace Main {
 
                 PipeCmd::Cmd resultCmd;
                 resultCmd.set_action(_curRecvCmd.action());
-
+                resultCmd.set_unique_id(_curRecvCmd.unique_id());
                 PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
                 PipeWrapper::AddExtraData(resultCmd, "exportDone", exportDone);
                 sendPipeCmd(resultCmd, false);
@@ -3226,6 +3226,7 @@ namespace Main {
     ) {
         PipeCmd::Cmd resultCmd;
         resultCmd.set_action(recvCmd.action());
+        resultCmd.set_unique_id(recvCmd.unique_id());
         resultCmd.set_content(content.toUtf8().constData());
 
         PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(status));
