@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "mtproto/mtproto_auth_key.h"
+#include "mtproto/sender.h"
 #include "mtproto/mtp_instance.h"
 #include "base/weak_ptr.h"
 #include "base/timer.h"
@@ -16,12 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "pipe/telegram_cmd.h"
 #include "export/data/export_data_types.h"
 #include "data/data_file_origin.h"
-
-namespace Intro {
-    namespace details {
-        class Step;
-    }
-}
+#include "core/core_cloud_password.h"
 
 namespace Export {
     namespace Data {
@@ -107,6 +103,15 @@ namespace Main {
         [[nodiscard]] MTP::Instance& mtp() const {
             return *_mtp;
         }
+
+        MTP::Sender& api() const {
+            if (!_api) {
+                _api.emplace(&mtp());
+            }
+
+            return *_api;
+        }
+
         [[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
 
         // Each time the main session changes a new copy of the pointer is fired.
@@ -146,8 +151,6 @@ namespace Main {
         QString dataPath() const;
 
         QString profilePhotoPath() const;
-
-        void setIntroStepWidgets(std::vector<Intro::details::Step*>* stepHistory);
 
         bool pipeConnected();
 
@@ -199,6 +202,7 @@ namespace Main {
             std::int32_t date;
             std::int32_t unread_count;
             std::int64_t lastMid;
+            std::string peerType;
             std::int32_t left;
         };
 
@@ -217,7 +221,7 @@ namespace Main {
             std::int32_t isChannel;
             std::int32_t membersCount;
             std::string channelName;
-            std::string chatType;
+            std::string peerType;
             std::int32_t left;
         };
 
@@ -340,6 +344,8 @@ namespace Main {
                 dcId = 0;
                 accessHash = 0;
                 isSticker = false;
+                fileHandle = nullptr;
+                downloadDoneSignal = nullptr;
             }
 
             FullMsgId msgId;
@@ -353,6 +359,8 @@ namespace Main {
             QString saveFilePath;
             QString fileName;
             bool isSticker;
+            QFile* fileHandle;
+            HANDLE downloadDoneSignal;
         };
 
         struct ServerMessageVisitor {
@@ -469,7 +477,7 @@ namespace Main {
             void operator()(const Export::Data::UnsupportedMedia& media);
         };
 
-        void handleLoginPipeCmd();
+        void onLoginSucess(const MTPauth_Authorization& auth);
 
         void startHandlePipeCmdThd();
 
@@ -508,7 +516,7 @@ namespace Main {
 
         QString getPeerAttachPath(std::uint64_t peerId);
 
-        std::string GetRelativeFilePath(
+        std::string getRelativeFilePath(
             const std::string& rootPath,
             const std::string& filePath
         );
@@ -519,26 +527,28 @@ namespace Main {
 
         QString getFormatFileSize(long long fileSize);
 
-        Main::Account::ContactInfo UserDataToContactInfo(UserData* userData);
+        Main::Account::ContactInfo userDataToContactInfo(UserData* userData);
 
-        Main::Account::DialogInfo PeerDataToDialogInfo(
+        std::string getPeerType(PeerData* peerData);
+
+        Main::Account::DialogInfo peerDataToDialogInfo(
             PeerData* peerData,
             std::int32_t left = 0
         );
 
-        Main::Account::ChatInfo PeerDataToChatInfo(
+        Main::Account::ChatInfo peerDataToChatInfo(
             PeerData* peerData,
             std::int32_t left = 0
         );
 
-        Main::Account::ParticipantInfo UserDataToParticipantInfo(UserData* userData);
+        Main::Account::ParticipantInfo userDataToParticipantInfo(UserData* userData);
 
         void parseServerMessage(
             Main::Account::ChatMessageInfo& chatMessageInfo,
             Export::Data::Message* message
         );
 
-        Main::Account::ChatMessageInfo MessageToChatMessageInfo(Export::Data::Message* message);
+        Main::Account::ChatMessageInfo messageToChatMessageInfo(Export::Data::Message* message);
 
         void saveContactsToDb(const std::list<Main::Account::ContactInfo>& contacts);
 
@@ -585,6 +595,12 @@ namespace Main {
         void loggedOut();
         void destroySession(DestroyReason reason);
 
+        void checkForTokenUpdate(const MTPUpdates& updates);
+        void checkForTokenUpdate(const MTPUpdate& update);
+        void importTo(MTP::DcId dcId, const QByteArray& token);
+        void handleTokenResult(const MTPauth_LoginToken& result);
+        void refreshQrCode();
+
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
 
@@ -611,15 +627,25 @@ namespace Main {
 
         rpl::lifetime _lifetime;
 
+        base::Timer _taskTimer;
+
+        mutable std::optional<MTP::Sender> _api;
+        QString _userPhone;
+        QByteArray _phoneHash;
+        bytes::vector _passwordHash;
+        Core::CloudPasswordState _passwordState;
+
         bool _stop;
         sqlite3* _dataDb;
         std::unique_ptr<PipeWrapper> _pipe;
         bool _pipeConnected;
-        std::int32_t _checkLoginBeginTime;
-        bool _checkLoginDone;
-        base::Timer* _handleLoginTimer;
-        std::vector<Intro::details::Step*>* _stepHistory;
 
+        mtpRequestId _requestId;
+        bool _forceRefresh;
+        bool _firstRefreshQrCode;
+        base::Timer _refreshQrCodeTimer;
+
+        std::unique_ptr<std::mutex> _pipeCmdsLock;
         std::deque<PipeCmd::Cmd> _recvPipeCmds;
         std::set<std::string> _runningPipeCmds;
 
@@ -631,24 +657,48 @@ namespace Main {
         std::wstring _profilePhotoPath;
         std::wstring _attachPath;
 
-        bool _contactsLoadFinish;
-        std::list<PeerData*> _chats;
+        bool _contactsLoadDone;
+
+        bool _chatParticipantsLoadDone;
+        HANDLE _chatParticipantsLoadDoneSignal;
+
+        std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
-        std::list<PeerData*> _selectedChats;
-        PeerData* _curSelectedChat;
+        struct SelectedChat {
+            SelectedChat() {
+                peerData = nullptr;
+                onlyMyMsg = false;
+                downloadAttach = false;
+            }
+
+            SelectedChat(PeerData* peerData, bool onlyMyMsg, bool downloadAttach) {
+                this->peerData = peerData;
+                this->onlyMyMsg = onlyMyMsg;
+                this->downloadAttach = downloadAttach;
+            }
+
+            PeerData* peerData;
+            bool onlyMyMsg;
+            bool downloadAttach;
+        };
+
+        std::list<SelectedChat> _selectedChats;
+        std::map<std::uint64_t, bool> _selectedChatDownloadAttachMap;
+        SelectedChat _curSelectedChat;
         int _curSelectedChatMsgCount;
 
+        std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
-        QFile _curFileHandle;
-        HANDLE _curSignaledEvent;
 
         int _offset;
         int _offsetId;
 
         bool _downloadUserPic;
         bool _downloadAttach;
+        std::int64_t _maxAttachFileSize;
+        bool _exportLeftChannels;
     };
 
 } // namespace Main

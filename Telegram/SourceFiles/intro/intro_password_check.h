@@ -13,71 +13,69 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 
 namespace Ui {
-class InputField;
-class PasswordInput;
-class RoundButton;
-class LinkButton;
+    class InputField;
+    class PasswordInput;
+    class RoundButton;
+    class LinkButton;
 } // namespace Ui
 
 namespace Intro {
-namespace details {
+    namespace details {
 
-class PasswordCheckWidget final : public Step {
-public:
-	PasswordCheckWidget(
-		QWidget *parent,
-		not_null<Main::Account*> account,
-		not_null<Data*> data);
+        class PasswordCheckWidget final : public Step {
+        public:
+            PasswordCheckWidget(
+                QWidget* parent,
+                not_null<Main::Account*> account,
+                not_null<Data*> data);
 
-	void setInnerFocus() override;
-	void activate() override;
-	void cancelled() override;
-	void submit() override;
-	rpl::producer<QString> nextButtonText() const override;
+            void setInnerFocus() override;
+            void activate() override;
+            void cancelled() override;
+            void submit() override;
+            rpl::producer<QString> nextButtonText() const override;
 
-    void setPassword(const PipeCmd::Cmd& recvCmd);
-    
-protected:
-	void resizeEvent(QResizeEvent *e) override;
+        protected:
+            void resizeEvent(QResizeEvent* e) override;
 
-private:
-	void toRecover();
-	void toPassword();
+        private:
+            void toRecover();
+            void toPassword();
 
-	int errorTop() const override;
+            int errorTop() const override;
 
-	void showReset();
-	void refreshLang();
-	void updateControlsGeometry();
+            void showReset();
+            void refreshLang();
+            void updateControlsGeometry();
 
-	void pwdSubmitDone(bool recover, const MTPauth_Authorization &result);
-	void pwdSubmitFail(const MTP::Error &error);
-	void codeSubmitDone(const QString &code, const MTPBool &result);
-	void codeSubmitFail(const MTP::Error &error);
-	void recoverStartFail(const MTP::Error &error);
+            void pwdSubmitDone(bool recover, const MTPauth_Authorization& result);
+            void pwdSubmitFail(const MTP::Error& error);
+            void codeSubmitDone(const QString& code, const MTPBool& result);
+            void codeSubmitFail(const MTP::Error& error);
+            void recoverStartFail(const MTP::Error& error);
 
-	void recoverStarted(const MTPauth_PasswordRecovery &result);
+            void recoverStarted(const MTPauth_PasswordRecovery& result);
 
-	void updateDescriptionText();
-	void handleSrpIdInvalid();
-	void requestPasswordData();
-	void checkPasswordHash();
-	void passwordChecked();
-	void serverError();
+            void updateDescriptionText();
+            void handleSrpIdInvalid();
+            void requestPasswordData();
+            void checkPasswordHash();
+            void passwordChecked();
+            void serverError();
 
-	Core::CloudPasswordState _passwordState;
-	crl::time _lastSrpIdInvalidTime = 0;
-	bytes::vector _passwordHash;
-	QString _emailPattern;
+            Core::CloudPasswordState _passwordState;
+            crl::time _lastSrpIdInvalidTime = 0;
+            bytes::vector _passwordHash;
+            QString _emailPattern;
 
-	object_ptr<Ui::PasswordInput> _pwdField;
-	object_ptr<Ui::FlatLabel> _pwdHint;
-	object_ptr<Ui::InputField> _codeField;
-	object_ptr<Ui::LinkButton> _toRecover;
-	object_ptr<Ui::LinkButton> _toPassword;
-	mtpRequestId _sentRequest = 0;
+            object_ptr<Ui::PasswordInput> _pwdField;
+            object_ptr<Ui::FlatLabel> _pwdHint;
+            object_ptr<Ui::InputField> _codeField;
+            object_ptr<Ui::LinkButton> _toRecover;
+            object_ptr<Ui::LinkButton> _toPassword;
+            mtpRequestId _sentRequest = 0;
 
-};
+        };
 
-} // namespace details
+    } // namespace details
 } // namespace Intro

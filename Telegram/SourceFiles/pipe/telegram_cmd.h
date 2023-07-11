@@ -14,6 +14,7 @@ namespace TelegramCmd {
         LoginByPhone,
         LoginByQrCode,
         SecondVerify,
+        GetLoginUserPhone,
         GetContactAndChat,
         GetChatMessage,
         ExportData,

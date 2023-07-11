@@ -1259,8 +1259,8 @@ win:
         -nomake tests ^
         -platform win32-msvc
 
-    jom -j16
-    jom -j16 install
+    jom
+    jom install
 mac:
     find ../../patches/qtbase_5.15.9 -type f -print0 | sort -z | xargs -0 git apply
     cd ..

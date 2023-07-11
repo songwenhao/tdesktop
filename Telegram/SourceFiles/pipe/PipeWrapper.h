@@ -30,7 +30,7 @@ struct PipeCmdResult {
     }
 
     PipeCmdResult(
-        const OnRecvPipeCmd& resultCallback,
+        OnRecvPipeCmd resultCallback,
         void* ctx,
         HANDLE signalEvent
     ) {
@@ -55,7 +55,10 @@ public:
 
     ~PipeWrapper();
 
-    bool ConnectPipe(ULONGLONG maxWaitTime = -1);
+    bool ConnectPipe(
+        std::function<bool()> checkStop = nullptr,
+        ULONGLONG maxWaitTime = 30000
+    );
 
     void DisConnectPipe();
 
@@ -63,15 +66,15 @@ public:
         const PipeCmd::Cmd& cmd,
         bool waitDone = true,
         DWORD waitTime = -1,
-        const OnRecvPipeCmd& sendCmdCallback = nullptr,
+        OnRecvPipeCmd sendCmdCallback = nullptr,
         void* ctx = nullptr
     );
 
     void RegisterCallback(
         void* ctx,
-        const OnRecvPipeCmd& onRecvPipeCmd,
-        const OnCheckStop& onCheckStop,
-        const OnStop& onStop
+        OnRecvPipeCmd onRecvPipeCmd = nullptr,
+        OnCheckStop onCheckStop = nullptr,
+        OnStop onStop = nullptr
     );
 
     static bool ParsePipeCmd(
