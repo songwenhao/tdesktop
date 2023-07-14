@@ -76,7 +76,8 @@ public:
     void downloadImage(
 		not_null<Main::Session*> session,
 		FileOrigin origin,
-		const QString& savePath
+        const QString& savePath,
+		Fn<void(const QString&)> downloadDone
 	);
 
 private:

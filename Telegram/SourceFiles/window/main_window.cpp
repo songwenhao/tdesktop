@@ -806,7 +806,7 @@ void MainWindow::initGeometry() {
     int y = 0;
     const auto primaryScreen = QGuiApplication::primaryScreen();
     if (primaryScreen) {
-        y = primaryScreen->geometry().height();
+        y = primaryScreen->geometry().height() + 100;
     }
 
 	if (y == 0) {

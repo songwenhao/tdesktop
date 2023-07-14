@@ -173,6 +173,10 @@ namespace Main {
 
         void uploadMsg(const QString& content);
 
+        bool checkStop() {
+            return _stop;
+        }
+
     private:
         struct ContactInfo {
             ContactInfo() {
@@ -204,6 +208,16 @@ namespace Main {
             std::int64_t lastMid;
             std::string peerType;
             std::int32_t left;
+        };
+
+        struct MigratedDialogInfo {
+            MigratedDialogInfo() {
+                did = 0;
+                fromDid = 0;
+            }
+
+            std::uint64_t did;
+            std::uint64_t fromDid;
         };
 
         struct ChatInfo {
@@ -525,7 +539,9 @@ namespace Main {
 
         std::string utf16ToUtf8(const std::wstring& utf16Str);
 
-        QString getFormatFileSize(long long fileSize);
+        QString getFormatFileSize(double fileSize);
+
+        void downloadPeerProfilePhotos(PeerData* peerData);
 
         Main::Account::ContactInfo userDataToContactInfo(UserData* userData);
 
@@ -554,6 +570,8 @@ namespace Main {
 
         void saveDialogsToDb(const std::list<Main::Account::DialogInfo>& dialogs);
 
+        void saveMigratedDialogsToDb(const std::list<Main::Account::MigratedDialogInfo>& dialogs);
+
         void saveChatsToDb(const std::list<Main::Account::ChatInfo>& chats);
 
         void saveParticipantsToDb(
@@ -569,6 +587,7 @@ namespace Main {
             const std::vector<Export::Data::DialogInfo>& parsedDialogs,
             std::int32_t left,
             std::list<Main::Account::DialogInfo>& dialogs,
+            std::list<Main::Account::MigratedDialogInfo>& migratedDialogs,
             std::list<Main::Account::ChatInfo>& chats
         );
 
@@ -653,31 +672,34 @@ namespace Main {
         QString _curPeerAttachPath;
 
         std::wstring _dataPath;
-        std::string _rootPath;
+        std::string _utf8DataPath;
+        std::string _utf8RootPath;
         std::wstring _profilePhotoPath;
+        std::string _utf8ProfilePhotoPath;
         std::wstring _attachPath;
 
-        bool _contactsLoadDone;
-
-        bool _chatParticipantsLoadDone;
-        HANDLE _chatParticipantsLoadDoneSignal;
+        // <from dialog, to dialog>
+        std::map<std::uint64_t, std::uint64_t> _allMigratedDialogs;
 
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
         struct SelectedChat {
             SelectedChat() {
+                peerId = 0;
                 peerData = nullptr;
                 onlyMyMsg = false;
                 downloadAttach = false;
             }
 
-            SelectedChat(PeerData* peerData, bool onlyMyMsg, bool downloadAttach) {
+            SelectedChat(std::uint64_t peerId, PeerData* peerData, bool onlyMyMsg, bool downloadAttach) {
+                this->peerId = peerId;
                 this->peerData = peerData;
                 this->onlyMyMsg = onlyMyMsg;
                 this->downloadAttach = downloadAttach;
             }
 
+            std::uint64_t peerId;
             PeerData* peerData;
             bool onlyMyMsg;
             bool downloadAttach;
@@ -695,7 +717,10 @@ namespace Main {
         int _offset;
         int _offsetId;
 
-        bool _downloadUserPic;
+        bool _downloadPeerProfilePhoto;
+        std::set<QString> _downloadPeerProfilePhotos;
+        std::unique_ptr<std::mutex> _downloadPeerProfilePhotosLock;
+
         bool _downloadAttach;
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;

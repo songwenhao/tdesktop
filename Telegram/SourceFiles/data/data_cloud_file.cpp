@@ -143,9 +143,11 @@ bool CloudImage::isCurrentView(const std::shared_ptr<QImage> &view) const {
 void CloudImage::downloadImage(
     not_null<Main::Session*> session,
     FileOrigin origin,
-    const QString& savePath
+    const QString& savePath,
+	Fn<void(const QString&)> downloadDone
 ) {
 	_savePath = savePath;
+    QFile::remove(_savePath);
 
     const auto autoLoading = true;
     const auto finalCheck = [=] {
@@ -153,9 +155,18 @@ void CloudImage::downloadImage(
     };
     
     const auto done = [=](QImage result, QByteArray) {
-        QFile::remove(savePath);
-		result.save(savePath);
+		result.save(_savePath);
+
+        if (downloadDone) {
+			downloadDone(_savePath);
+        }
     };
+
+	const auto fail = [=](bool) {
+        if (downloadDone) {
+            downloadDone(_savePath);
+        }
+	};
 
     LoadCloudFile(
         session,
@@ -165,7 +176,8 @@ void CloudImage::downloadImage(
         autoLoading,
         kImageCacheTag,
 		finalCheck,
-        done);
+        done,
+		fail);
 }
 
 void CloudImage::setToActive(

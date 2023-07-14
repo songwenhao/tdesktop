@@ -139,6 +139,8 @@ public:
         const std::string& key
     );
 
+    static std::string GenerateUniqueId(bool isPipeServer);
+
     static std::string Utf16ToUtf8(const std::wstring& str);
 
     static std::wstring Utf8ToUtf16(const std::string& str);

@@ -288,7 +288,10 @@ public:
 		return _userpic.location();
 	}
 
-	void downloadUserPic();
+	bool downloadUserProfilePhoto(
+		const QString& profilePhotoPath,
+		Fn<void(const QString&)> downloadDone = nullptr
+	);
 
 	static constexpr auto kUnknownPhotoId = PhotoId(0xFFFFFFFFFFFFFFFFULL);
 	[[nodiscard]] bool userpicPhotoUnknown() const {
