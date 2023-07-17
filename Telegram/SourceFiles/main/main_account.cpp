@@ -1699,7 +1699,7 @@ namespace Main {
                             SetEvent(_curDownloadFile->downloadDoneSignal);
                         }
                     }
-                    }).send();
+                    }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
         }
     }
 
