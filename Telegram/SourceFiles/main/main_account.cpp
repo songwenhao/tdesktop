@@ -1727,7 +1727,7 @@ namespace Main {
             if (name.isEmpty()) {
                 name = userData->userName();
                 if (name.isEmpty()) {
-                    name = QString("%1").arg(userData->id.value);
+                    name = QString("Deleted Account(%1)").arg(userData->id.value);
                 }
             }
         }
@@ -2043,7 +2043,11 @@ namespace Main {
     )
         : _account(account),
         _chatMessageInfo(chatMessageInfo),
-        _message(message) {}
+        _message(message) {
+
+        auto peerData = _account.session().data().peer(_message->fromId);
+        _serviceFrom = peerData ? peerData->name() : "Deleted";
+    }
 
     void Main::Account::ServerMessageVisitor::operator()(v::null_t) {
 
@@ -2051,31 +2055,26 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建群<%2>").arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建群 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditTitle& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群标题为<%2>").arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群标题为 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditPhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群头像").arg(userName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群头像").arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeletePhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 删除群头像").arg(userName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 删除群头像").arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatAddUser& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         QString msgContent;
 
         for (const auto& userId : actionContent.userIds) {
@@ -2086,69 +2085,72 @@ namespace Main {
             msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
         }
 
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(userName).arg(msgContent)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(_serviceFrom).arg(msgContent)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeleteUser& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 移除 %2").arg(userName).arg(removedUserName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 移除 %2").arg(_serviceFrom).arg(removedUserName)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByLink& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        //QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.inviterId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 通过链接加入").arg(userName)).toUtf8().constData();
+        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.inviterId)));
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 通过%2的链接加入").arg(_serviceFrom).arg(userName)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建频道<%2>").arg(userName)
+        _chatMessageInfo.content = (QString::fromStdWString(L"创建频道 <%2>")
             .arg(actionContent.title.constData())).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatMigrateTo& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString chatName = _account.getChatDisplayName(_account.session().data().chat(peerToChat(_message->peerId)));
-        QString channelName = _account.getChannelDisplayName(_account.session().data().channel(actionContent.channelId));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 迁移为频道 %2")
-            .arg(chatName).arg(channelName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 转换本群为超级群")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelMigrateFrom& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString channelName = _account.getChannelDisplayName(_account.session().data().channel(peerToChannel(_message->peerId)));
-        QString chatName = _account.getChatDisplayName(_account.session().data().chat(actionContent.chatId));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1, 频道 %2 由迁移 %3")
-            .arg(actionContent.title.constData()).arg(chatName).arg(channelName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 由普通群转换为超级群")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPinMessage& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 固定本条消息")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionHistoryClear& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         _chatMessageInfo.content = (QString::fromStdWString(L"%1 清空聊天记录")
-            .arg(userName)).toUtf8().constData();
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGameScore& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"游戏得分%1")
-            .arg(actionContent.score)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 游戏得分%2")
+            .arg(_serviceFrom).arg(actionContent.score)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPaymentSent& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发送付款请求 %2%3")
-            .arg(userName).arg(actionContent.amount)
-            .arg(actionContent.currency.constData())).toUtf8().constData();
+        const auto amount = Export::Data::FormatMoneyAmount(actionContent.amount, actionContent.currency);
+        if (actionContent.recurringUsed) {
+            _chatMessageInfo.content = QString("You were charged " + amount + " via recurring payment").toUtf8().constData();
+        } else {
+            QString result = "You have successfully transferred "
+                + amount
+                + " for "
+                + "this invoice";
+            if (actionContent.recurringInit) {
+                result += " and allowed future recurring payments";
+            }
+            _chatMessageInfo.content = result.toUtf8().constData();
+        }
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneCall& actionContent) {
@@ -2186,7 +2188,9 @@ namespace Main {
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionScreenshotTaken& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 took a screenshot")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionCustomAction& actionContent) {
@@ -2195,34 +2199,119 @@ namespace Main {
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionBotAllowed& actionContent) {
+        QString content = actionContent.attachMenu
+            ? "You allowed this bot to message you "
+            "when you added it in the attachment menu."_q
+            : actionContent.app.isEmpty()
+            ? ("You allowed this bot to message you when you opened "
+                + actionContent.app)
+            : ("You allowed this bot to message you when you logged in on "
+                + actionContent.domain);
 
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSecureValuesSent& actionContent) {
+        using namespace Export::Data;
 
+        auto list = std::vector<QByteArray>();
+        for (const auto type : actionContent.types) {
+            list.push_back([&] {
+                using Type = ActionSecureValuesSent::Type;
+                switch (type) {
+                case Type::PersonalDetails: return "Personal details";
+                case Type::Passport: return "Passport";
+                case Type::DriverLicense: return "Driver license";
+                case Type::IdentityCard: return "Identity card";
+                case Type::InternalPassport: return "Internal passport";
+                case Type::Address: return "Address information";
+                case Type::UtilityBill: return "Utility bill";
+                case Type::BankStatement: return "Bank statement";
+                case Type::RentalAgreement: return "Rental agreement";
+                case Type::PassportRegistration:
+                    return "Passport registration";
+                case Type::TemporaryRegistration:
+                    return "Temporary registration";
+                case Type::Phone: return "Phone number";
+                case Type::Email: return "Email";
+                }
+                return "";
+                }());
+        }
+
+        QString content;
+        const auto count = list.size();
+        if (count == 1) {
+            content = list[0];
+        } else if (count > 1) {
+            content = list[0];
+            for (auto i = 1; i != count - 1; ++i) {
+                content += ", " + list[i];
+            }
+            content += " and " + list[count - 1];
+        }
+
+        content = QString("You have sent the following documents: ")
+            + content;
+
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionContactSignUp& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined Telegram")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneNumberRequest& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 requested your phone number")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGeoProximityReached& actionContent) {
+        auto peerData = _account.session().data().peer(actionContent.fromId);
+        const QString fromName = peerData ? peerData->name() : QString::number(actionContent.fromId.value);
 
+        peerData = _account.session().data().peer(actionContent.toId);
+        const auto toName = peerData ? peerData->name() : QString::number(actionContent.toId.value);
+
+        const auto distance = [&]() -> QString {
+            if (actionContent.distance >= 1000) {
+                const auto km = (10 * (actionContent.distance / 10)) / 1000.;
+                return QString::number(km) + " km";
+            } else if (actionContent.distance == 1) {
+                return "1 meter";
+            } else {
+                return QString::number(actionContent.distance) + " meters";
+            }
+        }().toUtf8();
+
+        QString content;
+        if (actionContent.fromSelf) {
+            content = "You are now within " + distance + " from " + toName;
+        } else if (actionContent.toSelf) {
+            content = fromName + " is now within " + distance + " from you";
+        } else {
+            content = fromName
+                + " is now within "
+                + distance
+                + " from "
+                + toName;
+        }
+
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCall& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_CALL;
-
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString("%1 发起群通话, 时长: %2秒").arg(userName).arg(actionContent.duration)).toUtf8().constData();
+        _chatMessageInfo.content = (QString("%1 发起群通话, 时长: %2秒").arg(_serviceFrom).arg(actionContent.duration)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionInviteToGroupCall& actionContent) {
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         QString msgContent;
 
         for (const auto& userId : actionContent.userIds) {
@@ -2233,56 +2322,105 @@ namespace Main {
             msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
         }
 
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2 进行语音通话").arg(userName).arg(msgContent)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2 进行语音通话").arg(_serviceFrom).arg(msgContent)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetMessagesTTL& actionContent) {
+        const auto periodText = (actionContent.period == 7 * 86400)
+            ? "7 days"
+            : (actionContent.period == 86400)
+            ? "24 hours"
+            : QByteArray();
 
+        QString content;
+        content = (_account._curSelectedChat.peerData->isChannel())
+            ? (actionContent.period
+                ? "New messages will auto-delete in " + periodText
+                : "New messages will not auto-delete")
+            : (actionContent.period
+                ? (_serviceFrom
+                    + " has set messages to auto-delete in " + periodText)
+                : (_serviceFrom
+                    + " has set messages not to auto-delete"));
+
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCallScheduled& actionContent) {
+        const auto dateText = Export::Data::FormatDateTime(actionContent.date);
+        QString content = (_account._curSelectedChat.peerData->isChannel())
+            ? ("Voice chat scheduled for " + dateText)
+            : (_serviceFrom + " scheduled a voice chat for " + dateText);
 
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetChatTheme& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 设置聊天背景").arg(userName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 设置聊天背景")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByRequest& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined group by request")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionWebViewDataSent& actionContent) {
+        QString content = "You have just successfully transferred data from the <"
+            + actionContent.text
+            + "> button to the bot";
+
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = actionContent.text.constData();
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiftPremium& actionContent) {
+        QString content;
 
+        do {
+            if (!actionContent.months || actionContent.cost.isEmpty()) {
+                content = _serviceFrom + " sent you a gift.";
+                break;
+            }
+
+            content = _serviceFrom
+                + " sent you a gift for "
+                + actionContent.cost
+                + ": Telegram Premium for "
+                + QString::number(actionContent.months).toUtf8()
+                + " months.";
+
+        } while (false);
+
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = content.toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         _chatMessageInfo.content = (QString::fromStdWString(L"%1 发布公告: %2")
-            .arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+            .arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicEdit& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
         _chatMessageInfo.content = (QString::fromStdWString(L"%1 编辑公告: %2")
-            .arg(userName).arg(actionContent.title.constData())).toUtf8().constData();
+            .arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSuggestProfilePhoto& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 suggests to use this photo")
+            .arg(_serviceFrom)).toUtf8().constData();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionRequestedPeer& actionContent) {
-
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
     }
 
     Main::Account::MessageMediaVisitor::MessageMediaVisitor(

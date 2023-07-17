@@ -387,6 +387,7 @@ namespace Main {
             Main::Account& _account;
             Main::Account::ChatMessageInfo& _chatMessageInfo;
             Export::Data::Message* _message;
+            QString _serviceFrom;
 
             void operator()(v::null_t);
 
