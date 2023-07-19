@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "qr/qr_generate.h"
 #include "styles/style_intro.h"
 #include <QBuffer>
+#include <QFile>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 
@@ -86,6 +87,7 @@ namespace Main {
         , _firstRefreshQrCode(true)
         , _refreshQrCodeTimer([=] { _firstRefreshQrCode = false; refreshQrCode(); })
         , _pipeCmdsLock(std::make_unique<std::mutex>())
+        , _takeoutId(0)
         , _curChat(nullptr)
         , _curSelectedChatMsgCount(0)
         , _downloadFilesLock(std::make_unique<std::mutex>())
@@ -723,7 +725,16 @@ namespace Main {
                 }, [&](void* ctx)->bool {
                     return _stop;
                 }, [&](void* ctx) {
-                    _stop = true;
+                    if (_takeoutId != 0) {
+                        _session->api().request(MTPInvokeWithTakeout<MTPaccount_FinishTakeoutSession>(
+                            MTP_long(_takeoutId),
+                            MTPaccount_FinishTakeoutSession(
+                                MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
+                            ))).done([=]() {
+                            _takeoutId = 0;
+                            _stop = true;
+                            }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+                    }
                 });
 
             if (_pipe->ConnectPipe()) {
@@ -991,8 +1002,17 @@ namespace Main {
                                     if (document.isObject()) {
                                         std::uint64_t peerId = document["peerId"].toString().toULongLong();
                                         bool downloadAttach = document["downloadAttach"].toBool();
+                                        bool onlyMyMsg = document["onlyMyMsg"].toBool();
+
+                                        bool left = false;
+                                        if (_allLeftChannels.find(peerId) != _allLeftChannels.end()) {
+                                            left = true;
+                                            onlyMyMsg = true;
+                                        }
+
                                         auto peerData = _session->data().peer(peerFromUser(MTP_long(peerId)));
-                                        _selectedChats.emplace_back(std::move(SelectedChat(peerId, peerData, document["onlyMyMsg"].toBool(), downloadAttach)));
+
+                                        _selectedChats.emplace_back(std::move(SelectedChat(peerId, peerData, left, onlyMyMsg, downloadAttach)));
                                         _selectedChatDownloadAttachMap.emplace(peerId, downloadAttach);
 
                                         auto iterPeer = _allMigratedDialogs.find(peerId);
@@ -1011,7 +1031,7 @@ namespace Main {
                         requestChatParticipant(true);
 
                     } else if (action == TelegramCmd::Action::ExportData) {
-
+                        requestLeftChannel();
                     } else if (action == TelegramCmd::Action::LogOut) {
                         _mtp->logout([this]() {
                             sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
@@ -1066,7 +1086,7 @@ namespace Main {
             saveContactsToDb(contacts);
             requestDialogs(nullptr, 0, 0);
 
-            }).fail([=](const MTP::Error& result) {
+            }).fail([=](const MTP::Error& error) {
                 requestDialogs(nullptr, 0, 0);
                 }).send();
     }
@@ -1133,10 +1153,7 @@ namespace Main {
 
             if (finished) {
                 if (_exportLeftChannels) {
-                    _offset = 0;
-                    uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
-
-                    requestLeftChannels(_offset);
+                    requestLeftChannel();
                 } else {
                     sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
                 }
@@ -1146,7 +1163,28 @@ namespace Main {
             }).send();
     }
 
-    void Account::requestLeftChannels(int offset) {
+    template <typename Request>
+    auto Account::buildTakeoutRequest(Request&& request) {
+        return MTPInvokeWithTakeout<Request>(
+            MTP_long(_takeoutId),
+            std::forward<Request>(request)
+        );
+    }
+
+    void Account::requestLeftChannelDone(bool shouldWait) {
+        PipeCmd::Cmd resultCmd;
+        resultCmd.set_action(_curRecvCmd.action());
+        resultCmd.set_unique_id(_curRecvCmd.unique_id());
+        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+        PipeWrapper::AddExtraData(resultCmd, "shouldWait", shouldWait);
+        sendPipeCmd(resultCmd, false);
+    }
+
+    void Account::requestLeftChannel() {
+        uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
+        _offset = 0;
+        _takeoutId = 0;
+
         using Flag = MTPaccount_InitTakeoutSession::Flag;
         const auto flags =
             Flag(0)
@@ -1163,86 +1201,67 @@ namespace Main {
             MTP_long(0xFFFFFFFF)
         )).done([=](
             const MTPaccount_Takeout& result) {
-                auto takeoutId = result.match([](const MTPDaccount_takeout& data) {
+                _takeoutId = result.match([](const MTPDaccount_takeout& data) {
                     return data.vid().v;
                     });
 
-                auto request = MTPchannels_GetLeftChannels(MTP_int(_offset));
+                requestLeftChannelEx();
 
-                _session->api().request(MTPInvokeWithTakeout<MTPchannels_GetLeftChannels>(
-                    MTP_long(takeoutId),
-                    std::forward<MTPchannels_GetLeftChannels>(request)
-                )).done([&, this](const MTPmessages_Chats& result) {
-                    result.match([&](const auto& data) { //MTPDmessages_chats &data) {
-                        _session->data().processChats(data.vchats());
-                        });
+            }).fail([=](const MTP::Error& error) {
+                bool shouldWait = false;
 
-                    auto info = Export::Data::ParseLeftChannelsInfo(result);
-
-                    std::list<Main::Account::DialogInfo> dialogs;
-                    std::list<Main::Account::MigratedDialogInfo> migratedDialogs;
-                    std::list<Main::Account::ChatInfo> chats;
-
-                    processExportDialog(info.left, 1, dialogs, migratedDialogs, chats);
-
-                    saveDialogsToDb(dialogs);
-                    saveMigratedDialogsToDb(migratedDialogs);
-                    saveChatsToDb(chats);
-
-                    _offset += result.match(
-                        [](const auto& data) {
-                            return int(data.vchats().v.size());
-                        });
-
-                    auto finished = result.match(
-                        [](const MTPDmessages_chats& data) {
-                            return true;
-                        }, [](const MTPDmessages_chatsSlice& data) {
-                            return data.vchats().v.isEmpty();
-                        });
-
-                    if (finished) {
-                        _session->api().request(MTPaccount_FinishTakeoutSession(
-                            MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
-                        )).done([]() {}).send();
-
-                        PipeCmd::Cmd resultCmd;
-                        resultCmd.set_action(_curRecvCmd.action());
-                        resultCmd.set_unique_id(_curRecvCmd.unique_id());
-                        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
-                        PipeWrapper::AddExtraData(resultCmd, "exportDone", true);
-                        sendPipeCmd(resultCmd, false);
-                    } else {
-                        requestLeftChannels(_offset);
-                    }
-
-                    }).fail([this](const MTP::Error& result) {
-                        _session->api().request(MTPaccount_FinishTakeoutSession(
-                            MTP_flags(0)
-                        )).done([]() {}).send();
-
-                        PipeCmd::Cmd resultCmd;
-                        resultCmd.set_action(_curRecvCmd.action());
-                        resultCmd.set_unique_id(_curRecvCmd.unique_id());
-                        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
-                        PipeWrapper::AddExtraData(resultCmd, "exportDone", true);
-                        sendPipeCmd(resultCmd, false);
-                        }).send();
-            }).fail([=](const MTP::Error& result) {
-                bool exportDone = true;
-
-                if (result.type().indexOf("TAKEOUT_INIT_DELAY") != -1) {
+                if (error.type().indexOf("TAKEOUT_INIT_DELAY") != -1) {
                     // 等待24小时
-                    exportDone = false;
+                    shouldWait = true;
                 }
 
-                PipeCmd::Cmd resultCmd;
-                resultCmd.set_action(_curRecvCmd.action());
-                resultCmd.set_unique_id(_curRecvCmd.unique_id());
-                PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
-                PipeWrapper::AddExtraData(resultCmd, "exportDone", exportDone);
-                sendPipeCmd(resultCmd, false);
+                requestLeftChannelDone(shouldWait);
                 }).send();
+    }
+
+    void Account::requestLeftChannelEx() {
+        _session->api().request(buildTakeoutRequest(MTPchannels_GetLeftChannels(MTP_int(_offset))))
+            .done([=](const MTPmessages_Chats& result) {
+            result.match([&](const auto& data) { //MTPDmessages_chats &data) {
+                _session->data().processChats(data.vchats());
+                });
+
+            auto info = Export::Data::ParseLeftChannelsInfo(result);
+
+            std::list<Main::Account::DialogInfo> dialogs;
+            std::list<Main::Account::MigratedDialogInfo> migratedDialogs;
+            std::list<Main::Account::ChatInfo> chats;
+
+            processExportDialog(info.left, 1, dialogs, migratedDialogs, chats);
+
+            saveDialogsToDb(dialogs);
+            saveMigratedDialogsToDb(migratedDialogs);
+            saveChatsToDb(chats);
+
+            _offset += result.match(
+                [](const auto& data) {
+                    return int(data.vchats().v.size());
+                });
+
+            auto finished = result.match(
+                [](const MTPDmessages_chats& data) {
+                    return true;
+                }, [](const MTPDmessages_chatsSlice& data) {
+                    return data.vchats().v.isEmpty();
+                });
+
+            if (finished) {
+                requestLeftChannelDone();
+            } else {
+                requestLeftChannelEx();
+            }}).fail([=](const MTP::Error& error) {
+                _takeoutId = 0;
+                _session->api().request(buildTakeoutRequest(MTPaccount_FinishTakeoutSession(
+                    MTP_flags(0)
+                ))).done([]() {}).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+
+                requestLeftChannelDone();
+                }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
     }
 
     void Account::requestChatParticipant(bool first) {
@@ -1338,7 +1357,7 @@ namespace Main {
                         requestChatParticipant();
                     });
                 }
-            ).fail([this](const MTP::Error& result) {
+            ).fail([this](const MTP::Error& error) {
                     requestChatParticipant();
                 }).send();
         } else if (_curChat->isChat()) {
@@ -1387,7 +1406,7 @@ namespace Main {
                         requestChatParticipant();
                     });
                 }
-            ).fail([this](const MTP::Error& result) {
+            ).fail([this](const MTP::Error& error) {
                     requestChatParticipant();
                 }).send();
         } else {
@@ -1459,7 +1478,7 @@ namespace Main {
             CreateDirectoryW(peerAttachPath.c_str(), nullptr);
         }
 
-        auto handleMessage = [=](const MTPmessages_Messages& result) {
+        auto getMessageDone = [=](const MTPmessages_Messages& result) {
             int msgCount = 0;
 
             auto context = Export::Data::ParseMediaContext{ .selfPeerId = _curSelectedChat.peerData->id };
@@ -1537,31 +1556,85 @@ namespace Main {
                 MTP_int(minId),
                 MTP_long(historyHash)
             )).done([=](const MTPmessages_Messages& result) {
-                handleMessage(result);
-                }).fail([this](const MTP::Error& result) {
-                    requestChatMessage();
+                getMessageDone(result);
+                }).fail([=](const MTP::Error& error) {
+                    if (error.type() == u"CHANNEL_PRIVATE"_q) {
+                        if (_curSelectedChat.peerData->input.type() == mtpc_inputPeerChannel) {
+                            // Perhaps we just left / were kicked from channel.
+                            // Just switch to only my messages.
+                            _session->api().request(MTPmessages_Search(
+                                MTP_flags(MTPmessages_Search::Flag::f_from_id),
+                                _curSelectedChat.peerData->input,
+                                MTP_string(), // query
+                                MTP_inputPeerSelf(),
+                                MTPint(), // top_msg_id
+                                MTP_inputMessagesFilterEmpty(),
+                                MTP_int(0), // min_date
+                                MTP_int(0), // max_date
+                                MTP_int(_offsetId),
+                                MTP_int(addOffset),
+                                MTP_int(limit),
+                                MTP_int(0), // max_id
+                                MTP_int(0), // min_id
+                                MTP_long(0) // hash
+                            )).done([=](const MTPmessages_Messages& result) {
+                                getMessageDone(result);
+                                }).fail([this](const MTP::Error& error) {
+                                    requestChatMessage();
+                                    }).send();
+                        }
+                    } else {
+                        requestChatMessage();
+                    }
                     }).send();
         } else {
-            _session->api().request(MTPmessages_Search(
-                MTP_flags(MTPmessages_Search::Flag::f_from_id),
-                _curSelectedChat.peerData->input,
-                MTP_string(), // query
-                MTP_inputPeerSelf(),
-                MTPint(), // top_msg_id
-                MTP_inputMessagesFilterEmpty(),
-                MTP_int(0), // min_date
-                MTP_int(0), // max_date
-                MTP_int(_offsetId),
-                MTP_int(addOffset),
-                MTP_int(limit),
-                MTP_int(0), // max_id
-                MTP_int(0), // min_id
-                MTP_long(0) // hash
-            )).done([=](const MTPmessages_Messages& result) {
-                handleMessage(result);
-                }).fail([this](const MTP::Error& result) {
+            if (!_curSelectedChat.left) {
+                _session->api().request(MTPmessages_Search(
+                    MTP_flags(MTPmessages_Search::Flag::f_from_id),
+                    _curSelectedChat.peerData->input,
+                    MTP_string(), // query
+                    MTP_inputPeerSelf(),
+                    MTPint(), // top_msg_id
+                    MTP_inputMessagesFilterEmpty(),
+                    MTP_int(0), // min_date
+                    MTP_int(0), // max_date
+                    MTP_int(_offsetId),
+                    MTP_int(addOffset),
+                    MTP_int(limit),
+                    MTP_int(0), // max_id
+                    MTP_int(0), // min_id
+                    MTP_long(0) // hash
+                )).done([=](const MTPmessages_Messages& result) {
+                    getMessageDone(result);
+                    }).fail([this](const MTP::Error& error) {
+                        requestChatMessage();
+                        }).send();
+            } else {
+                if (_takeoutId != 0) {
+                    _session->api().request(buildTakeoutRequest(MTPmessages_Search(
+                        MTP_flags(MTPmessages_Search::Flag::f_from_id),
+                        _curSelectedChat.peerData->input,
+                        MTP_string(), // query
+                        MTP_inputPeerSelf(),
+                        MTPint(), // top_msg_id
+                        MTP_inputMessagesFilterEmpty(),
+                        MTP_int(0), // min_date
+                        MTP_int(0), // max_date
+                        MTP_int(_offsetId),
+                        MTP_int(addOffset),
+                        MTP_int(limit),
+                        MTP_int(0), // max_id
+                        MTP_int(0), // min_id
+                        MTP_long(0) // hash
+                    ))).done([=](const MTPmessages_Messages& result) {
+                        getMessageDone(result);
+                        }).fail([this](const MTP::Error& error) {
+                            requestChatMessage();
+                            }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+                } else {
                     requestChatMessage();
-                    }).send();
+                }
+            }
         }
     }
 
@@ -1613,8 +1686,9 @@ namespace Main {
             uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
             requestFileEx();
         } else {
-            if (_selectedChats.empty()) {
+            if (_selectedChats.empty() && (TelegramCmd::Action)_curRecvCmd.action() == TelegramCmd::Action::GetChatMessage) {
                 sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                _curDownloadFile = nullptr;
             }
         }
     }
@@ -1637,18 +1711,58 @@ namespace Main {
             }
         } else {
             constexpr int kFileChunkSize = 128 * 1024;
-            _session->api().request(MTPupload_GetFile(
-                MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
-                _curDownloadFile->fileLocation,
-                MTP_long(_offset),
-                MTP_int(kFileChunkSize))
-            ).fail([=](const MTP::Error& result) {
-                if (result.type() == u"TAKEOUT_FILE_EMPTY"_q) {
-                } else if (result.type() == u"LOCATION_INVALID"_q
-                    || result.type() == u"VERSION_INVALID"_q
-                    || result.type() == u"LOCATION_NOT_AVAILABLE"_q) {
-                } else if (result.code() == 400
-                    && result.type().startsWith(u"FILE_REFERENCE_"_q)) {
+
+            auto getFileDone = [=](const MTPupload_File& result) {
+                bool hasErr = true;
+
+                do {
+                    if (result.type() == mtpc_upload_fileCdnRedirect) {
+                        break;
+                    }
+
+                    const auto& data = result.c_upload_file();
+                    if (data.vbytes().v.isEmpty()) {
+                        break;
+                    } else {
+                        if (_curDownloadFile->fileHandle->isOpen()) {
+                            _curDownloadFile->fileHandle->seek(_offset);
+
+                            const char* rawData = data.vbytes().v.constData();
+                            int rawDataSize = data.vbytes().v.size();
+                            if (rawData && _curDownloadFile->fileHandle->write(rawData, rawDataSize) == qint64(rawDataSize)) {
+                                hasErr = false;
+                                _offset += rawDataSize;
+                            }
+
+                            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
+                                .arg(_curDownloadFile->fileName).arg(getFormatFileSize(_curDownloadFile->fileSize)).arg(getFormatFileSize(_offset)));
+                        }
+                    }
+
+                } while (false);
+
+                if (!hasErr) {
+                    if (_offset >= _curDownloadFile->fileSize) {
+                        if (_curDownloadFile->downloadDoneSignal) {
+                            SetEvent(_curDownloadFile->downloadDoneSignal);
+                        }
+                    } else {
+                        requestFileEx();
+                    }
+                } else {
+                    if (_curDownloadFile->downloadDoneSignal) {
+                        SetEvent(_curDownloadFile->downloadDoneSignal);
+                    }
+                }
+            };
+
+            auto getFileFail = [=](const MTP::Error& error) {
+                if (error.type() == u"TAKEOUT_FILE_EMPTY"_q) {
+                } else if (error.type() == u"LOCATION_INVALID"_q
+                    || error.type() == u"VERSION_INVALID"_q
+                    || error.type() == u"LOCATION_NOT_AVAILABLE"_q) {
+                } else if (error.code() == 400
+                    && error.type().startsWith(u"FILE_REFERENCE_"_q)) {
                     // filePartRefreshReference(offset);
                 } else {
                 }
@@ -1656,50 +1770,31 @@ namespace Main {
                 if (_curDownloadFile->downloadDoneSignal) {
                     SetEvent(_curDownloadFile->downloadDoneSignal);
                 }
+            };
 
-                }).done([=, this](const MTPupload_File& result) {
-                    bool hasErr = true;
-
-                    do {
-                        if (result.type() == mtpc_upload_fileCdnRedirect) {
-                            break;
-                        }
-
-                        const auto& data = result.c_upload_file();
-                        if (data.vbytes().v.isEmpty()) {
-                            break;
-                        } else {
-                            if (_curDownloadFile->fileHandle->isOpen()) {
-                                _curDownloadFile->fileHandle->seek(_offset);
-
-                                const char* rawData = data.vbytes().v.constData();
-                                int rawDataSize = data.vbytes().v.size();
-                                if (rawData && _curDownloadFile->fileHandle->write(rawData, rawDataSize) == qint64(rawDataSize)) {
-                                    hasErr = false;
-                                    _offset += rawDataSize;
-                                }
-
-                                uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
-                                    .arg(_curDownloadFile->fileName).arg(getFormatFileSize(_curDownloadFile->fileSize)).arg(getFormatFileSize(_offset)));
-                            }
-                        }
-
-                    } while (false);
-
-                    if (!hasErr) {
-                        if (_offset >= _curDownloadFile->fileSize) {
-                            if (_curDownloadFile->downloadDoneSignal) {
-                                SetEvent(_curDownloadFile->downloadDoneSignal);
-                            }
-                        } else {
-                            requestFileEx();
-                        }
-                    } else {
-                        if (_curDownloadFile->downloadDoneSignal) {
-                            SetEvent(_curDownloadFile->downloadDoneSignal);
-                        }
-                    }
-                    }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+            if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
+                _session->api().request(MTPupload_GetFile(
+                    MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+                    _curDownloadFile->fileLocation,
+                    MTP_long(_offset),
+                    MTP_int(kFileChunkSize))
+                ).fail([=](const MTP::Error& error) {
+                    getFileFail(error);
+                    }).done([=](const MTPupload_File& result) {
+                        getFileDone(result);
+                        }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+            } else {
+                _session->api().request(buildTakeoutRequest(MTPupload_GetFile(
+                    MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+                    _curDownloadFile->fileLocation,
+                    MTP_long(_offset),
+                    MTP_int(kFileChunkSize)))
+                ).fail([=](const MTP::Error& error) {
+                    getFileFail(error);
+                    }).done([=](const MTPupload_File& result) {
+                        getFileDone(result);
+                        }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+            }
         }
     }
 
@@ -1855,6 +1950,10 @@ namespace Main {
 
                 _allChats.emplace_back(peer);
 
+                if (left) {
+                    _allLeftChannels.emplace(dialog.peerId.value);
+                }
+
                 chats.emplace_back(std::move(peerDataToChatInfo(peer, left)));
             }
         }
@@ -1923,13 +2022,13 @@ namespace Main {
                 }
             } else if (const ChannelData* channelData = peerData->asChannel()) {
                 if (peerData->isMegagroup()) {
-                    if (!channelData->isPublic()) {
+                    if (channelData->isPublic()) {
                         peerType = (const char*)std::u8string(u8"公开群组").c_str();
                     } else {
                         peerType = (const char*)std::u8string(u8"私有群组").c_str();
                     }
                 } else {
-                    if (!channelData->isPublic()) {
+                    if (channelData->isPublic()) {
                         peerType = (const char*)std::u8string(u8"公开频道").c_str();
                     } else {
                         peerType = (const char*)std::u8string(u8"私有频道").c_str();
@@ -2445,6 +2544,7 @@ namespace Main {
 
         Main::Account::DownloadFileInfo downloadFileInfo;
         downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+        downloadFileInfo.peerId = _chatMessageInfo.peerId;
         downloadFileInfo.docId = media.id;
         downloadFileInfo.dcId = file.location.dcId;
         downloadFileInfo.fileSize = file.size;
@@ -2520,6 +2620,7 @@ namespace Main {
 
         Main::Account::DownloadFileInfo downloadFileInfo;
         downloadFileInfo.msgId = FullMsgId(_message->peerId, _message->id);
+        downloadFileInfo.peerId = _chatMessageInfo.peerId;
         downloadFileInfo.docId = media.id;
 
         if (!media.isSticker) {
@@ -2548,7 +2649,7 @@ namespace Main {
 
         _chatMessageInfo.duration = media.duration;
 
-        if (media.isAudioFile || media.isVoiceMessage) {
+        if (media.isVoiceMessage) {
             _chatMessageInfo.msgType = IMMsgType::APP_MSG_AUDIO;
         } else if (media.isVideoFile || media.isVideoMessage) {
             _chatMessageInfo.msgType = IMMsgType::APP_MSG_VEDIO;
@@ -3368,14 +3469,32 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE TABLE IF NOT EXISTS dialogs(did TEXT NOT NULL UNIQUE, name TEXT, date INTEGER, "
+            sql = "CREATE UNIQUE INDEX users_index ON users(uid);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE TABLE IF NOT EXISTS dialogs(did TEXT NOT NULL, name TEXT, date INTEGER, "
                 "unread_count INTEGER, last_mid INTEGER, peerType TEXT, left INTEGER);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
             }
 
+            sql = "CREATE UNIQUE INDEX dialogs_index ON dialogs(did);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
             sql = R"(CREATE TABLE IF NOT EXISTS migrated_to_dialogs(did TEXT NOT NULL, from_did TEXT NOT NULL);)";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE UNIQUE INDEX migrated_to_dialogs_index ON migrated_to_dialogs(did, from_did);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3389,7 +3508,19 @@ namespace Main {
                 break;
             }
 
+            sql = "CREATE UNIQUE INDEX messages_index ON messages(mid, peer_id);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
             sql = "CREATE TABLE IF NOT EXISTS muti_messages(mid INTEGER NOT NULL, msg_type INTEGER, content TEXT);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE UNIQUE INDEX muti_messages_index ON muti_messages(mid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3402,8 +3533,20 @@ namespace Main {
                 break;
             }
 
+            sql = "CREATE UNIQUE INDEX chats_index ON chats(cid);";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
             sql = "CREATE TABLE IF NOT EXISTS participants(cid TEXT NOT NULL, uid TEXT NOT NULL, first_name TEXT, "
                 "last_name TEXT, username TEXT, phone TEXT, type TEXT, PRIMARY KEY (cid, uid));";
+            ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            sql = "CREATE UNIQUE INDEX participants_index ON participants(cid, uid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;

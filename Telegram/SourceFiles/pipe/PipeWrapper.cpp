@@ -1,5 +1,6 @@
 ﻿#include <combaseapi.h>
 #pragma comment(lib, "Ole32")
+
 #include "LogTrace.h"
 
 #include "PipeWrapper.h"
@@ -43,8 +44,10 @@ public:
         pipeCmdResultMapMutex_ = std::make_unique<std::mutex>();
         pid_ = GetCurrentProcessId();
 
-        s2c_heartbeatEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, (heartbeatEventName_ + L"-s2c").c_str());
-        c2s_heartbeatEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, (heartbeatEventName_ + L"-c2s").c_str());
+        if (!heartbeatEventName_.empty()) {
+            s2c_heartbeatEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, (heartbeatEventName_ + L"-s2c").c_str());
+            c2s_heartbeatEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, (heartbeatEventName_ + L"-c2s").c_str());
+        }
 
         memset(&pipeReadOverlapped_, 0, sizeof(pipeReadOverlapped_));
         pipeReadOverlapped_.hEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -77,7 +80,7 @@ public:
         HANDLE pipeHandle = INVALID_HANDLE_VALUE;
 
         /*
-        * | server |           | client |
+        * | server |         | client |
         *
         * |write pipe|      |read pipe|
         *             \    /
@@ -305,17 +308,13 @@ public:
         bool connected = false;
 
         do {
-            if (!s2c_heartbeatEventHandle_ ||
-                !c2s_heartbeatEventHandle_ ||
-                !pipeReadOverlapped_.hEvent ||
+            if (!pipeReadOverlapped_.hEvent ||
                 !pipeWriteOverlapped_.hEvent ||
                 !readPipeConnectedEvent_ ||
                 !writePipeConnectedEvent_) {
                 break;
             }
 
-            ResetEvent(s2c_heartbeatEventHandle_);
-            ResetEvent(c2s_heartbeatEventHandle_);
             ResetEvent(pipeReadOverlapped_.hEvent);
             ResetEvent(pipeWriteOverlapped_.hEvent);
             ResetEvent(readPipeConnectedEvent_);
@@ -349,7 +348,7 @@ public:
             }
         } while (false);
 
-        if (connected) {
+        if (connected && !heartbeatEventName_.empty()) {
             StartHeartbeatThd();
         }
 
@@ -437,59 +436,69 @@ public:
     bool StartHeartbeatThd() {
         bool ret = false;
 
-        heartbeatThd_ = new std::thread([this]() {
-            int waitTime = 0;
-            const int maxWaitTime = 5;
-            DWORD waitCode = -1;
-            while (true) {
-
-                if (CheckStop()) {
-                    break;
-                }
-
-                if (isPipeServer_) {
-                    //LogW(L"[s to c] set heartbeat event ...");
-
-                    SetEvent(s2c_heartbeatEventHandle_);
-
-                    waitCode = WaitForSingleObject(c2s_heartbeatEventHandle_, 1000);
-                    if (waitCode != WAIT_OBJECT_0) {
-#ifndef _DEBUG
-                        ++waitTime;
-                        if (waitTime >= maxWaitTime) {
-                            LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
-                            stopFlag_ = true;
-                            break;
-                        }
-#endif
-                    } else {
-                        waitTime = 0;
-                    }
-                } else {
-                    //LogW(L"[c to s] set heartbeat event ...");
-
-                    SetEvent(c2s_heartbeatEventHandle_);
-
-                    waitCode = WaitForSingleObject(s2c_heartbeatEventHandle_, 1000);
-                    if (waitCode != WAIT_OBJECT_0) {
-#ifndef _DEBUG
-                        ++waitTime;
-                        if (waitTime >= maxWaitTime) {
-                            LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
-                            stopFlag_ = true;
-                            break;
-                        }
-#endif
-                    } else {
-                        waitTime = 0;
-                    }
-                }
+        do {
+            if (!s2c_heartbeatEventHandle_ || !c2s_heartbeatEventHandle_) {
+                break;
             }
-            });
 
-        if (heartbeatThd_ && heartbeatThd_->native_handle()) {
-            ret = true;
-        }
+            ResetEvent(s2c_heartbeatEventHandle_);
+            ResetEvent(c2s_heartbeatEventHandle_);
+
+            heartbeatThd_ = new std::thread([this]() {
+                int waitTime = 0;
+                const int maxWaitTime = 5;
+                DWORD waitCode = -1;
+                while (true) {
+
+                    if (CheckStop()) {
+                        break;
+                    }
+
+                    if (isPipeServer_) {
+                        //LogW(L"[s to c] set heartbeat event ...");
+
+                        SetEvent(s2c_heartbeatEventHandle_);
+
+                        waitCode = WaitForSingleObject(c2s_heartbeatEventHandle_, 1000);
+                        if (waitCode != WAIT_OBJECT_0) {
+#ifndef _DEBUG
+                            ++waitTime;
+                            if (waitTime >= maxWaitTime) {
+                                LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
+                                stopFlag_ = true;
+                                break;
+                            }
+#endif
+                        } else {
+                            waitTime = 0;
+                        }
+                    } else {
+                        //LogW(L"[c to s] set heartbeat event ...");
+
+                        SetEvent(c2s_heartbeatEventHandle_);
+
+                        waitCode = WaitForSingleObject(s2c_heartbeatEventHandle_, 1000);
+                        if (waitCode != WAIT_OBJECT_0) {
+#ifndef _DEBUG
+                            ++waitTime;
+                            if (waitTime >= maxWaitTime) {
+                                LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
+                                stopFlag_ = true;
+                                break;
+                            }
+#endif
+                        } else {
+                            waitTime = 0;
+                        }
+                    }
+                }
+                });
+
+            if (heartbeatThd_ && heartbeatThd_->native_handle()) {
+                ret = true;
+            }
+
+        } while (false);
 
         return ret;
     }
@@ -711,19 +720,6 @@ public:
         }
 
         return isSuccess;
-    }
-
-    void Quit() {
-        if (onStop_) {
-            onStop_(ctx_);
-        }
-
-        PipeCmd::Cmd cmd;
-        cmd.set_action(-1);
-
-        if (onRecvPipeCmd_) {
-            onRecvPipeCmd_(ctx_, cmd);
-        }
     }
 
     PipeCmd::Cmd SendCmd(

@@ -19,6 +19,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "core/core_cloud_password.h"
 
+class QFile;
+
 namespace Export {
     namespace Data {
         struct Photo;
@@ -353,6 +355,7 @@ namespace Main {
 
         struct DownloadFileInfo {
             DownloadFileInfo() {
+                peerId = 0;
                 docId = 0;
                 fileSize = 0;
                 dcId = 0;
@@ -363,6 +366,7 @@ namespace Main {
             }
 
             FullMsgId msgId;
+            std::uint64_t peerId;
             Data::FileOrigin fileOrigin;
             uint64 docId;
             int64 fileSize;
@@ -510,7 +514,12 @@ namespace Main {
             int offsetId
         );
 
-        void requestLeftChannels(int offset);
+        template <typename Request>
+        [[nodiscard]] auto buildTakeoutRequest(Request&& request);
+
+        void requestLeftChannelDone(bool shouldWait = false);
+        void requestLeftChannel();
+        void requestLeftChannelEx();
 
         void requestChatParticipant(bool first = false);
         void requestChatParticipantEx();
@@ -682,6 +691,10 @@ namespace Main {
         // <from dialog, to dialog>
         std::map<std::uint64_t, std::uint64_t> _allMigratedDialogs;
 
+        std::uint64_t _takeoutId;
+
+        std::set<std::uint64_t> _allLeftChannels;
+
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
@@ -689,19 +702,28 @@ namespace Main {
             SelectedChat() {
                 peerId = 0;
                 peerData = nullptr;
+                left = false;
                 onlyMyMsg = false;
                 downloadAttach = false;
             }
 
-            SelectedChat(std::uint64_t peerId, PeerData* peerData, bool onlyMyMsg, bool downloadAttach) {
+            SelectedChat(
+                std::uint64_t peerId,
+                PeerData* peerData,
+                bool left,
+                bool onlyMyMsg,
+                bool downloadAttach
+            ) {
                 this->peerId = peerId;
                 this->peerData = peerData;
+                this->left = left;
                 this->onlyMyMsg = onlyMyMsg;
                 this->downloadAttach = downloadAttach;
             }
 
             std::uint64_t peerId;
             PeerData* peerData;
+            bool left;
             bool onlyMyMsg;
             bool downloadAttach;
         };
