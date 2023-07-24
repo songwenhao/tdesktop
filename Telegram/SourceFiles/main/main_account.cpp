@@ -49,6 +49,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_chat_participants.h"
 #include "base/random.h"
 #include "base/unixtime.h"
+#include "base/debug_log.h"
 #include "qr/qr_generate.h"
 #include "styles/style_intro.h"
 #include <QBuffer>
@@ -99,7 +100,6 @@ namespace Main {
         , _downloadAttach(false)
         , _maxAttachFileSize(4 * 0xFFFFFFFFLL)
         , _exportLeftChannels(false) {
-        _curRecvCmd.Clear();
     }
 
     Account::~Account() {
@@ -667,14 +667,6 @@ namespace Main {
         }
     }
 
-    QString Account::dataPath() const {
-        return QString::fromStdWString(_dataPath);
-    }
-
-    QString Account::profilePhotoPath() const {
-        return QString::fromStdWString(_profilePhotoPath);
-    }
-
     void Account::resetAuthorizationKeys() {
         Expects(_mtp != nullptr);
 
@@ -734,6 +726,8 @@ namespace Main {
                             _takeoutId = 0;
                             _stop = true;
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+                    } else {
+                        _stop = true;
                     }
                 });
 
@@ -771,21 +765,27 @@ namespace Main {
             do {
                 if (data.vuser().type() != mtpc_user
                     || !data.vuser().c_user().is_self()) {
-                    sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
+                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                     break;
                 }
 
                 createSession(data.vuser());
 
                 // 保存登录信息
-                local().writeMtpData();
+                {
+                    local().writeMtpData();
 
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                    appConfig().refresh();
+
+                    Local::sync();
+                }
+
+                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
 
             } while (false);
             
             }, [&](const MTPDauth_authorizationSignUpRequired& data) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
+                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
             });
     }
 
@@ -800,16 +800,22 @@ namespace Main {
 
                     TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action();
                     if (action == TelegramCmd::Action::CheckIsLogin) {
-                        Sleep(5000);
+                        LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                        );
 
                         _userPhone.clear();
+
+                        // 等待mtp服务启动完毕
+                        Sleep(5000);
 
                         if (sessionExists()) {
                             _userPhone = _session->user()->phone();
                             init();
                         }
 
-                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, _userPhone);
+                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
                     } else if (action == TelegramCmd::Action::SendPhoneCode) {
                         _userPhone.clear();
                         _phoneHash.clear();
@@ -823,8 +829,13 @@ namespace Main {
                             }
                         }
 
+                        LOG(("[Account][recv cmd] unique ID: %1 action: SendPhoneCode phone: %2")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(_userPhone)
+                        );
+
                         mtp().setUserPhone(_userPhone);
-                        api().request(MTPauth_SendCode(
+                        _requestId = api().request(MTPauth_SendCode(
                             MTP_string(_userPhone),
                             MTP_int(ApiId),
                             MTP_string(ApiHash),
@@ -834,32 +845,57 @@ namespace Main {
                                 MTPstring(),
                                 MTPBool())
                         )).done([=](const MTPauth_SentCode& result) {
+                            LOG(("[Account]send code done"));
+
+                            _requestId = 0;
+
                             result.match([&](const MTPDauth_sentCode& data) {
                                 _phoneHash = qba(data.vphone_code_hash());
-                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                                 }, [&](const MTPDauth_sentCodeSuccess& data) {
                                     data.vauthorization().match([&](const MTPDauth_authorization& data) {
                                         do {
                                             if (data.vuser().type() != mtpc_user
                                                 || !data.vuser().c_user().is_self()) {
                                                 //showError(rpl::single(Lang::Hard::ServerError())); // wtf?
-                                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                                                 break;
                                             }
 
-                                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
 
                                         } while (false);
                                         }, [&](const MTPDauth_authorizationSignUpRequired& data) {
-                                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                                         }, [&](const auto&) {
-                                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                                         });
                                 });
                             }).fail([=](const MTP::Error& error) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
+                                LOG(("[Account]send code error, type: %1").arg(error.type()));
+
+                                _requestId = 0;
+
+                                QString desc = error.description();
+                                QString type = error.type();
+                                int index = type.indexOf("FLOOD_WAIT_");
+                                if (index != -1) {
+                                    desc = QString::fromStdWString(L"登录频繁！");
+
+                                    int secs = type.mid(index + QString("FLOOD_WAIT_").size()).toInt();
+                                    if (secs > 0) {
+                                        desc.append(QString::fromWCharArray(L"需等待%1").arg(getFormatSecsString(secs)));
+                                    }
+                                }
+
+                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
                                 }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::LoginByPhone) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: LoginByPhone phoneCode: %2")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                        );
+
                         api().request(MTPauth_SignIn(
                             MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
                             MTP_string(_userPhone),
@@ -871,119 +907,144 @@ namespace Main {
                             }).fail([=](const MTP::Error& error) {
                                 do {
                                     if (MTP::IsFloodError(error)) {
-                                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
+                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                                         break;
                                     }
 
                                     auto& err = error.type();
-                                    TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
                                     if (err == u"PHONE_NUMBER_INVALID"_q
                                         || err == u"PHONE_CODE_EXPIRED"_q
                                         || err == u"PHONE_NUMBER_BANNED"_q) { // show error
                                         if (err == u"PHONE_CODE_EXPIRED"_q) {
-                                            status = TelegramCmd::LoginStatus::CodeExpired;
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeExpired, "", error.description());
+                                        } else {
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                                         }
                                         break;
                                     } else if (err == u"PHONE_CODE_EMPTY"_q || err == u"PHONE_CODE_INVALID"_q) {
-                                        status = TelegramCmd::LoginStatus::CodeInvalid;
+                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
                                         break;
                                     } else if (err == u"SESSION_PASSWORD_NEEDED"_q) {
-                                        api().request(MTPaccount_GetPassword(
-                                        )).done([=](const MTPaccount_Password& result) {
-                                            const auto& d = result.c_account_password();
-                                            _passwordState = Core::ParseCloudPasswordState(d);
-                                            if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
-                                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", "API Error: No current password received on login.");
-                                            } else if (!_passwordState.hasPassword) {
-                                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
-                                            } else {
-                                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::NeedVerify);
-                                            }
-                                            }).fail([=](const MTP::Error& error) {
-                                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
-                                                }).handleFloodErrors().send();
-
+                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::NeedVerify);
                                         break;
-                                    } else if (Logs::DebugEnabled()) { // internal server error
                                     } else {
+                                        if (Logs::DebugEnabled()) { // internal server error
+                                        } else {
+                                        }
+                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                                     }
-
-                                    sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
                                 } while (false);
                                 }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::GenerateQrCode) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: GenerateQrCode")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                        );
+
                         _firstRefreshQrCode = true;
                         _refreshQrCodeTimer.cancel();
                         refreshQrCode();
                     } else if (action == TelegramCmd::Action::LoginByQrCode) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                        );
+
                         mtpUpdates(
                         ) | rpl::start_with_next([=](const MTPUpdates& updates) {
                             checkForTokenUpdate(updates);
                             }, lifetime());
                     } else if (action == TelegramCmd::Action::SecondVerify) {
-                        do {
-                            _passwordHash.clear();
+                        LOG(("[Account][recv cmd] unique ID: %1 action: SecondVerify verifyCode: %2")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                        );
 
-                            const auto password = _curRecvCmd.content();
-                            _passwordHash = Core::ComputeCloudPasswordHash(
-                                _passwordState.mtp.request.algo,
-                                bytes::make_span(password));
+                        api().request(MTPaccount_GetPassword(
+                        )).done([=](const MTPaccount_Password& result) {
+                            const auto& d = result.c_account_password();
+                            _passwordState = Core::ParseCloudPasswordState(d);
+                            if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
+                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
+                            } else if (!_passwordState.hasPassword) {
+                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                            } else {
+                                do {
+                                    _passwordHash.clear();
 
-                            const auto check = Core::ComputeCloudPasswordCheck(
-                                _passwordState.mtp.request,
-                                _passwordHash);
-                            if (!check) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
-                                break;
+                                    const auto password = _curRecvCmd.content();
+                                    _passwordHash = Core::ComputeCloudPasswordHash(
+                                        _passwordState.mtp.request.algo,
+                                        bytes::make_span(password));
+
+                                    const auto check = Core::ComputeCloudPasswordCheck(
+                                        _passwordState.mtp.request,
+                                        _passwordHash);
+                                    if (!check) {
+                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                        break;
+                                    }
+
+                                    _passwordState.mtp.request.id = 0;
+                                    api().request(
+                                        MTPauth_CheckPassword(check.result)
+                                    ).done([=](const MTPauth_Authorization& result) {
+                                        onLoginSucess(result);
+                                        }).fail([=](const MTP::Error& error) {
+                                            do {
+                                                if (MTP::IsFloodError(error)) {
+                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                    break;
+                                                }
+
+                                                TelegramCmd::Status status = TelegramCmd::Status::UnknownError;
+                                                const auto& type = error.type();
+                                                if (type == u"PASSWORD_HASH_INVALID"_q
+                                                    || type == u"SRP_PASSWORD_CHANGED"_q) {
+                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                                                    break;
+                                                } else if (type == u"PASSWORD_EMPTY"_q
+                                                    || type == u"AUTH_KEY_UNREGISTERED"_q) {
+                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                    break;
+                                                } else if (type == u"SRP_ID_INVALID"_q) {
+                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                    break;
+                                                } else {
+                                                    if (Logs::DebugEnabled()) { // internal server error
+                                                        //showError(rpl::single(type + ": " + error.description()));
+                                                    } else {
+                                                        //showError(rpl::single(Lang::Hard::ServerError()));
+                                                    }
+
+                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                }
+                                            } while (false);
+                                            }).handleFloodErrors().send();
+                                } while (false);
                             }
-
-                            _passwordState.mtp.request.id = 0;
-                            api().request(
-                                MTPauth_CheckPassword(check.result)
-                            ).done([=](const MTPauth_Authorization& result) {
-                                onLoginSucess(result);
-                                }).fail([=](const MTP::Error& error) {
-                                    do {
-                                        if (MTP::IsFloodError(error)) {
-                                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
-                                            break;
-                                        }
-
-                                        TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
-                                        const auto& type = error.type();
-                                        if (type == u"PASSWORD_HASH_INVALID"_q
-                                            || type == u"SRP_PASSWORD_CHANGED"_q) {
-                                            status = TelegramCmd::LoginStatus::CodeInvalid;
-                                            break;
-                                        } else if (type == u"PASSWORD_EMPTY"_q
-                                            || type == u"AUTH_KEY_UNREGISTERED"_q) {
-                                            break;
-                                        } else if (type == u"SRP_ID_INVALID"_q) {
-                                            break;
-                                        } else {
-                                            if (Logs::DebugEnabled()) { // internal server error
-                                                //showError(rpl::single(type + ": " + error.description()));
-                                            } else {
-                                                //showError(rpl::single(Lang::Hard::ServerError()));
-                                            }
-                                        }
-
-                                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
-
-                                    } while (false);
-                                    }).handleFloodErrors().send();
-                        } while (false);
+                            }).fail([=](const MTP::Error& error) {
+                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                                }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::GetLoginUserPhone) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: GetLoginUserPhone")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                        );
+
                         QString content;
 
                         if (sessionExists()) {
                             content = _session->user()->phone();
                         }
 
-                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, content);
+                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, content);
                     } else if (action == TelegramCmd::Action::GetContactAndChat) {
                         _exportLeftChannels = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "exportLeftChannels");
                         _downloadPeerProfilePhoto = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "downloadUserPic");
+
+                        LOG(("[Account][recv cmd] unique ID: %1 action: GetContactAndChat exportLeftChannels: %2 downloadUserPic: %3")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(_exportLeftChannels ? "yes" : "no")
+                            .arg(_downloadPeerProfilePhoto ? "yes" : "no")
+                        );
 
                         uploadMsg(QString::fromStdWString(L"正在获取好友列表 ..."));
 
@@ -1023,6 +1084,13 @@ namespace Main {
                                         if (downloadAttach) {
                                             _downloadAttach = true;
                                         }
+
+                                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4")
+                                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                                            .arg(peerId)
+                                            .arg(downloadAttach ? "yes" : "no")
+                                            .arg(onlyMyMsg ? "yes" : "no")
+                                        );
                                     }
                                 }
                             }
@@ -1031,10 +1099,18 @@ namespace Main {
                         requestChatParticipant(true);
 
                     } else if (action == TelegramCmd::Action::ExportData) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: ExportData")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                        );
+
                         requestLeftChannel();
                     } else if (action == TelegramCmd::Action::LogOut) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: LogOut")
+                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                        );
+
                         _mtp->logout([this]() {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                             });
                     } else if (action == TelegramCmd::Action::Unknown) {
                         _stop = true;
@@ -1155,7 +1231,7 @@ namespace Main {
                 if (_exportLeftChannels) {
                     requestLeftChannel();
                 } else {
-                    sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                 }
             } else {
                 requestDialogsEx(last.input, last.topMessageDate, last.topMessageId);
@@ -1175,7 +1251,7 @@ namespace Main {
         PipeCmd::Cmd resultCmd;
         resultCmd.set_action(_curRecvCmd.action());
         resultCmd.set_unique_id(_curRecvCmd.unique_id());
-        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::Status::Success));
         PipeWrapper::AddExtraData(resultCmd, "shouldWait", shouldWait);
         sendPipeCmd(resultCmd, false);
     }
@@ -1452,7 +1528,7 @@ namespace Main {
             requestChatMessageEx();
         } else {
             if (!_downloadAttach) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
             } else {
                 requestFile(true);
             }
@@ -1687,7 +1763,7 @@ namespace Main {
             requestFileEx();
         } else {
             if (_selectedChats.empty() && (TelegramCmd::Action)_curRecvCmd.action() == TelegramCmd::Action::GetChatMessage) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success);
+                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                 _curDownloadFile = nullptr;
             }
         }
@@ -1908,6 +1984,32 @@ namespace Main {
         return QString().setNum(fileSize, 'f', 2) + " " + unit;
     }
 
+    QString Account::getFormatSecsString(int secs) {
+        wchar_t buf[128];
+        memset(buf, 0, sizeof(buf));
+
+        if (secs >= 24 * 3600) {
+            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d天", secs / 24 * 3600);
+            secs %= 24 * 3600;
+        }
+
+        if (secs >= 3600) {
+            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d小时", buf, secs / 3600);
+            secs %= 3600;
+        }
+
+        if (secs >= 60) {
+            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d分钟", buf, secs / 60);
+            secs %= 60;
+        }
+
+        if (secs > 0) {
+            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d秒", buf, secs);
+        }
+
+        return QString::fromWCharArray(buf);
+    }
+
     void Account::processExportDialog(
         const std::vector<Export::Data::DialogInfo>& parsedDialogs,
         std::int32_t left,
@@ -2014,14 +2116,8 @@ namespace Main {
         if (peerData) {
             if (const UserData* userData = peerData->asUser()) {
                 peerType = (const char*)std::u8string(u8"好友聊天").c_str();
-            } else if (const ChatData* chatData = peerData->asChat()) {
-                if (chatData->amIn()) {
-                    peerType = (const char*)std::u8string(u8"公开群组").c_str();
-                } else {
-                    peerType = (const char*)std::u8string(u8"私有群组").c_str();
-                }
             } else if (const ChannelData* channelData = peerData->asChannel()) {
-                if (peerData->isMegagroup()) {
+                if (channelData->isMegagroup()) {
                     if (channelData->isPublic()) {
                         peerType = (const char*)std::u8string(u8"公开群组").c_str();
                     } else {
@@ -2034,6 +2130,8 @@ namespace Main {
                         peerType = (const char*)std::u8string(u8"私有频道").c_str();
                     }
                 }
+            } else if (const ChatData* chatData = peerData->asChat()) {
+                peerType = (const char*)std::u8string(u8"私有群组").c_str();
             }
         }
 
@@ -3438,7 +3536,7 @@ namespace Main {
         const wchar_t* errMsg = nullptr;
 
         do {
-            if (!sessionExists()) {
+            if (!sessionExists() || _dataDb) {
                 break;
             }
 
@@ -3582,18 +3680,10 @@ namespace Main {
         return isValidCmd;
     }
 
-    void Account::goBackCurPipeCmd() {
-        {
-            std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
-            auto iter = _runningPipeCmds.find(_curRecvCmd.unique_id());
-            if (iter != _runningPipeCmds.end()) {
-                _runningPipeCmds.erase(iter);
-                _recvPipeCmds.emplace_front(std::move(_curRecvCmd));
-            }
-        }
-    }
-
-    PipeCmd::Cmd Account::sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone) {
+    PipeCmd::Cmd Account::sendPipeCmd(
+        const PipeCmd::Cmd& cmd,
+        bool waitDone
+    ) {
         {
             std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
             auto iter = _runningPipeCmds.find(cmd.unique_id());
@@ -3606,7 +3696,7 @@ namespace Main {
 
     PipeCmd::Cmd Account::sendPipeResult(
         const PipeCmd::Cmd& recvCmd,
-        TelegramCmd::LoginStatus status,
+        TelegramCmd::Status status,
         const QString& content,
         const QString& error
     ) {
@@ -3620,6 +3710,14 @@ namespace Main {
             PipeWrapper::AddExtraData(resultCmd, "error", error.toUtf8().constData());
         }
 
+        LOG(("[Account][sendPipeResult] unique ID: %1 action: %2 status: %3 content:%4 %5")
+            .arg(QString::fromUtf8(resultCmd.unique_id().c_str()))
+            .arg(resultCmd.action())
+            .arg((std::int32_t)status)
+            .arg(content)
+            .arg(!error.isEmpty() ? ("error: " + error) : "")
+        );
+
         return sendPipeCmd(resultCmd, false);
     }
 
@@ -3628,7 +3726,11 @@ namespace Main {
         cmd.set_action(std::int32_t(TelegramCmd::Action::UploadMsg));
         cmd.set_content(content.toUtf8().constData());
 
-        PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+        PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::Status::Success));
+
+        LOG(("[Account][uploadMsg] msg: %1")
+            .arg(content)
+        );
 
         sendPipeCmd(cmd, false);
     }
@@ -3666,7 +3768,7 @@ namespace Main {
             handleTokenResult(result);
             }).fail([=](const MTP::Error& error) {
                 if (_firstRefreshQrCode) {
-                    sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
+                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                 }
                 }).toDC(dcId).send();
     }
@@ -3708,12 +3810,12 @@ namespace Main {
             }
 
             if (_firstRefreshQrCode) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::Success, qrcodeString);
+                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, qrcodeString);
             } else {
                 PipeCmd::Cmd cmd;
                 cmd.set_action(std::int32_t(TelegramCmd::Action::GenerateQrCode));
                 cmd.set_content(qrcodeString.toUtf8().constData());
-                PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::LoginStatus::Success));
+                PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::Status::Success));
                 sendPipeCmd(cmd, false);
             }
             }, [&](const MTPDauth_loginTokenMigrateTo& data) {
@@ -3745,21 +3847,21 @@ namespace Main {
                         const auto& d = result.c_account_password();
                         _passwordState = Core::ParseCloudPasswordState(d);
                         if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", "API Error: No current password received on login.");
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
                         } else if (!_passwordState.hasPassword) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError);
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                         } else {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::NeedVerify);
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::NeedVerify);
                         }
                         }).fail([=](const MTP::Error& error) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                             }).handleFloodErrors().send();
                 } else if (base::take(_forceRefresh)) {
                     refreshQrCode();
                 } else {
                     if (_firstRefreshQrCode) {
                         _refreshQrCodeTimer.cancel();
-                        sendPipeResult(_curRecvCmd, TelegramCmd::LoginStatus::UnknownError, "", error.description());
+                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                     }
                 }
                 }).send();

@@ -150,10 +150,6 @@ namespace Main {
             return _lifetime;
         }
 
-        QString dataPath() const;
-
-        QString profilePhotoPath() const;
-
         bool pipeConnected();
 
         bool connectPipe();
@@ -162,13 +158,14 @@ namespace Main {
 
         bool getRecvPipeCmd();
 
-        void goBackCurPipeCmd();
-
-        PipeCmd::Cmd sendPipeCmd(const PipeCmd::Cmd& cmd, bool waitDone = false);
+        PipeCmd::Cmd sendPipeCmd(
+            const PipeCmd::Cmd& cmd,
+            bool waitDone = false
+        );
 
         PipeCmd::Cmd sendPipeResult(
             const PipeCmd::Cmd& recvCmd,
-            TelegramCmd::LoginStatus status,
+            TelegramCmd::Status status,
             const QString& content = "",
             const QString& error = ""
         );
@@ -551,6 +548,8 @@ namespace Main {
 
         QString getFormatFileSize(double fileSize);
 
+        QString getFormatSecsString(int secs);
+
         void downloadPeerProfilePhotos(PeerData* peerData);
 
         Main::Account::ContactInfo userDataToContactInfo(UserData* userData);
@@ -629,6 +628,7 @@ namespace Main {
         void importTo(MTP::DcId dcId, const QByteArray& token);
         void handleTokenResult(const MTPauth_LoginToken& result);
         void refreshQrCode();
+        void checkRequest();
 
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;

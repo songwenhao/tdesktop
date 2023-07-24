@@ -140,12 +140,10 @@ namespace Intro {
                 return;
             }
 
-            TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
             _sentRequest = 0;
             const auto& type = error.type();
             if (type == u"PASSWORD_HASH_INVALID"_q
                 || type == u"SRP_PASSWORD_CHANGED"_q) {
-                status = TelegramCmd::LoginStatus::CodeInvalid;
                 showError(tr::lng_signin_bad_password());
                 _pwdField->selectAll();
                 _pwdField->showError();
@@ -250,7 +248,6 @@ namespace Intro {
 
             _sentRequest = 0;
             const auto& type = error.type();
-            TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
             if (type == u"PASSWORD_EMPTY"_q
                 || type == u"AUTH_KEY_UNREGISTERED"_q) {
                 goBack();
@@ -260,7 +257,6 @@ namespace Intro {
                 _emailPattern = QString();
                 toPassword();
             } else if (type == u"CODE_INVALID"_q) {
-                status = TelegramCmd::LoginStatus::CodeInvalid;
                 showError(tr::lng_signin_wrong_code());
                 _codeField->selectAll();
                 _codeField->showError();

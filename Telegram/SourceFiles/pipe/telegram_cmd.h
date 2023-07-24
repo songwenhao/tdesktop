@@ -22,7 +22,7 @@ namespace TelegramCmd {
         LogOut
     };
 
-    enum class LoginStatus : std::int32_t {
+    enum class Status : std::int32_t {
         UnknownError = -1,
         Success = 0,
         NeedVerify,

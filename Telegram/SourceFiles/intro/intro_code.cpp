@@ -280,19 +280,15 @@ namespace Intro {
             stopCheck();
             _sentRequest = 0;
             auto& err = error.type();
-            TelegramCmd::LoginStatus status = TelegramCmd::LoginStatus::UnknownError;
             if (err == u"PHONE_NUMBER_INVALID"_q
                 || err == u"PHONE_CODE_EXPIRED"_q
                 || err == u"PHONE_NUMBER_BANNED"_q) { // show error
                 if (err == u"PHONE_CODE_EXPIRED"_q) {
-                    status = TelegramCmd::LoginStatus::CodeExpired;
                 }
                 goBack();
             } else if (err == u"PHONE_CODE_EMPTY"_q || err == u"PHONE_CODE_INVALID"_q) {
-                status = TelegramCmd::LoginStatus::CodeInvalid;
                 showCodeError(tr::lng_bad_code());
             } else if (err == u"SESSION_PASSWORD_NEEDED"_q) {
-                status = TelegramCmd::LoginStatus::NeedVerify;
                 _checkRequestTimer.callEach(1000);
                 _sentRequest = api().request(MTPaccount_GetPassword(
                 )).done([=](const MTPaccount_Password& result) {
