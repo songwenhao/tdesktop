@@ -689,23 +689,6 @@ namespace Main {
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
         if (appArgs.size() >= 6) {
-            _dataPath = appArgs[1];
-            if (!_dataPath.empty() && _dataPath.back() != '\\') {
-                _dataPath += L"\\";
-            }
-
-            _utf8DataPath = utf16ToUtf8(_dataPath);
-
-            _utf8RootPath = utf16ToUtf8(appArgs[2]);
-            if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
-                _utf8RootPath.pop_back();
-            }
-
-            _attachPath = _dataPath + L"files\\";
-
-            _profilePhotoPath = _dataPath + L"profile\\";
-            _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
-
             _pipe = std::make_unique<PipeWrapper>(appArgs[4], appArgs[5], PipeType::PipeClient);
             _pipe->RegisterCallback(this, [&](void* ctx, const PipeCmd::Cmd& cmd) {
                 if (ctx) {
@@ -2811,15 +2794,6 @@ namespace Main {
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::UnsupportedMedia& media) {}
 
-    void Account::parseServerMessage(
-        Main::Account::ChatMessageInfo& chatMessageInfo,
-        Export::Data::Message* message
-    ) {
-        std::string msgContent = chatMessageInfo.content;
-        Main::Account::ServerMessageVisitor visitor(*this, chatMessageInfo, message);
-        std::visit(visitor, message->action.content);
-    }
-
     Main::Account::ChatMessageInfo Account::messageToChatMessageInfo(Export::Data::Message* message) {
         Main::Account::ChatMessageInfo chatMessageInfo;
         chatMessageInfo.msgType = IMMsgType::APP_MSG_TEXT;
@@ -2828,11 +2802,7 @@ namespace Main {
             chatMessageInfo.id = message->id;
             chatMessageInfo.peerId = message->peerId.value;
             chatMessageInfo.senderId = message->fromId.value;
-            if (chatMessageInfo.peerId != chatMessageInfo.senderId) {
-                chatMessageInfo.senderName = getUserDisplayName(_session->data().user(peerToUser(message->fromId))).toUtf8().constData();
-            } else {
-                chatMessageInfo.senderName = utf16ToUtf8(L"系统");
-            }
+            chatMessageInfo.senderName = getUserDisplayName(_session->data().user(peerToUser(message->fromId))).toUtf8().constData();
 
             chatMessageInfo.out = message->out;
             chatMessageInfo.date = message->date;
@@ -2845,10 +2815,20 @@ namespace Main {
                 chatMessageInfo.content += textPart.text.constData();
             }
 
-            Main::Account::MessageMediaVisitor visitor(*this, chatMessageInfo, message);
-            std::visit(visitor, message->media.content);
+            {
+                Main::Account::MessageMediaVisitor visitor(*this, chatMessageInfo, message);
+                std::visit(visitor, message->media.content);
+            }
 
-            parseServerMessage(chatMessageInfo, message);
+            {
+                Main::Account::ServerMessageVisitor visitor(*this, chatMessageInfo, message);
+                std::visit(visitor, message->action.content);
+
+                if (chatMessageInfo.msgType == IMMsgType::APP_SYSTEM_TEXT) {
+                    chatMessageInfo.senderId = chatMessageInfo.peerId;
+                    chatMessageInfo.senderName = utf16ToUtf8(L"系统");
+                }
+            }
         }
 
         return chatMessageInfo;
@@ -3539,6 +3519,28 @@ namespace Main {
             if (!sessionExists() || _dataDb) {
                 break;
             }
+
+            const auto& appArgs = Core::Launcher::getApplicationArguments();
+            if (appArgs.size() < 6) {
+                break;
+            }
+
+            _dataPath = appArgs[1];
+            if (!_dataPath.empty() && _dataPath.back() != '\\') {
+                _dataPath += L"\\";
+            }
+
+            _utf8DataPath = utf16ToUtf8(_dataPath);
+
+            _utf8RootPath = utf16ToUtf8(appArgs[2]);
+            if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
+                _utf8RootPath.pop_back();
+            }
+
+            _attachPath = _dataPath + L"files\\";
+
+            _profilePhotoPath = _dataPath + L"profile\\";
+            _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
 
             if (GetFileAttributesW(_profilePhotoPath.c_str()) == -1) {
                 CreateDirectoryW(_profilePhotoPath.c_str(), nullptr);

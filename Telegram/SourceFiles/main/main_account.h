@@ -568,11 +568,6 @@ namespace Main {
 
         Main::Account::ParticipantInfo userDataToParticipantInfo(UserData* userData);
 
-        void parseServerMessage(
-            Main::Account::ChatMessageInfo& chatMessageInfo,
-            Export::Data::Message* message
-        );
-
         Main::Account::ChatMessageInfo messageToChatMessageInfo(Export::Data::Message* message);
 
         void saveContactsToDb(const std::list<Main::Account::ContactInfo>& contacts);
