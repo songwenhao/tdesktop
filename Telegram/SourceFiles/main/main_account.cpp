@@ -99,6 +99,8 @@ namespace Main {
         , _downloadPeerProfilePhotosLock(std::make_unique<std::mutex>())
         , _downloadAttach(false)
         , _maxAttachFileSize(4 * 0xFFFFFFFFLL)
+        , _msgBeginTime(0)
+        , _msgEndTime(0)
         , _exportLeftChannels(false) {
     }
 
@@ -758,6 +760,8 @@ namespace Main {
                 {
                     local().writeMtpData();
 
+                    session().saveSettingsDelayed();
+
                     appConfig().refresh();
 
                     Local::sync();
@@ -1036,6 +1040,8 @@ namespace Main {
                     } else if (action == TelegramCmd::Action::GetChatMessage) {
                         _selectedChats.clear();
                         _maxAttachFileSize = PipeWrapper::GetNumExtraData(_curRecvCmd, "maxAttachFileSize");
+                        _msgBeginTime = PipeWrapper::GetNumExtraData(_curRecvCmd, "beginTime");
+                        _msgEndTime = PipeWrapper::GetNumExtraData(_curRecvCmd, "endTime");
 
                         for (const auto& extra : _curRecvCmd.extra()) {
                             if (extra.key() == "peer") {
@@ -1068,11 +1074,14 @@ namespace Main {
                                             _downloadAttach = true;
                                         }
 
-                                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4")
+                                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7")
                                             .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
                                             .arg(peerId)
                                             .arg(downloadAttach ? "yes" : "no")
                                             .arg(onlyMyMsg ? "yes" : "no")
+                                            .arg(getFormatFileSize(_maxAttachFileSize))
+                                            .arg(_msgBeginTime)
+                                            .arg(_msgEndTime)
                                         );
                                     }
                                 }
@@ -1546,8 +1555,6 @@ namespace Main {
                 // error("Unexpected messagesNotModified received.");
                 }, [&, this](const auto& data) {
                     const auto& list = data.vmessages().v;
-                    msgCount = list.size();
-                    _curSelectedChatMsgCount += msgCount;
 
                     std::set<std::int32_t> msgIds;
 
@@ -1569,8 +1576,22 @@ namespace Main {
                         auto parsedMessage = ParseMessage(context, message, _curPeerAttachPath);
                         msgIds.emplace(parsedMessage.id);
 
-                        chatMessages.emplace_back(messageToChatMessageInfo(&parsedMessage));
+                        do {
+                            if (_msgBeginTime > 0 && _msgBeginTime > parsedMessage.date) {
+                                break;
+                            }
+
+                            if (_msgEndTime > 0 && _msgEndTime < parsedMessage.date) {
+                                break;
+                            }
+
+                            chatMessages.emplace_back(messageToChatMessageInfo(&parsedMessage));
+
+                        } while (false);
                     }
+
+                    msgCount = chatMessages.size();
+                    _curSelectedChatMsgCount += msgCount;
 
                     if (!msgIds.empty()) {
                         _offsetId = *msgIds.begin();
@@ -1628,8 +1649,8 @@ namespace Main {
                                 MTP_inputPeerSelf(),
                                 MTPint(), // top_msg_id
                                 MTP_inputMessagesFilterEmpty(),
-                                MTP_int(0), // min_date
-                                MTP_int(0), // max_date
+                                MTP_int(_msgBeginTime), // min_date
+                                MTP_int(_msgEndTime), // max_date
                                 MTP_int(_offsetId),
                                 MTP_int(addOffset),
                                 MTP_int(limit),
@@ -1655,8 +1676,8 @@ namespace Main {
                     MTP_inputPeerSelf(),
                     MTPint(), // top_msg_id
                     MTP_inputMessagesFilterEmpty(),
-                    MTP_int(0), // min_date
-                    MTP_int(0), // max_date
+                    MTP_int(_msgBeginTime), // min_date
+                    MTP_int(_msgEndTime), // max_date
                     MTP_int(_offsetId),
                     MTP_int(addOffset),
                     MTP_int(limit),
@@ -1677,8 +1698,8 @@ namespace Main {
                         MTP_inputPeerSelf(),
                         MTPint(), // top_msg_id
                         MTP_inputMessagesFilterEmpty(),
-                        MTP_int(0), // min_date
-                        MTP_int(0), // max_date
+                        MTP_int(_msgBeginTime), // min_date
+                        MTP_int(_msgEndTime), // max_date
                         MTP_int(_offsetId),
                         MTP_int(addOffset),
                         MTP_int(limit),
@@ -2644,7 +2665,12 @@ namespace Main {
                 break;
             }
 
-            if (file.size <= 0 || file.size > _account._maxAttachFileSize) {
+            // 跳过已存在文件
+            if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
+                break;
+            }
+
+            if (file.size == 0 || file.size > _account._maxAttachFileSize) {
                 _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)
@@ -2742,7 +2768,12 @@ namespace Main {
                 break;
             }
 
-            if (file.size <= 0 || file.size > _account._maxAttachFileSize) {
+            // 跳过已存在文件
+            if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
+                break;
+            }
+
+            if (file.size == 0 || file.size > _account._maxAttachFileSize) {
                 _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)

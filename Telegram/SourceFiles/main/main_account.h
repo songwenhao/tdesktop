@@ -741,6 +741,8 @@ namespace Main {
 
         bool _downloadAttach;
         std::int64_t _maxAttachFileSize;
+        std::int64_t _msgBeginTime;
+        std::int64_t _msgEndTime;
         bool _exportLeftChannels;
     };
 
