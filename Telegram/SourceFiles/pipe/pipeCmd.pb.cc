@@ -125,11 +125,11 @@ static const ::_pb::Message* const file_default_instances[] = {
 const char descriptor_table_protodef_pipeCmd_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
   "\n\rpipeCmd.proto\022\007PipeCmd\"s\n\005Extra\022 \n\004typ"
   "e\030\001 \001(\0162\022.PipeCmd.ExtraType\022\013\n\003key\030\002 \001(\t"
-  "\022\024\n\014string_value\030\003 \001(\t\022\021\n\tnum_value\030\004 \001("
+  "\022\024\n\014string_value\030\003 \001(\014\022\021\n\tnum_value\030\004 \001("
   "\003\022\022\n\nreal_value\030\005 \001(\001\"C\n\006Cookie\022\014\n\004name\030"
   "\001 \001(\t\022\r\n\005value\030\002 \001(\t\022\016\n\006domain\030\003 \001(\t\022\014\n\004"
   "path\030\004 \001(\t\"y\n\003Cmd\022\021\n\tunique_id\030\001 \001(\t\022\016\n\006"
-  "action\030\002 \001(\005\022\017\n\007content\030\003 \001(\t\022\035\n\005extra\030\004"
+  "action\030\002 \001(\005\022\017\n\007content\030\003 \001(\014\022\035\n\005extra\030\004"
   " \003(\0132\016.PipeCmd.Extra\022\037\n\006cookie\030\005 \003(\0132\017.P"
   "ipeCmd.Cookie*7\n\tExtraType\022\n\n\006String\020\000\022\007"
   "\n\003Num\020\001\022\010\n\004Real\020\002\022\013\n\007Boolean\020\003b\006proto3"
@@ -293,13 +293,12 @@ const char* Extra::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
         } else
           goto handle_unusual;
         continue;
-      // string string_value = 3;
+      // bytes string_value = 3;
       case 3:
         if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 26)) {
           auto str = _internal_mutable_string_value();
           ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
           CHK_(ptr);
-          CHK_(::_pbi::VerifyUTF8(str, "PipeCmd.Extra.string_value"));
         } else
           goto handle_unusual;
         continue;
@@ -365,13 +364,9 @@ uint8_t* Extra::_InternalSerialize(
         2, this->_internal_key(), target);
   }
 
-  // string string_value = 3;
+  // bytes string_value = 3;
   if (!this->_internal_string_value().empty()) {
-    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
-      this->_internal_string_value().data(), static_cast<int>(this->_internal_string_value().length()),
-      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
-      "PipeCmd.Extra.string_value");
-    target = stream->WriteStringMaybeAliased(
+    target = stream->WriteBytesMaybeAliased(
         3, this->_internal_string_value(), target);
   }
 
@@ -414,10 +409,10 @@ size_t Extra::ByteSizeLong() const {
         this->_internal_key());
   }
 
-  // string string_value = 3;
+  // bytes string_value = 3;
   if (!this->_internal_string_value().empty()) {
     total_size += 1 +
-      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
         this->_internal_string_value());
   }
 
@@ -997,13 +992,12 @@ const char* Cmd::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
         } else
           goto handle_unusual;
         continue;
-      // string content = 3;
+      // bytes content = 3;
       case 3:
         if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 26)) {
           auto str = _internal_mutable_content();
           ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
           CHK_(ptr);
-          CHK_(::_pbi::VerifyUTF8(str, "PipeCmd.Cmd.content"));
         } else
           goto handle_unusual;
         continue;
@@ -1078,13 +1072,9 @@ uint8_t* Cmd::_InternalSerialize(
     target = ::_pbi::WireFormatLite::WriteInt32ToArray(2, this->_internal_action(), target);
   }
 
-  // string content = 3;
+  // bytes content = 3;
   if (!this->_internal_content().empty()) {
-    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
-      this->_internal_content().data(), static_cast<int>(this->_internal_content().length()),
-      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
-      "PipeCmd.Cmd.content");
-    target = stream->WriteStringMaybeAliased(
+    target = stream->WriteBytesMaybeAliased(
         3, this->_internal_content(), target);
   }
 
@@ -1141,10 +1131,10 @@ size_t Cmd::ByteSizeLong() const {
         this->_internal_unique_id());
   }
 
-  // string content = 3;
+  // bytes content = 3;
   if (!this->_internal_content().empty()) {
     total_size += 1 +
-      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
         this->_internal_content());
   }
 

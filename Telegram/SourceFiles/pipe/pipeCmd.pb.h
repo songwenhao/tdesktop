@@ -233,7 +233,7 @@ class Extra final :
   std::string* _internal_mutable_key();
   public:
 
-  // string string_value = 3;
+  // bytes string_value = 3;
   void clear_string_value();
   const std::string& string_value() const;
   template <typename ArgT0 = const std::string&, typename... ArgT>
@@ -672,7 +672,7 @@ class Cmd final :
   std::string* _internal_mutable_unique_id();
   public:
 
-  // string content = 3;
+  // bytes content = 3;
   void clear_content();
   const std::string& content() const;
   template <typename ArgT0 = const std::string&, typename... ArgT>
@@ -794,7 +794,7 @@ inline void Extra::set_allocated_key(std::string* key) {
   // @@protoc_insertion_point(field_set_allocated:PipeCmd.Extra.key)
 }
 
-// string string_value = 3;
+// bytes string_value = 3;
 inline void Extra::clear_string_value() {
   _impl_.string_value_.ClearToEmpty();
 }
@@ -806,7 +806,7 @@ template <typename ArgT0, typename... ArgT>
 inline PROTOBUF_ALWAYS_INLINE
 void Extra::set_string_value(ArgT0&& arg0, ArgT... args) {
  
- _impl_.string_value_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+ _impl_.string_value_.SetBytes(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
   // @@protoc_insertion_point(field_set:PipeCmd.Extra.string_value)
 }
 inline std::string* Extra::mutable_string_value() {
@@ -1162,7 +1162,7 @@ inline void Cmd::set_action(int32_t value) {
   // @@protoc_insertion_point(field_set:PipeCmd.Cmd.action)
 }
 
-// string content = 3;
+// bytes content = 3;
 inline void Cmd::clear_content() {
   _impl_.content_.ClearToEmpty();
 }
@@ -1174,7 +1174,7 @@ template <typename ArgT0, typename... ArgT>
 inline PROTOBUF_ALWAYS_INLINE
 void Cmd::set_content(ArgT0&& arg0, ArgT... args) {
  
- _impl_.content_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+ _impl_.content_.SetBytes(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
   // @@protoc_insertion_point(field_set:PipeCmd.Cmd.content)
 }
 inline std::string* Cmd::mutable_content() {

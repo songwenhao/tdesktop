@@ -1,4 +1,9 @@
-﻿#include <combaseapi.h>
+﻿#include <vector>
+#include <map>
+#include <thread>
+#include <mutex>
+
+#include <combaseapi.h>
 #pragma comment(lib, "Ole32")
 
 #include "LogTrace.h"
@@ -6,6 +11,32 @@
 #include "PipeWrapper.h"
 
 class PipeWrapper::PipeWrapperImpl {
+
+#ifndef NO_PROTOBUF
+    struct PipeCmdResult {
+        PipeCmdResult() {
+            this->resultCallback = nullptr;
+            this->ctx = nullptr;
+            this->signalEvent = nullptr;
+        }
+
+        PipeCmdResult(
+            OnRecvPipeCmd resultCallback,
+            void* ctx,
+            HANDLE signalEvent
+        ) {
+            this->resultCallback = resultCallback;
+            this->ctx = ctx;
+            this->signalEvent = signalEvent;
+        }
+
+        PipeCmd::Cmd result;
+        OnRecvPipeCmd resultCallback;
+        void* ctx;
+        HANDLE signalEvent;
+    };
+#endif
+
 public:
     PipeWrapperImpl(
         const std::wstring& wstrPipeName,
@@ -24,7 +55,9 @@ public:
         pipeWriteThd_(nullptr),
         stopFlag_(false),
         ctx_(nullptr),
+#ifndef NO_PROTOBUF
         onRecvPipeCmd_(nullptr),
+#endif
         onCheckStop_(nullptr),
         onStop_(nullptr),
         logBufMutex_(nullptr),
@@ -39,9 +72,12 @@ public:
         logBufW_ = std::make_unique<wchar_t[]>(logBufSize_);
         logPrevStrA_ = (isPipeServer_ ? "[pipe server]" : "[pipe client]");
         logPrevStrW_ = (isPipeServer_ ? L"[pipe server]" : L"[pipe client]");
+
         readPipeConnectedEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         writePipeConnectedEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+
         pipeCmdResultMapMutex_ = std::make_unique<std::mutex>();
+
         pid_ = GetCurrentProcessId();
 
         if (!heartbeatEventName_.empty()) {
@@ -60,12 +96,11 @@ public:
         DisConnectPipe();
     }
 
-    static void PipeThd(
-        PipeWrapperImpl* obj,
+    void PipeThd(
         bool isReadPipe,
         ULONGLONG maxWaitTime
     ) {
-        bool isSuccess = false;
+        bool connected = false;
         bool isReadPipeHandle = false;
         std::wstring logPrevStr;
 
@@ -75,7 +110,7 @@ public:
             logPrevStr = std::wstring(L"[") + __FUNCTIONW__ + L"] Connect write pipe";
         }
 
-        obj->LogW(L"%s begin ...", logPrevStr.c_str());
+        LogW(L"%s begin ...", logPrevStr.c_str());
 
         HANDLE pipeHandle = INVALID_HANDLE_VALUE;
 
@@ -94,22 +129,22 @@ public:
         *
         */
         if (isReadPipe) {
-            if (obj->isPipeServer_) {
-                obj->readPipeHandle_ = INVALID_HANDLE_VALUE;
+            if (isPipeServer_) {
+                readPipeHandle_ = INVALID_HANDLE_VALUE;
             } else {
-                obj->writePipeHandle_ = INVALID_HANDLE_VALUE;
+                writePipeHandle_ = INVALID_HANDLE_VALUE;
             }
         } else {
-            if (obj->isPipeServer_) {
-                obj->writePipeHandle_ = INVALID_HANDLE_VALUE;
+            if (isPipeServer_) {
+                writePipeHandle_ = INVALID_HANDLE_VALUE;
             } else {
-                obj->readPipeHandle_ = INVALID_HANDLE_VALUE;
+                readPipeHandle_ = INVALID_HANDLE_VALUE;
             }
         }
 
         DWORD errCode = 0;
 
-        std::wstring pipeName = obj->pipeName_;
+        std::wstring pipeName = pipeName_;
         if (isReadPipe) {
             pipeName += L"-read";
         } else {
@@ -126,21 +161,21 @@ public:
                 break;
             }
 
-            if (obj->isPipeServer_) {
+            if (isPipeServer_) {
                 pipeHandle = CreateNamedPipeW(
                     pipeName.c_str(),
                     PIPE_ACCESS_DUPLEX |
                     FILE_FLAG_OVERLAPPED,
                     pipeMode,
                     1,
-                    obj->pipeBufSize_,
-                    obj->pipeBufSize_,
+                    pipeBufSize_,
+                    pipeBufSize_,
                     0,
                     nullptr);
 
                 if (pipeHandle == INVALID_HANDLE_VALUE) {
                     errCode = GetLastError();
-                    obj->LogW(L"%s CreateNamedPipe error, error code: %d", logPrevStr.c_str(), errCode);
+                    LogW(L"%s CreateNamedPipe error, error code: %d", logPrevStr.c_str(), errCode);
                     break;
                 }
 
@@ -155,8 +190,8 @@ public:
                     while (true) {
                         waitCode = WaitForSingleObject(overlapped.hEvent, 1000);
                         if (waitCode == WAIT_TIMEOUT) {
-                            if (obj->CheckStop()) {
-                                obj->LogW(L"%s stop connect pipe!!!", logPrevStr.c_str());
+                            if (CheckStop()) {
+                                LogW(L"%s stop!!!", logPrevStr.c_str());
                                 break;
                             }
 
@@ -166,24 +201,25 @@ public:
 
                             continue;
                         } else if (waitCode == WAIT_OBJECT_0) {
-                            isSuccess = true;
+                            connected = true;
                             break;
                         } else {
                             break;
                         }
                     }
                 } else if (errCode == ERROR_PIPE_CONNECTED) {
-                    isSuccess = true;
+                    connected = true;
                 } else {
-                    obj->LogW(L"%s ConnectNamedPipe error, error code: %d", logPrevStr.c_str(), errCode);
+                    LogW(L"%s ConnectNamedPipe error, error code: %d", logPrevStr.c_str(), errCode);
                 }
             } else {
                 ULONGLONG beginTime = GetTickCount64();
 
                 while (true) {
-                    if (obj->CheckStop()) {
+                    if (CheckStop()) {
                         break;
                     }
+
                     // Try to open a named pipe; wait for it, if necessary.
                     pipeHandle = CreateFileW(
                         pipeName.c_str(),
@@ -198,15 +234,16 @@ public:
                     errCode = GetLastError();
 
                     if (pipeHandle != INVALID_HANDLE_VALUE && errCode == ERROR_SUCCESS) {
-                        isSuccess = true;
+                        connected = true;
                     } else if (pipeHandle != INVALID_HANDLE_VALUE && errCode == ERROR_PIPE_BUSY) {
                         // All pipe instances are busy, so wait. 
                         while (true) {
-                            if (obj->CheckStop()) {
+                            if (CheckStop()) {
                                 break;
                             }
+
                             if (WaitNamedPipeW(pipeName.c_str(), 1000)) {
-                                isSuccess = true;
+                                connected = true;
                                 break;
                             } else {
                                 if (GetTickCount64() - beginTime >= maxWaitTime) {
@@ -216,15 +253,15 @@ public:
                         }
                     }
 
-                    if (isSuccess) {
-                        isSuccess = false;
+                    if (connected) {
+                        connected = false;
 
                         if (SetNamedPipeHandleState(pipeHandle, &pipeMode, nullptr, nullptr)) {
-                            isSuccess = true;
+                            connected = true;
                         }
                     }
 
-                    if (isSuccess) {
+                    if (connected) {
                         break;
                     } else {
                         if (pipeHandle != INVALID_HANDLE_VALUE) {
@@ -243,7 +280,7 @@ public:
 
         } while (false);
 
-        if (!isSuccess) {
+        if (!connected) {
             if (pipeHandle != INVALID_HANDLE_VALUE) {
                 CloseHandle(pipeHandle);
                 pipeHandle = INVALID_HANDLE_VALUE;
@@ -251,26 +288,26 @@ public:
         }
 
         if (isReadPipe) {
-            if (obj->isPipeServer_) {
-                obj->readPipeHandle_ = pipeHandle;
+            if (isPipeServer_) {
+                readPipeHandle_ = pipeHandle;
                 isReadPipeHandle = true;
             } else {
-                obj->writePipeHandle_ = pipeHandle;
+                writePipeHandle_ = pipeHandle;
             }
 
-            if (obj->readPipeConnectedEvent_) {
-                SetEvent(obj->readPipeConnectedEvent_);
+            if (readPipeConnectedEvent_) {
+                SetEvent(readPipeConnectedEvent_);
             }
         } else {
-            if (obj->isPipeServer_) {
-                obj->writePipeHandle_ = pipeHandle;
+            if (isPipeServer_) {
+                writePipeHandle_ = pipeHandle;
             } else {
-                obj->readPipeHandle_ = pipeHandle;
+                readPipeHandle_ = pipeHandle;
                 isReadPipeHandle = true;
             }
 
-            if (obj->writePipeConnectedEvent_) {
-                SetEvent(obj->writePipeConnectedEvent_);
+            if (writePipeConnectedEvent_) {
+                SetEvent(writePipeConnectedEvent_);
             }
         }
 
@@ -278,27 +315,30 @@ public:
             CloseHandle(overlapped.hEvent);
         }
 
-        obj->LogW(L"%s end ...", logPrevStr.c_str());
+        LogW(L"%s end ...", logPrevStr.c_str());
 
-        if (isReadPipeHandle && obj->readPipeConnectedEvent_ != INVALID_HANDLE_VALUE) {
+#ifndef NO_PROTOBUF
+        if (isReadPipeHandle && readPipeConnectedEvent_ != INVALID_HANDLE_VALUE) {
             bool ret = false;
+
             PipeCmd::Cmd cmd;
 
             while (true) {
-                if (obj->CheckStop()) {
+                if (CheckStop()) {
                     break;
                 }
 
-                ret = obj->RecvCmd(cmd);
+                ret = RecvCmd(cmd);
                 if (!ret) {
                     continue;
                 }
 
-                if (obj->onRecvPipeCmd_) {
-                    obj->onRecvPipeCmd_(obj->ctx_, cmd);
+                if (onRecvPipeCmd_) {
+                    onRecvPipeCmd_(ctx_, cmd);
                 }
             }
         }
+#endif
     }
 
     bool ConnectPipe(
@@ -320,9 +360,9 @@ public:
             ResetEvent(readPipeConnectedEvent_);
             ResetEvent(writePipeConnectedEvent_);
 
-            pipeReadThd_ = new std::thread(PipeThd, this, true, maxWaitTime);
+            pipeReadThd_ = new std::thread(std::bind(&PipeWrapperImpl::PipeThd, this, std::placeholders::_1, std::placeholders::_2), true, maxWaitTime);
 
-            pipeWriteThd_ = new std::thread(PipeThd, this, false, maxWaitTime);
+            pipeWriteThd_ = new std::thread(std::bind(&PipeWrapperImpl::PipeThd, this, std::placeholders::_1, std::placeholders::_2), false, maxWaitTime);
 
             DWORD waitCode = -1;
             HANDLE eventHandles[2] = { readPipeConnectedEvent_, writePipeConnectedEvent_ };
@@ -348,15 +388,17 @@ public:
             }
         } while (false);
 
+#ifndef _DEBUG
         if (connected && !heartbeatEventName_.empty()) {
             StartHeartbeatThd();
         }
+#endif
 
         return connected;
     }
 
     void DisConnectPipe() {
-        stopFlag_ = true;
+        SetStop();
 
         if (heartbeatThd_) {
             if (heartbeatThd_->joinable()) {
@@ -449,7 +491,6 @@ public:
                 const int maxWaitTime = 5;
                 DWORD waitCode = -1;
                 while (true) {
-
                     if (CheckStop()) {
                         break;
                     }
@@ -461,14 +502,12 @@ public:
 
                         waitCode = WaitForSingleObject(c2s_heartbeatEventHandle_, 1000);
                         if (waitCode != WAIT_OBJECT_0) {
-#ifndef _DEBUG
                             ++waitTime;
                             if (waitTime >= maxWaitTime) {
                                 LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
-                                stopFlag_ = true;
+                                SetStop();
                                 break;
                             }
-#endif
                         } else {
                             waitTime = 0;
                         }
@@ -479,14 +518,12 @@ public:
 
                         waitCode = WaitForSingleObject(s2c_heartbeatEventHandle_, 1000);
                         if (waitCode != WAIT_OBJECT_0) {
-#ifndef _DEBUG
                             ++waitTime;
                             if (waitTime >= maxWaitTime) {
                                 LogW(L" wait for heartbeat event timeout %d seconds, exit ...", waitTime);
-                                stopFlag_ = true;
+                                SetStop();
                                 break;
                             }
-#endif
                         } else {
                             waitTime = 0;
                         }
@@ -503,18 +540,17 @@ public:
         return ret;
     }
 
-    bool PipeRead(
-        unsigned char*& data,
-        std::uint32_t& dataSize
+    std::uint32_t PipeRead(
+        char* data,
+        std::uint32_t dataSize
     ) {
         const wchar_t* funcName = __FUNCTIONW__;
 
-        bool isSuccess = false;
+        bool ok = false;
 
         DWORD readSize = 0;
 
         do {
-            data = new unsigned char[dataSize + 2];
             if (!data) {
                 break;
             }
@@ -533,7 +569,7 @@ public:
             );
 
             if (ret) {
-                isSuccess = true;
+                ok = true;
             } else {
                 DWORD errorCode = GetLastError();
                 if (errorCode == ERROR_IO_PENDING) {
@@ -543,7 +579,7 @@ public:
                             if (ret == WAIT_OBJECT_0) {
                                 readSize = 0;
                                 ret = GetOverlappedResult(readPipeHandle_, &pipeReadOverlapped_, &readSize, FALSE);
-                                isSuccess = true;
+                                ok = true;
                                 break;
                             }
 
@@ -555,40 +591,29 @@ public:
                     }
                 } else {
                     LogW(L"[%s] pipe read failed, GetLastError=%d", funcName, GetLastError());
-                    break;
                 }
             }
 
-            if (readSize < dataSize) {
-                dataSize = readSize;
-            }
-
-            data[dataSize] = '\0';
-            data[dataSize + 1] = '\0';
+            readSize = readSize;
 
         } while (false);
 
-        if (!isSuccess) {
-            if (data) {
-                delete[] data;
-                data = nullptr;
-            }
-
-            dataSize = 0;
-            stopFlag_ = true;
+        if (!ok) {
+            readSize = 0;
+            SetStop();
             LogW(L"[%s] Pipe read failed, stop!", funcName);
         }
 
-        return isSuccess;
+        return (std::uint32_t)readSize;
     }
 
-    bool PipeWrite(
-        const unsigned char* data,
+    std::uint32_t PipeWrite(
+        const char* data,
         std::uint32_t dataSize
     ) {
         const wchar_t* funcName = __FUNCTIONW__;
 
-        bool isSuccess = false;
+        bool ok = false;
         DWORD writeSize = 0;
 
         do {
@@ -596,8 +621,6 @@ public:
             if (pipeWriteOverlapped_.hEvent) {
                 ResetEvent(pipeWriteOverlapped_.hEvent);
             }
-
-            DWORD writeBytes = 0;
 
             BOOL ret = WriteFile(
                 writePipeHandle_,
@@ -607,7 +630,7 @@ public:
                 &pipeWriteOverlapped_);
 
             if (ret) {
-                isSuccess = true;
+                ok = true;
             } else {
                 DWORD errorCode = GetLastError();
                 if (errorCode == ERROR_IO_PENDING) {
@@ -617,7 +640,7 @@ public:
                             if (ret == WAIT_OBJECT_0) {
                                 writeSize = 0;
                                 ret = GetOverlappedResult(writePipeHandle_, &pipeWriteOverlapped_, &writeSize, FALSE);
-                                isSuccess = true;
+                                ok = true;
                                 break;
                             }
                         }
@@ -629,51 +652,71 @@ public:
                     }
                 } else {
                     LogW(L"[%s] pipe write failed, GetLastError=%d", funcName, GetLastError());
-                    break;
                 }
             }
 
         } while (false);
 
-        if (!isSuccess) {
-            stopFlag_ = true;
+        if (!ok) {
+            writeSize = 0;
+            SetStop();
             LogW(L"[%s] Pipe write failed, stop!", funcName);
         }
 
-        return isSuccess;
+        return (std::uint32_t)writeSize;
     }
+
+#ifdef NO_PROTOBUF
+    
+    void RegisterCallback(
+        void* ctx,
+        OnCheckStop onCheckStop,
+        OnStop onStop
+    ) {
+        ctx_ = ctx;
+        onCheckStop_ = onCheckStop;
+        onStop_ = onStop;
+    }
+
+#else
 
     bool RecvCmd(PipeCmd::Cmd& cmd) {
         const char* funcName = __FUNCTION__;
 
-        bool isSuccess = false;
+        bool ok = false;
 
         std::uint32_t dataSize = 0;
-        unsigned char* data = nullptr;
+        char* data = nullptr;
 
         do {
             cmd.Clear();
 
             // 接收命令字节数
-            dataSize = sizeof(std::uint32_t);
-            isSuccess = PipeRead(data, dataSize);
-            if (!isSuccess || !data || dataSize == 0) {
-                isSuccess = false;
+            std::uint32_t readSize = PipeRead((char*)&dataSize, sizeof(std::uint32_t));
+            if (!readSize) {
                 break;
             }
 
             // 接收命令
-            dataSize = *(std::uint32_t*)data;
-            delete[] data;
-            data = nullptr;
-            isSuccess = PipeRead(data, dataSize);
-            if (!isSuccess || !data || dataSize == 0) {
-                isSuccess = false;
+            try {
+                data = new char[dataSize + 2];
+            } catch (std::exception& e) {
+                (e);
+            }
+
+            if (!data) {
                 break;
             }
 
-            isSuccess = ParsePipeCmd(cmd, data, dataSize);
-            if (!isSuccess) {
+            memset(data, 0, dataSize + 2);
+
+            readSize = PipeRead(data, dataSize);
+            if (!readSize) {
+                break;
+            }
+
+            ok = ParsePipeCmd(cmd, data, dataSize);
+            if (!ok) {
                 break;
             }
 
@@ -719,7 +762,7 @@ public:
             delete[] data;
         }
 
-        return isSuccess;
+        return ok;
     }
 
     PipeCmd::Cmd SendCmd(
@@ -736,7 +779,7 @@ public:
         HANDLE signalEvent = nullptr;
 
         do {
-            if (stopFlag_) {
+            if (CheckStop()) {
                 break;
             }
 
@@ -756,20 +799,20 @@ public:
                 pipeCmdResultMap_.insert({ copyCmd.unique_id(), PipeCmdResult(sendCmdCallback, ctx, signalEvent) });
             }
 
-            std::vector<unsigned char> buf;
+            std::vector<char> buf;
             buf.resize(copyCmd.ByteSizeLong());
             if (!copyCmd.SerializeToArray(buf.data(), (int)buf.size())) {
                 break;
             }
 
             std::uint32_t dataSize = (std::uint32_t)buf.size();
-            bool isSuccess = PipeWrite((const unsigned char*)&dataSize, sizeof(std::uint32_t));
-            if (!isSuccess) {
+            std::uint32_t writeSize = PipeWrite((const char*)&dataSize, sizeof(std::uint32_t));
+            if (!writeSize) {
                 break;
             }
 
-            isSuccess = PipeWrite(buf.data(), dataSize);
-            if (!isSuccess) {
+            writeSize = PipeWrite(buf.data(), dataSize);
+            if (!writeSize) {
                 break;
             }
 
@@ -825,6 +868,8 @@ public:
         onStop_ = onStop;
     }
 
+#endif
+
     bool CheckStop() {
         bool stop = false;
 
@@ -835,19 +880,24 @@ public:
             }
 
             if (onCheckStop_ && onCheckStop_(ctx_)) {
-                stopFlag_ = true;
+                stop = true;
+                SetStop();
                 break;
             }
 
         } while (false);
 
-        if (stop) {
+        return stop;
+    }
+
+    void SetStop() {
+        if (!stopFlag_) {
+            stopFlag_ = true;
+
             if (onStop_) {
                 onStop_(ctx_);
             }
         }
-
-        return stop;
     }
 
     void LogA(const char* format, ...) {
@@ -942,7 +992,11 @@ private:
     bool stopFlag_;
 
     void* ctx_;
+
+#ifndef NO_PROTOBUF
     OnRecvPipeCmd onRecvPipeCmd_;
+#endif
+
     OnCheckStop onCheckStop_;
     OnStop onStop_;
 
@@ -961,7 +1015,10 @@ private:
     HANDLE writePipeConnectedEvent_;
 
     std::unique_ptr<std::mutex> pipeCmdResultMapMutex_;
+
+#ifndef NO_PROTOBUF
     std::map<std::string, PipeCmdResult> pipeCmdResultMap_;
+#endif
 
     DWORD pid_;
 };
@@ -989,6 +1046,41 @@ void PipeWrapper::DisConnectPipe() {
     return pimpl_->DisConnectPipe();
 }
 
+#ifdef NO_PROTOBUF
+
+std::uint32_t PipeWrapper::Recv(
+    char* data,
+    std::uint32_t dataSize
+) {
+    return pimpl_->PipeRead(data, dataSize);
+}
+
+std::uint32_t PipeWrapper::Send(
+    const char* data,
+    std::uint32_t dataSize
+) {
+    return pimpl_->PipeWrite(data, dataSize);
+}
+
+void PipeWrapper::RegisterCallback(
+    void* ctx,
+    OnCheckStop onCheckStop,
+    OnStop onStop
+) {
+    pimpl_->RegisterCallback(ctx, onCheckStop, onStop);
+}
+
+#else
+
+void PipeWrapper::RegisterCallback(
+    void* ctx,
+    OnRecvPipeCmd onRecvPipeCmd,
+    OnCheckStop onCheckStop,
+    OnStop onStop
+) {
+    pimpl_->RegisterCallback(ctx, onRecvPipeCmd, onCheckStop, onStop);
+}
+
 PipeCmd::Cmd PipeWrapper::SendCmd(
     const PipeCmd::Cmd& cmd,
     bool waitDone,
@@ -999,18 +1091,9 @@ PipeCmd::Cmd PipeWrapper::SendCmd(
     return pimpl_->SendCmd(cmd, waitDone, waitTime, sendCmdCallback, ctx);
 }
 
-void PipeWrapper::RegisterCallback(
-    void* ctx,
-    OnRecvPipeCmd recvCmdCallback,
-    OnCheckStop checkStopCallback,
-    OnStop stopCallback
-) {
-    pimpl_->RegisterCallback(ctx, recvCmdCallback, checkStopCallback, stopCallback);
-}
-
 bool PipeWrapper::ParsePipeCmd(
     PipeCmd::Cmd& cmd,
-    const unsigned char* data,
+    const char* data,
     std::uint32_t dataSize
 ) {
     bool ok = false;
@@ -1153,15 +1236,14 @@ bool PipeWrapper::GetBooleanExtraData(
 
     return data;
 }
+#endif
 
 std::string PipeWrapper::GenerateUniqueId(bool isPipeServer) {
     std::string uniqueId;
-
     char buf[256] = { 0 };
     GUID guid = { 0 };
 
     HRESULT ret = ::CoInitializeEx(NULL, COINIT_MULTITHREADED);
-
     if (SUCCEEDED(::CoCreateGuid(&guid))) {
         _snprintf_s(buf, _countof(buf), _TRUNCATE,
             "%s-{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
@@ -1173,7 +1255,6 @@ std::string PipeWrapper::GenerateUniqueId(bool isPipeServer) {
             guid.Data4[2], guid.Data4[3],
             guid.Data4[4], guid.Data4[5],
             guid.Data4[6], guid.Data4[7]);
-
         uniqueId = buf;
     }
 
@@ -1188,47 +1269,4 @@ std::string PipeWrapper::GenerateUniqueId(bool isPipeServer) {
     }
 
     return uniqueId;
-}
-
-std::string PipeWrapper::Utf16ToUtf8(const std::wstring& str) {
-    std::string dst;
-
-    do {
-        int utf8Size = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (utf8Size == 0) {
-            break;
-        }
-
-        std::vector<char> resultVec(utf8Size);
-        int retSize = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), -1, &resultVec[0], utf8Size, nullptr, nullptr);
-        if (retSize != utf8Size) {
-            break;
-        }
-
-        dst = std::string(&resultVec[0]);
-
-    } while (false);
-
-    return dst;
-}
-
-std::wstring PipeWrapper::Utf8ToUtf16(const std::string& str) {
-    std::wstring dst;
-
-    do {
-        int wideSize = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-        if (ERROR_NO_UNICODE_TRANSLATION == wideSize || wideSize == 0) {
-            break;
-        }
-
-        std::vector<wchar_t> resultVec(wideSize);
-        int retSize = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &resultVec[0], wideSize);
-        if (retSize != wideSize) {
-            break;
-        }
-
-        dst = std::wstring(&resultVec[0]);
-    } while (false);
-
-    return dst;
 }
