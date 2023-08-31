@@ -2527,22 +2527,37 @@ namespace Main {
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetMessagesTTL& actionContent) {
-        const auto periodText = (actionContent.period == 7 * 86400)
-            ? "7 days"
-            : (actionContent.period == 86400)
-            ? "24 hours"
-            : QByteArray();
+        QString periodText;
+        if (actionContent.period > 0) {
+            int hours = actionContent.period / 3600;
+            int days = hours / 24;
+            int weeks = days / 7;
+            int months = (days + 15) / 30;
+            int years = months / 12;
+
+            if (years > 1) {
+                periodText = QString("%1 years").arg(years);
+            } else if (months >= 1) {
+                periodText = QString("%1 month%2").arg(months).arg(months > 1 ? "s" : "");
+            } else if (weeks >= 1) {
+                periodText = QString("%1 week%2").arg(weeks).arg(weeks > 1 ? "s" : "");
+            } else if (days >= 1) {
+                periodText = QString("%1 day%2").arg(days).arg(days > 1 ? "s" : "");
+            } else if (hours >= 1) {
+                periodText = QString("%1 hours").arg(hours);
+            }
+        }
 
         QString content;
         content = (_account._curSelectedChat.peerData->isChannel())
             ? (actionContent.period
                 ? "New messages will auto-delete in " + periodText
-                : "New messages will not auto-delete")
+                : "Disabled the auto-delete timer")
             : (actionContent.period
                 ? (_serviceFrom
-                    + " has set messages to auto-delete in " + periodText)
+                    + " set messages to auto-delete in " + periodText)
                 : (_serviceFrom
-                    + " has set messages not to auto-delete"));
+                    + " disabled the auto-delete timer"));
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         _chatMessageInfo.content = content.toUtf8().constData();
@@ -2765,6 +2780,11 @@ namespace Main {
         do {
             auto iter = _account._selectedChatDownloadAttachMap.find(_message->peerId.value);
             if (iter == _account._selectedChatDownloadAttachMap.end() || !iter->second) {
+                break;
+            }
+
+            // 跳过动图，出现过下载卡住的情况
+            if (downloadFileInfo.isSticker) {
                 break;
             }
 
@@ -3813,7 +3833,7 @@ namespace Main {
             QString qrcodeString;
 
             auto token = data.vtoken().v;
-            auto qrData = Qr::Encode("tg://login?token=" + token.toBase64(QByteArray::Base64UrlEncoding), Qr::Redundancy::Quartile);
+            auto qrData = Qr::Encode("tg://login?token=" + token.toBase64(QByteArray::Base64UrlEncoding), Qr::Redundancy::Default);
             if (qrData.size > 0) {
                 int pixel = st::introQrPixel;
                 int max = st::introQrMaxSize;
