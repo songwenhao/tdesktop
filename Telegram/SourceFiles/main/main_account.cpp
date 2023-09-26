@@ -1757,8 +1757,10 @@ namespace Main {
 
         if (nextFile) {
             _offset = 0;
+            _preOffset = 0;
             _offsetId = 0;
             _curDownloadFile = nextFile;
+            _curDownloadFile->stringFileSize = getFormatFileSize(_curDownloadFile->fileSize);
             _curDownloadFile->fileHandle = new QFile(_curDownloadFile->saveFilePath);
             _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
             _curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
@@ -1778,9 +1780,8 @@ namespace Main {
             return;
         }
 
-        QFile::remove(_curDownloadFile->saveFilePath);
-
-        if (!_curDownloadFile->fileReference.isEmpty()) {
+        // 2023.09.22 发现使用这种方法下载偶尔会出现“code 400, error FILE_REFERENCE_EXPIRED”的错误，不知道原因，暂时屏蔽
+        if (false) {//!_curDownloadFile->fileReference.isEmpty()) {
             auto documentData = _session->data().document(_curDownloadFile->docId);
             if (documentData) {
                 DocumentSaveClickHandler::SaveFile(_curDownloadFile->msgId, _curDownloadFile->fileOrigin, documentData, _curDownloadFile->saveFilePath);
@@ -1790,68 +1791,28 @@ namespace Main {
                 }
             }
         } else {
-            constexpr int kFileChunkSize = 128 * 1024;
+            constexpr int kFileChunkSize = 1024 * 1024;
 
-            auto getFileDone = [=](const MTPupload_File& result) {
-                bool hasErr = true;
-
-                do {
-                    if (result.type() == mtpc_upload_fileCdnRedirect) {
-                        break;
-                    }
-
-                    const auto& data = result.c_upload_file();
-                    if (data.vbytes().v.isEmpty()) {
-                        break;
-                    } else {
-                        if (_curDownloadFile->fileHandle->isOpen()) {
-                            _curDownloadFile->fileHandle->seek(_offset);
-
-                            const char* rawData = data.vbytes().v.constData();
-                            int rawDataSize = data.vbytes().v.size();
-                            if (rawData && _curDownloadFile->fileHandle->write(rawData, rawDataSize) == qint64(rawDataSize)) {
-                                hasErr = false;
-                                _offset += rawDataSize;
-                            }
-
-                            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
-                                .arg(_curDownloadFile->fileName).arg(getFormatFileSize(_curDownloadFile->fileSize)).arg(getFormatFileSize(_offset)));
-                        }
-                    }
-
-                } while (false);
-
-                if (!hasErr) {
-                    if (_offset >= _curDownloadFile->fileSize) {
-                        if (_curDownloadFile->downloadDoneSignal) {
-                            SetEvent(_curDownloadFile->downloadDoneSignal);
-                        }
-                    } else {
-                        requestFileEx();
-                    }
+            auto getFileFail = [=](const MTP::Error& error) {
+                if (error.code() == 400
+                    && error.type().startsWith(u"FILE_REFERENCE_"_q)) {
+                    // 文件链接过期，需要刷新
+                    _requestId = 0;
+                    filePartRefreshReference(_offset);
                 } else {
+                    if (error.type() == u"TAKEOUT_FILE_EMPTY"_q) {
+                    } else if (error.type() == u"LOCATION_INVALID"_q
+                        || error.type() == u"VERSION_INVALID"_q
+                        || error.type() == u"LOCATION_NOT_AVAILABLE"_q) {
+                    }
+
                     if (_curDownloadFile->downloadDoneSignal) {
                         SetEvent(_curDownloadFile->downloadDoneSignal);
                     }
                 }
             };
 
-            auto getFileFail = [=](const MTP::Error& error) {
-                if (error.type() == u"TAKEOUT_FILE_EMPTY"_q) {
-                } else if (error.type() == u"LOCATION_INVALID"_q
-                    || error.type() == u"VERSION_INVALID"_q
-                    || error.type() == u"LOCATION_NOT_AVAILABLE"_q) {
-                } else if (error.code() == 400
-                    && error.type().startsWith(u"FILE_REFERENCE_"_q)) {
-                    // filePartRefreshReference(offset);
-                } else {
-                }
-
-                if (_curDownloadFile->downloadDoneSignal) {
-                    SetEvent(_curDownloadFile->downloadDoneSignal);
-                }
-            };
-
+            // 正常未退出的群聊及频道
             if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
                 _session->api().request(MTPupload_GetFile(
                     MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
@@ -1861,7 +1822,7 @@ namespace Main {
                 ).fail([=](const MTP::Error& error) {
                     getFileFail(error);
                     }).done([=](const MTPupload_File& result) {
-                        getFileDone(result);
+                        FilePartDone(result);
                         }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
             } else {
                 _session->api().request(buildTakeoutRequest(MTPupload_GetFile(
@@ -1872,10 +1833,192 @@ namespace Main {
                 ).fail([=](const MTP::Error& error) {
                     getFileFail(error);
                     }).done([=](const MTPupload_File& result) {
-                        getFileDone(result);
+                        FilePartDone(result);
                         }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
             }
         }
+    }
+
+    void Account::FilePartDone(const MTPupload_File& result) {
+        bool hasErr = true;
+
+        do {
+            if (result.type() == mtpc_upload_fileCdnRedirect) {
+                break;
+            }
+
+            const auto& data = result.c_upload_file();
+            if (data.vbytes().v.isEmpty()) {
+                break;
+            } else {
+                if (_curDownloadFile->fileHandle->isOpen()) {
+                    _curDownloadFile->fileHandle->seek(_offset);
+
+                    const char* rawData = data.vbytes().v.constData();
+                    int rawDataSize = data.vbytes().v.size();
+                    if (rawData && _curDownloadFile->fileHandle->write(rawData, rawDataSize) == qint64(rawDataSize)) {
+                        hasErr = false;
+                        _offset += rawDataSize;
+                        if ((_offset - _preOffset) >= 2 * 1024 * 1024) {
+                            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
+                                .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize).arg(getFormatFileSize(_offset)));
+                        }
+                        _preOffset = _offset;
+                    }
+                }
+            }
+
+        } while (false);
+
+        if (!hasErr) {
+            if (_offset >= _curDownloadFile->fileSize) {
+                uploadMsg(QString::fromStdWString(L"文件 [%1]下载完毕, 总大小[%2] ...")
+                    .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize));
+
+                if (_curDownloadFile->downloadDoneSignal) {
+                    SetEvent(_curDownloadFile->downloadDoneSignal);
+                }
+            } else {
+                requestFileEx();
+            }
+        } else {
+            if (_curDownloadFile->downloadDoneSignal) {
+                SetEvent(_curDownloadFile->downloadDoneSignal);
+            }
+        }
+    }
+
+    void Account::filePartRefreshReference(int64 offset) {
+        do {
+            const auto& origin = _curDownloadFile->fileOrigin;
+            if (!_curDownloadFile->msgId.msg.bare) {
+                // error("FILE_REFERENCE error for non-message file.");
+                break;
+            }
+
+            auto peerData = _session->data().peer(peerFromUser(MTP_long(_curDownloadFile->peerId)));
+            if (!peerData) {
+                break;
+            }
+
+            auto peer = peerData->input;
+
+            auto handleFail = [=](const MTP::Error& error) {
+                _requestId = 0;
+
+                if (_curDownloadFile->downloadDoneSignal) {
+                    SetEvent(_curDownloadFile->downloadDoneSignal);
+                }
+
+                return true;
+                };
+
+            if (peer.type() == mtpc_inputPeerChannel
+                || peer.type() == mtpc_inputPeerChannelFromMessage) {
+                const auto channel = (peer.type() == mtpc_inputPeerChannel)
+                    ? MTP_inputChannel(
+                        peer.c_inputPeerChannel().vchannel_id(),
+                        peer.c_inputPeerChannel().vaccess_hash())
+                    : MTP_inputChannelFromMessage(
+                        peer.c_inputPeerChannelFromMessage().vpeer(),
+                        peer.c_inputPeerChannelFromMessage().vmsg_id(),
+                        peer.c_inputPeerChannelFromMessage().vchannel_id());
+
+                // 正常未退出的群聊及频道
+                if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
+                    _session->api().request(MTPchannels_GetMessages(
+                        channel,
+                        MTP_vector<MTPInputMessage>(
+                            1,
+                            MTP_inputMessageID(MTP_int(_curDownloadFile->msgId.msg.bare)))
+                    )).fail([=](const MTP::Error& error) {
+                        handleFail(error);
+                        }).done([=](const MTPmessages_Messages& result) {
+                            _requestId = 0;
+                            filePartExtractReference(offset, result);
+                            }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+                } else {
+                    _session->api().request(buildTakeoutRequest(MTPchannels_GetMessages(
+                        channel,
+                        MTP_vector<MTPInputMessage>(
+                            1,
+                            MTP_inputMessageID(MTP_int(_curDownloadFile->msgId.msg.bare)))
+                    ))).fail([=](const MTP::Error& error) {
+                        handleFail(error);
+                        }).done([=](const MTPmessages_Messages& result) {
+                            _requestId = 0;
+                            filePartExtractReference(offset, result);
+                            }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+                }
+            } else {
+                // 正常未退出的群聊及频道
+                if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
+                    _session->api().request(MTPmessages_GetMessages(
+                        MTP_vector<MTPInputMessage>(
+                            1,
+                            MTP_inputMessageID(MTP_int(_curDownloadFile->msgId.msg.bare)))
+                    )).fail([=](const MTP::Error& error) {
+                        handleFail(error);
+                        }).done([=](const MTPmessages_Messages& result) {
+                            _requestId = 0;
+                            filePartExtractReference(offset, result);
+                            }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+                } else {
+                    _session->api().request(buildTakeoutRequest(MTPmessages_GetMessages(
+                        MTP_vector<MTPInputMessage>(
+                            1,
+                            MTP_inputMessageID(MTP_int(_curDownloadFile->msgId.msg.bare)))
+                    ))).fail([=](const MTP::Error& error) {
+                        handleFail(error);
+                        }).done([=](const MTPmessages_Messages& result) {
+                            _requestId = 0;
+                            filePartExtractReference(offset, result);
+                            }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
+                }
+            }
+        } while (false);
+    }
+
+    void Account::filePartExtractReference(
+        int64 offset,
+        const MTPmessages_Messages& result
+    ) {
+        result.match([&](const MTPDmessages_messagesNotModified& data) {
+            // error("Unexpected messagesNotModified received.");
+            if (_curDownloadFile->downloadDoneSignal) {
+                SetEvent(_curDownloadFile->downloadDoneSignal);
+            }
+            }, [&](const auto& data) {
+                auto context = Export::Data::ParseMediaContext();
+                context.selfPeerId = peerFromUser(_sessionUserId);
+                const auto messages = Export::Data::ParseMessagesSlice(
+                    context,
+                    data.vmessages(),
+                    data.vusers(),
+                    data.vchats(),
+                    _curDownloadFile->saveFilePath);
+
+                Export::Data::FileLocation location;
+                location.dcId = _curDownloadFile->dcId;
+                location.data = _curDownloadFile->fileLocation;
+
+                for (const auto& message : messages.list) {
+                    if (message.id == _curDownloadFile->msgId.msg.bare) {
+                        const auto refresh1 = Export::Data::RefreshFileReference(
+                            location,
+                            message.file().location);
+                        const auto refresh2 = Export::Data::RefreshFileReference(
+                            location,
+                            message.thumb().file.location);
+                        if (refresh1 || refresh2) {
+                            _curDownloadFile->fileLocation = location.data;
+
+                            requestFileEx();
+                            return;
+                        }
+                    }
+                }
+                });
     }
 
     QString Account::getPeerDisplayName(PeerData* peerData) {
@@ -2692,7 +2835,7 @@ namespace Main {
                     .arg(_account.getFormatFileSize(file.size)));
                 break;
             }
-         
+
             std::lock_guard<std::mutex> locker(*_account._downloadFilesLock);
             _account._downloadFiles.emplace_back(downloadFileInfo);
 

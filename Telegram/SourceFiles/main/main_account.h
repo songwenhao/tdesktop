@@ -367,6 +367,7 @@ namespace Main {
             Data::FileOrigin fileOrigin;
             uint64 docId;
             int64 fileSize;
+            QString stringFileSize;
             int dcId;
             uint64 accessHash;
             QByteArray fileReference;
@@ -526,6 +527,14 @@ namespace Main {
 
         void requestFile(bool first = false);
         void requestFileEx();
+
+        void FilePartDone(const MTPupload_File& result);
+        void filePartRefreshReference(int64 offset);
+
+        void filePartExtractReference(
+            int64 offset,
+            const MTPmessages_Messages& result
+        );
 
         QString getPeerDisplayName(PeerData* peerData);
 
@@ -733,6 +742,7 @@ namespace Main {
         Main::Account::DownloadFileInfo* _curDownloadFile;
 
         int _offset;
+        int _preOffset;
         int _offsetId;
 
         bool _downloadPeerProfilePhoto;

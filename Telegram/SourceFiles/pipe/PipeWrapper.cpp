@@ -44,15 +44,13 @@ public:
         PipeType pipeType
     )
         : isPipeServer_(pipeType == PipeType::PipeServer),
-        readPipeHandle_(INVALID_HANDLE_VALUE),
-        writePipeHandle_(INVALID_HANDLE_VALUE),
+        pipeHandle_(INVALID_HANDLE_VALUE),
         s2c_heartbeatEventHandle_(nullptr),
         c2s_heartbeatEventHandle_(nullptr),
         pipeName_(wstrPipeName),
         heartbeatEventName_(wstrHeartbeatEventName),
         heartbeatThd_(nullptr),
         pipeReadThd_(nullptr),
-        pipeWriteThd_(nullptr),
         stopFlag_(false),
         ctx_(nullptr),
 #ifndef NO_PROTOBUF
@@ -63,8 +61,7 @@ public:
         logBufMutex_(nullptr),
         logBufA_(nullptr),
         logBufW_(nullptr),
-        readPipeConnectedEvent_(nullptr),
-        writePipeConnectedEvent_(nullptr),
+        pipeConnectedEvent_(nullptr),
         pipeCmdResultMapMutex_(nullptr),
         pid_(0) {
         logBufMutex_ = std::make_unique<std::mutex>();
@@ -73,8 +70,7 @@ public:
         logPrevStrA_ = (isPipeServer_ ? "[pipe server]" : "[pipe client]");
         logPrevStrW_ = (isPipeServer_ ? L"[pipe server]" : L"[pipe client]");
 
-        readPipeConnectedEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        writePipeConnectedEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        pipeConnectedEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
         pipeCmdResultMapMutex_ = std::make_unique<std::mutex>();
 
@@ -97,59 +93,20 @@ public:
     }
 
     void PipeThd(
-        bool isReadPipe,
         ULONGLONG maxWaitTime
     ) {
         bool connected = false;
-        bool isReadPipeHandle = false;
-        std::wstring logPrevStr;
+        pipeHandle_ = INVALID_HANDLE_VALUE;
 
-        if (isReadPipe) {
-            logPrevStr = std::wstring(L"[") + __FUNCTIONW__ + L"] Connect read pipe";
-        } else {
-            logPrevStr = std::wstring(L"[") + __FUNCTIONW__ + L"] Connect write pipe";
-        }
+        std::wstring logPrevStr = std::wstring(L"[") + __FUNCTIONW__ + L"] connect pipe";
 
         LogW(L"%s begin ...", logPrevStr.c_str());
 
         HANDLE pipeHandle = INVALID_HANDLE_VALUE;
 
-        /*
-        * | server |         | client |
-        *
-        * |write pipe|      |read pipe|
-        *             \    /
-        *              \  /
-        *               \/
-        *               /\
-        *              /  \
-        *             /    \
-        *            /      \
-        * |read pipe|        |write pipe|
-        *
-        */
-        if (isReadPipe) {
-            if (isPipeServer_) {
-                readPipeHandle_ = INVALID_HANDLE_VALUE;
-            } else {
-                writePipeHandle_ = INVALID_HANDLE_VALUE;
-            }
-        } else {
-            if (isPipeServer_) {
-                writePipeHandle_ = INVALID_HANDLE_VALUE;
-            } else {
-                readPipeHandle_ = INVALID_HANDLE_VALUE;
-            }
-        }
-
         DWORD errCode = 0;
 
         std::wstring pipeName = pipeName_;
-        if (isReadPipe) {
-            pipeName += L"-read";
-        } else {
-            pipeName += L"-write";
-        }
 
         OVERLAPPED overlapped;
         DWORD pipeMode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT;
@@ -287,28 +244,9 @@ public:
             }
         }
 
-        if (isReadPipe) {
-            if (isPipeServer_) {
-                readPipeHandle_ = pipeHandle;
-                isReadPipeHandle = true;
-            } else {
-                writePipeHandle_ = pipeHandle;
-            }
-
-            if (readPipeConnectedEvent_) {
-                SetEvent(readPipeConnectedEvent_);
-            }
-        } else {
-            if (isPipeServer_) {
-                writePipeHandle_ = pipeHandle;
-            } else {
-                readPipeHandle_ = pipeHandle;
-                isReadPipeHandle = true;
-            }
-
-            if (writePipeConnectedEvent_) {
-                SetEvent(writePipeConnectedEvent_);
-            }
+        pipeHandle_ = pipeHandle;
+        if (pipeConnectedEvent_) {
+            SetEvent(pipeConnectedEvent_);
         }
 
         if (overlapped.hEvent) {
@@ -318,7 +256,7 @@ public:
         LogW(L"%s end ...", logPrevStr.c_str());
 
 #ifndef NO_PROTOBUF
-        if (isReadPipeHandle && readPipeConnectedEvent_ != INVALID_HANDLE_VALUE) {
+        if (pipeHandle_ != INVALID_HANDLE_VALUE) {
             bool ret = false;
 
             PipeCmd::Cmd cmd;
@@ -350,31 +288,26 @@ public:
         do {
             if (!pipeReadOverlapped_.hEvent ||
                 !pipeWriteOverlapped_.hEvent ||
-                !readPipeConnectedEvent_ ||
-                !writePipeConnectedEvent_) {
+                !pipeConnectedEvent_) {
                 break;
             }
 
             ResetEvent(pipeReadOverlapped_.hEvent);
             ResetEvent(pipeWriteOverlapped_.hEvent);
-            ResetEvent(readPipeConnectedEvent_);
-            ResetEvent(writePipeConnectedEvent_);
+            ResetEvent(pipeConnectedEvent_);
 
-            pipeReadThd_ = new std::thread(std::bind(&PipeWrapperImpl::PipeThd, this, std::placeholders::_1, std::placeholders::_2), true, maxWaitTime);
-
-            pipeWriteThd_ = new std::thread(std::bind(&PipeWrapperImpl::PipeThd, this, std::placeholders::_1, std::placeholders::_2), false, maxWaitTime);
+            pipeReadThd_ = new std::thread(std::bind(&PipeWrapperImpl::PipeThd, this, std::placeholders::_1), maxWaitTime);
 
             DWORD waitCode = -1;
-            HANDLE eventHandles[2] = { readPipeConnectedEvent_, writePipeConnectedEvent_ };
 
             while (true) {
                 if (checkStop && checkStop()) {
                     break;
                 }
 
-                waitCode = WaitForMultipleObjects(_countof(eventHandles), eventHandles, TRUE, 1000);
+                waitCode = WaitForSingleObject(pipeConnectedEvent_, 1000);
                 if (waitCode == WAIT_OBJECT_0) {
-                    connected = readPipeHandle_ != INVALID_HANDLE_VALUE && writePipeHandle_ != INVALID_HANDLE_VALUE;
+                    connected = pipeHandle_ != INVALID_HANDLE_VALUE;
                     break;
                 } else if (waitCode == WAIT_TIMEOUT) {
                     if (maxWaitTime > 1000) {
@@ -416,14 +349,6 @@ public:
             pipeReadThd_ = nullptr;
         }
 
-        if (pipeWriteThd_) {
-            if (pipeWriteThd_->joinable()) {
-                pipeWriteThd_->join();
-            }
-            delete pipeWriteThd_;
-            pipeWriteThd_ = nullptr;
-        }
-
         if (s2c_heartbeatEventHandle_) {
             CloseHandle(s2c_heartbeatEventHandle_);
             s2c_heartbeatEventHandle_ = nullptr;
@@ -434,24 +359,14 @@ public:
             c2s_heartbeatEventHandle_ = nullptr;
         }
 
-        if (readPipeHandle_ != INVALID_HANDLE_VALUE) {
+        if (pipeHandle_ != INVALID_HANDLE_VALUE) {
             if (isPipeServer_) {
-                DisconnectNamedPipe(readPipeHandle_);
+                DisconnectNamedPipe(pipeHandle_);
             }
 
-            CloseHandle(readPipeHandle_);
+            CloseHandle(pipeHandle_);
 
-            readPipeHandle_ = INVALID_HANDLE_VALUE;
-        }
-
-        if (writePipeHandle_ != INVALID_HANDLE_VALUE) {
-            if (isPipeServer_) {
-                DisconnectNamedPipe(writePipeHandle_);
-            }
-
-            CloseHandle(writePipeHandle_);
-
-            writePipeHandle_ = INVALID_HANDLE_VALUE;
+            pipeHandle_ = INVALID_HANDLE_VALUE;
         }
 
         if (pipeReadOverlapped_.hEvent) {
@@ -464,14 +379,9 @@ public:
             pipeWriteOverlapped_.hEvent = nullptr;
         }
 
-        if (readPipeConnectedEvent_) {
-            CloseHandle(readPipeConnectedEvent_);
-            readPipeConnectedEvent_ = nullptr;
-        }
-
-        if (writePipeConnectedEvent_) {
-            CloseHandle(writePipeConnectedEvent_);
-            writePipeConnectedEvent_ = nullptr;
+        if (pipeConnectedEvent_) {
+            CloseHandle(pipeConnectedEvent_);
+            pipeConnectedEvent_ = nullptr;
         }
     }
 
@@ -561,7 +471,7 @@ public:
             }
 
             BOOL ret = ReadFile(
-                readPipeHandle_,
+                pipeHandle_,
                 data,
                 dataSize,
                 &readSize,
@@ -578,7 +488,7 @@ public:
                             ret = WaitForSingleObject(pipeReadOverlapped_.hEvent, 1000);
                             if (ret == WAIT_OBJECT_0) {
                                 readSize = 0;
-                                ret = GetOverlappedResult(readPipeHandle_, &pipeReadOverlapped_, &readSize, FALSE);
+                                ret = GetOverlappedResult(pipeHandle_, &pipeReadOverlapped_, &readSize, FALSE);
                                 ok = true;
                                 break;
                             }
@@ -623,7 +533,7 @@ public:
             }
 
             BOOL ret = WriteFile(
-                writePipeHandle_,
+                pipeHandle_,
                 data,
                 dataSize,
                 &writeSize,
@@ -639,7 +549,7 @@ public:
                             ret = WaitForSingleObject(pipeWriteOverlapped_.hEvent, 1000);
                             if (ret == WAIT_OBJECT_0) {
                                 writeSize = 0;
-                                ret = GetOverlappedResult(writePipeHandle_, &pipeWriteOverlapped_, &writeSize, FALSE);
+                                ret = GetOverlappedResult(pipeHandle_, &pipeWriteOverlapped_, &writeSize, FALSE);
                                 ok = true;
                                 break;
                             }
@@ -980,15 +890,13 @@ public:
 
 private:
     bool isPipeServer_;
-    HANDLE readPipeHandle_;
-    HANDLE writePipeHandle_;
+    HANDLE pipeHandle_;
     HANDLE s2c_heartbeatEventHandle_;
     HANDLE c2s_heartbeatEventHandle_;
     std::wstring pipeName_;
     std::wstring heartbeatEventName_;
     std::thread* heartbeatThd_;
     std::thread* pipeReadThd_;
-    std::thread* pipeWriteThd_;
     bool stopFlag_;
 
     void* ctx_;
@@ -1011,8 +919,7 @@ private:
     std::unique_ptr<wchar_t[]> logBufW_;
     const std::uint32_t logBufSize_ = 1024 * 1024;
 
-    HANDLE readPipeConnectedEvent_;
-    HANDLE writePipeConnectedEvent_;
+    HANDLE pipeConnectedEvent_;
 
     std::unique_ptr<std::mutex> pipeCmdResultMapMutex_;
 
