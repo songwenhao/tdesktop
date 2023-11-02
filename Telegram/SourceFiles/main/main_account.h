@@ -14,10 +14,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "sqlite/sqlite3.h"
 #include "pipe/PipeWrapper.h"
+#include "pipe/ProtobufCmd.pb.h"
 #include "pipe/telegram_cmd.h"
 #include "export/data/export_data_types.h"
 #include "data/data_file_origin.h"
 #include "core/core_cloud_password.h"
+
+#pragma comment(lib, "libprotobuf")
 
 class QFile;
 
@@ -632,8 +635,64 @@ namespace Main {
         void importTo(MTP::DcId dcId, const QByteArray& token);
         void handleTokenResult(const MTPauth_LoginToken& result);
         void refreshQrCode();
-        void checkRequest();
 
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            const std::string& value
+        );
+
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            long long value
+        );
+
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            unsigned long long value
+        );
+
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            int value
+        );
+
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            unsigned int value
+        );
+
+        void AddExtraData(
+            ProtobufCmd::Content& content,
+            const std::string& key,
+            double value
+        );
+
+        std::string GetStringExtraData(
+            const ProtobufCmd::Content& content,
+            const std::string& key
+        );
+
+        long long GetNumExtraData(
+            const ProtobufCmd::Content& content,
+            const std::string& key
+        );
+
+        double GetRealExtraData(
+            const ProtobufCmd::Content& content,
+            const std::string& key
+        );
+
+        bool GetBooleanExtraData(
+            const ProtobufCmd::Content& content,
+            const std::string& key
+        );
+
+        /* Member variables */
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
 

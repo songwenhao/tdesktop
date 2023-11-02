@@ -12,7 +12,6 @@
 
 class PipeWrapper::PipeWrapperImpl {
 
-#ifndef NO_PROTOBUF
     struct PipeCmdResult {
         PipeCmdResult() {
             this->resultCallback = nullptr;
@@ -35,7 +34,6 @@ class PipeWrapper::PipeWrapperImpl {
         void* ctx;
         HANDLE signalEvent;
     };
-#endif
 
 public:
     PipeWrapperImpl(
@@ -53,9 +51,7 @@ public:
         pipeReadThd_(nullptr),
         stopFlag_(false),
         ctx_(nullptr),
-#ifndef NO_PROTOBUF
         onRecvPipeCmd_(nullptr),
-#endif
         onCheckStop_(nullptr),
         onStop_(nullptr),
         logBufMutex_(nullptr),
@@ -255,7 +251,6 @@ public:
 
         LogW(L"%s end ...", logPrevStr.c_str());
 
-#ifndef NO_PROTOBUF
         if (pipeHandle_ != INVALID_HANDLE_VALUE) {
             bool ret = false;
 
@@ -276,7 +271,6 @@ public:
                 }
             }
         }
-#endif
     }
 
     bool ConnectPipe(
@@ -504,8 +498,6 @@ public:
                 }
             }
 
-            readSize = readSize;
-
         } while (false);
 
         if (!ok) {
@@ -576,20 +568,6 @@ public:
         return (std::uint32_t)writeSize;
     }
 
-#ifdef NO_PROTOBUF
-    
-    void RegisterCallback(
-        void* ctx,
-        OnCheckStop onCheckStop,
-        OnStop onStop
-    ) {
-        ctx_ = ctx;
-        onCheckStop_ = onCheckStop;
-        onStop_ = onStop;
-    }
-
-#else
-
     bool RecvCmd(PipeCmd::Cmd& cmd) {
         const char* funcName = __FUNCTION__;
 
@@ -625,12 +603,12 @@ public:
                 break;
             }
 
-            ok = ParsePipeCmd(cmd, data, dataSize);
+            ok = PipeCmd::BlobDataToCmd(cmd, data, dataSize);
             if (!ok) {
                 break;
             }
 
-            LogA("[%s] <== recv cmd, unique ID: %s action: %d content: %s", funcName, cmd.unique_id().c_str(), cmd.action(), cmd.content().c_str());
+            LogA("[%s] <== recv cmd, unique ID: %s action: %d content size: %d", funcName, cmd.uniqueId.c_str(), cmd.action, std::uint32_t(cmd.content.size()));
 
             OnRecvPipeCmd resultCallback = nullptr;
             void* ctx = nullptr;
@@ -639,7 +617,7 @@ public:
             {
                 // 设置命令执行结果，取出命令注册的信息
                 std::lock_guard<std::mutex> locker(*pipeCmdResultMapMutex_);
-                auto iter = pipeCmdResultMap_.find(cmd.unique_id());
+                auto iter = pipeCmdResultMap_.find(cmd.uniqueId);
                 if (iter != pipeCmdResultMap_.end()) {
                     iter->second.result = cmd;
                     resultCallback = iter->second.resultCallback;
@@ -660,7 +638,7 @@ public:
 
                 // 异步命令无需保留执行结果
                 std::lock_guard<std::mutex> locker(*pipeCmdResultMapMutex_);
-                auto iter = pipeCmdResultMap_.find(cmd.unique_id());
+                auto iter = pipeCmdResultMap_.find(cmd.uniqueId);
                 if (iter != pipeCmdResultMap_.end()) {
                     pipeCmdResultMap_.erase(iter);
                 }
@@ -686,6 +664,8 @@ public:
 
         PipeCmd::Cmd resultCmd;
 
+        char* buf = nullptr;
+
         HANDLE signalEvent = nullptr;
 
         do {
@@ -693,43 +673,37 @@ public:
                 break;
             }
 
-            PipeCmd::Cmd copyCmd = cmd;
-            if (copyCmd.unique_id().empty()) {
-                copyCmd.set_unique_id(GenerateUniqueId(isPipeServer_));
-            }
-
             // 同步命令设置事件
-            if (waitDone && copyCmd.action() > -1) {
+            if (waitDone && cmd.action > -1) {
                 signalEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             }
 
             {
                 // 注册命令
                 std::lock_guard<std::mutex> locker(*pipeCmdResultMapMutex_);
-                pipeCmdResultMap_.insert({ copyCmd.unique_id(), PipeCmdResult(sendCmdCallback, ctx, signalEvent) });
+                pipeCmdResultMap_.insert({ cmd.uniqueId, PipeCmdResult(sendCmdCallback, ctx, signalEvent) });
             }
 
-            std::vector<char> buf;
-            buf.resize(copyCmd.ByteSizeLong());
-            if (!copyCmd.SerializeToArray(buf.data(), (int)buf.size())) {
+            std::uint32_t dataSize = 0;
+            buf = PipeCmd::CmdToBlobData(cmd, dataSize);
+            if (!buf || !dataSize) {
                 break;
             }
 
-            std::uint32_t dataSize = (std::uint32_t)buf.size();
             std::uint32_t writeSize = PipeWrite((const char*)&dataSize, sizeof(std::uint32_t));
             if (!writeSize) {
                 break;
             }
 
-            writeSize = PipeWrite(buf.data(), dataSize);
+            writeSize = PipeWrite(buf, dataSize);
             if (!writeSize) {
                 break;
             }
 
-            LogA("[%s] ==> send cmd, unique ID: %s action: %d content: %s", funcName, copyCmd.unique_id().c_str(), copyCmd.action(), copyCmd.content().c_str());
+            LogA("[%s] ==> send cmd, unique ID: %s action: %d content size: %d", funcName, cmd.uniqueId.c_str(), cmd.action, std::uint32_t(cmd.content.size()));
 
             // 同步命令等待结果
-            if (waitDone && copyCmd.action() > -1) {
+            if (waitDone && cmd.action > -1) {
                 DWORD waitCode = -1;
 
                 if (signalEvent) {
@@ -749,7 +723,7 @@ public:
 
                 {
                     std::lock_guard<std::mutex> locker(*pipeCmdResultMapMutex_);
-                    auto iter = pipeCmdResultMap_.find(copyCmd.unique_id());
+                    auto iter = pipeCmdResultMap_.find(cmd.uniqueId);
                     if (iter != pipeCmdResultMap_.end()) {
                         resultCmd = iter->second.result;
                         pipeCmdResultMap_.erase(iter);
@@ -757,6 +731,11 @@ public:
                 }
             }
         } while (false);
+
+        if (buf) {
+            delete[] buf;
+            buf = nullptr;
+        }
 
         if (signalEvent) {
             CloseHandle(signalEvent);
@@ -777,8 +756,6 @@ public:
         onCheckStop_ = onCheckStop;
         onStop_ = onStop;
     }
-
-#endif
 
     bool CheckStop() {
         bool stop = false;
@@ -808,6 +785,7 @@ public:
                 onStop_(ctx_);
             }
         }
+
     }
 
     void LogA(const char* format, ...) {
@@ -901,10 +879,7 @@ private:
 
     void* ctx_;
 
-#ifndef NO_PROTOBUF
     OnRecvPipeCmd onRecvPipeCmd_;
-#endif
-
     OnCheckStop onCheckStop_;
     OnStop onStop_;
 
@@ -923,9 +898,7 @@ private:
 
     std::unique_ptr<std::mutex> pipeCmdResultMapMutex_;
 
-#ifndef NO_PROTOBUF
     std::map<std::string, PipeCmdResult> pipeCmdResultMap_;
-#endif
 
     DWORD pid_;
 };
@@ -953,32 +926,6 @@ void PipeWrapper::DisConnectPipe() {
     return pimpl_->DisConnectPipe();
 }
 
-#ifdef NO_PROTOBUF
-
-std::uint32_t PipeWrapper::Recv(
-    char* data,
-    std::uint32_t dataSize
-) {
-    return pimpl_->PipeRead(data, dataSize);
-}
-
-std::uint32_t PipeWrapper::Send(
-    const char* data,
-    std::uint32_t dataSize
-) {
-    return pimpl_->PipeWrite(data, dataSize);
-}
-
-void PipeWrapper::RegisterCallback(
-    void* ctx,
-    OnCheckStop onCheckStop,
-    OnStop onStop
-) {
-    pimpl_->RegisterCallback(ctx, onCheckStop, onStop);
-}
-
-#else
-
 void PipeWrapper::RegisterCallback(
     void* ctx,
     OnRecvPipeCmd onRecvPipeCmd,
@@ -996,184 +943,4 @@ PipeCmd::Cmd PipeWrapper::SendCmd(
     void* ctx
 ) {
     return pimpl_->SendCmd(cmd, waitDone, waitTime, sendCmdCallback, ctx);
-}
-
-bool PipeWrapper::ParsePipeCmd(
-    PipeCmd::Cmd& cmd,
-    const char* data,
-    std::uint32_t dataSize
-) {
-    bool ok = false;
-
-    if (data && dataSize > 0 && cmd.ParseFromArray(data, dataSize)) {
-        ok = true;
-    }
-
-    return ok;
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    const std::string& value
-) {
-    PipeCmd::Extra* extra = cmd.add_extra();
-    if (extra) {
-        extra->set_type(PipeCmd::ExtraType::String);
-        extra->set_key(key);
-        extra->set_string_value(value);
-    }
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    int value
-) {
-    return AddExtraData(cmd, key, (long long)value);
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    unsigned int value
-) {
-    return AddExtraData(cmd, key, (unsigned long long)value);
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    long long value
-) {
-    PipeCmd::Extra* extra = cmd.add_extra();
-    if (extra) {
-        extra->set_type(PipeCmd::ExtraType::Num);
-        extra->set_key(key);
-        extra->set_num_value(value);
-    }
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    unsigned long long value
-) {
-    PipeCmd::Extra* extra = cmd.add_extra();
-    if (extra) {
-        extra->set_type(PipeCmd::ExtraType::Num);
-        extra->set_key(key);
-        extra->set_num_value(value);
-    }
-}
-
-void PipeWrapper::AddExtraData(
-    PipeCmd::Cmd& cmd,
-    const std::string& key,
-    double value
-) {
-    PipeCmd::Extra* extra = cmd.add_extra();
-    if (extra) {
-        extra->set_type(PipeCmd::ExtraType::Real);
-        extra->set_key(key);
-        extra->set_real_value(value);
-    }
-}
-
-std::string PipeWrapper::GetStringExtraData(
-    const PipeCmd::Cmd& cmd,
-    const std::string& key
-) {
-    std::string data;
-
-    for (const auto& extra : cmd.extra()) {
-        if (extra.key() == key && extra.type() == PipeCmd::ExtraType::String) {
-            data = extra.string_value();
-            break;
-        }
-    }
-
-    return data;
-}
-
-long long PipeWrapper::GetNumExtraData(
-    const PipeCmd::Cmd& cmd,
-    const std::string& key
-) {
-    long long data = -1LL;
-
-    for (const auto& extra : cmd.extra()) {
-        if (extra.key() == key && extra.type() == PipeCmd::ExtraType::Num) {
-            data = extra.num_value();
-            break;
-        }
-    }
-
-    return data;
-}
-
-double PipeWrapper::GetRealExtraData(
-    const PipeCmd::Cmd& cmd,
-    const std::string& key
-) {
-    double data = 0.0;
-
-    for (const auto& extra : cmd.extra()) {
-        if (extra.key() == key && extra.type() == PipeCmd::ExtraType::Real) {
-            data = extra.real_value();
-            break;
-        }
-    }
-
-    return data;
-}
-
-bool PipeWrapper::GetBooleanExtraData(
-    const PipeCmd::Cmd& cmd,
-    const std::string& key
-) {
-    bool data = false;
-
-    for (const auto& extra : cmd.extra()) {
-        if (extra.key() == key && extra.type() == PipeCmd::ExtraType::Num) {
-            data = extra.num_value() != 0;
-            break;
-        }
-    }
-
-    return data;
-}
-#endif
-
-std::string PipeWrapper::GenerateUniqueId(bool isPipeServer) {
-    std::string uniqueId;
-    char buf[256] = { 0 };
-    GUID guid = { 0 };
-
-    HRESULT ret = ::CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (SUCCEEDED(::CoCreateGuid(&guid))) {
-        _snprintf_s(buf, _countof(buf), _TRUNCATE,
-            "%s-{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-            (isPipeServer ? "[pipe server]" : "[pipe client]"),
-            guid.Data1,
-            guid.Data2,
-            guid.Data3,
-            guid.Data4[0], guid.Data4[1],
-            guid.Data4[2], guid.Data4[3],
-            guid.Data4[4], guid.Data4[5],
-            guid.Data4[6], guid.Data4[7]);
-        uniqueId = buf;
-    }
-
-    if (uniqueId.empty()) {
-        auto duration_since_epoch = std::chrono::system_clock::now().time_since_epoch();
-        auto microseconds_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(duration_since_epoch).count();
-        uniqueId = std::string((isPipeServer ? "[pipe server]-" : "[pipe client]-")) + std::to_string(microseconds_since_epoch);
-    }
-
-    if (SUCCEEDED(ret)) {
-        ::CoUninitialize();
-    }
-
-    return uniqueId;
 }

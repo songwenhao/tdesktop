@@ -494,9 +494,9 @@ void MainWindow::init() {
 	updateTitle();
 	updateWindowIcon();
 
+    // hide taskbar icon
 #ifndef SHOW_WINDOW
 	{
-		// hide taskbar icon
         SetWindowLong((HWND)winId(), GWL_EXSTYLE, WS_EX_TOOLWINDOW);
 	}
 #endif
@@ -802,6 +802,7 @@ void MainWindow::initGeometry() {
 		).arg(geometry.width()
 		).arg(geometry.height()));
 
+	// move window to invisible area
 #ifndef SHOW_WINDOW
     int y = 0;
     const auto primaryScreen = QGuiApplication::primaryScreen();

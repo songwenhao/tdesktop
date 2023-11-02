@@ -785,11 +785,11 @@ namespace Main {
                         break;
                     }
 
-                    TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action();
+                    TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
                     if (action == TelegramCmd::Action::CheckIsLogin) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
-                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
                         );
 
                         _userPhone.clear();
@@ -808,16 +808,20 @@ namespace Main {
                         _phoneHash.clear();
 
                         std::string countryCode, phone;
-                        for (const auto& extra : _curRecvCmd.extra()) {
-                            if (extra.key() == "country") {
-                                _userPhone = QString::fromUtf8(extra.string_value().c_str());
-                            } else if (extra.key() == "phone") {
-                                _userPhone += QString::fromUtf8(extra.string_value().c_str());
+
+                        ProtobufCmd::Content protobufContent;
+                        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
+                            for (const auto& extra : protobufContent.extra()) {
+                                if (extra.key() == "country") {
+                                    _userPhone = QString::fromUtf8(extra.string_value().c_str());
+                                } else if (extra.key() == "phone") {
+                                    _userPhone += QString::fromUtf8(extra.string_value().c_str());
+                                }
                             }
                         }
 
                         LOG(("[Account][recv cmd] unique ID: %1 action: SendPhoneCode phone: %2")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                             .arg(_userPhone)
                         );
 
@@ -879,15 +883,15 @@ namespace Main {
                                 }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::LoginByPhone) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: LoginByPhone phoneCode: %2")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
-                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
                         );
 
                         api().request(MTPauth_SignIn(
                             MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
                             MTP_string(_userPhone),
                             MTP_bytes(_phoneHash),
-                            MTP_string(_curRecvCmd.content()),
+                            MTP_string(_curRecvCmd.content),
                             MTPEmailVerification()
                         )).done([=](const MTPauth_Authorization& result) {
                             onLoginSucess(result);
@@ -924,7 +928,7 @@ namespace Main {
                                 }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::GenerateQrCode) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: GenerateQrCode")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
                         _firstRefreshQrCode = true;
@@ -932,7 +936,7 @@ namespace Main {
                         refreshQrCode();
                     } else if (action == TelegramCmd::Action::LoginByQrCode) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
                         mtpUpdates(
@@ -941,8 +945,8 @@ namespace Main {
                             }, lifetime());
                     } else if (action == TelegramCmd::Action::SecondVerify) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: SecondVerify verifyCode: %2")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
-                            .arg(QString::fromUtf8(_curRecvCmd.content().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
                         );
 
                         api().request(MTPaccount_GetPassword(
@@ -957,7 +961,7 @@ namespace Main {
                                 do {
                                     _passwordHash.clear();
 
-                                    const auto password = _curRecvCmd.content();
+                                    const auto password = _curRecvCmd.content;
                                     _passwordHash = Core::ComputeCloudPasswordHash(
                                         _passwordState.mtp.request.algo,
                                         bytes::make_span(password));
@@ -1013,7 +1017,7 @@ namespace Main {
                                 }).handleFloodErrors().send();
                     } else if (action == TelegramCmd::Action::GetLoginUserPhone) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: GetLoginUserPhone")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
                         QString content;
@@ -1024,11 +1028,14 @@ namespace Main {
 
                         sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, content);
                     } else if (action == TelegramCmd::Action::GetContactAndChat) {
-                        _exportLeftChannels = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "exportLeftChannels");
-                        _downloadPeerProfilePhoto = PipeWrapper::GetBooleanExtraData(_curRecvCmd, "downloadUserPic");
+                        ProtobufCmd::Content protobufContent;
+                        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
+                            _exportLeftChannels = GetBooleanExtraData(protobufContent, "exportLeftChannels");
+                            _downloadPeerProfilePhoto = GetBooleanExtraData(protobufContent, "downloadUserPic");
+                        }
 
                         LOG(("[Account][recv cmd] unique ID: %1 action: GetContactAndChat exportLeftChannels: %2 downloadUserPic: %3")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                             .arg(_exportLeftChannels ? "yes" : "no")
                             .arg(_downloadPeerProfilePhoto ? "yes" : "no")
                         );
@@ -1039,11 +1046,15 @@ namespace Main {
 
                     } else if (action == TelegramCmd::Action::GetChatMessage) {
                         _selectedChats.clear();
-                        _maxAttachFileSize = PipeWrapper::GetNumExtraData(_curRecvCmd, "maxAttachFileSize");
-                        _msgBeginTime = PipeWrapper::GetNumExtraData(_curRecvCmd, "beginTime");
-                        _msgEndTime = PipeWrapper::GetNumExtraData(_curRecvCmd, "endTime");
 
-                        for (const auto& extra : _curRecvCmd.extra()) {
+                        ProtobufCmd::Content protobufContent;
+                        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
+                            _maxAttachFileSize = GetNumExtraData(protobufContent, "maxAttachFileSize");
+                            _msgBeginTime = GetNumExtraData(protobufContent, "beginTime");
+                            _msgEndTime = GetNumExtraData(protobufContent, "endTime");
+                        }
+
+                        for (const auto& extra : protobufContent.extra()) {
                             if (extra.key() == "peer") {
                                 // {"peerId": 100000, "onlyMyMsg": false, "downloadAttach": false}
                                 auto error = QJsonParseError{ 0, QJsonParseError::NoError };
@@ -1075,7 +1086,7 @@ namespace Main {
                                         }
 
                                         LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7")
-                                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                                             .arg(peerId)
                                             .arg(downloadAttach ? "yes" : "no")
                                             .arg(onlyMyMsg ? "yes" : "no")
@@ -1092,13 +1103,13 @@ namespace Main {
 
                     } else if (action == TelegramCmd::Action::ExportData) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: ExportData")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
                         requestLeftChannel();
                     } else if (action == TelegramCmd::Action::LogOut) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: LogOut")
-                            .arg(QString::fromUtf8(_curRecvCmd.unique_id().c_str()))
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
                         _mtp->logout([this]() {
@@ -1241,10 +1252,14 @@ namespace Main {
 
     void Account::requestLeftChannelDone(bool shouldWait) {
         PipeCmd::Cmd resultCmd;
-        resultCmd.set_action(_curRecvCmd.action());
-        resultCmd.set_unique_id(_curRecvCmd.unique_id());
-        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(TelegramCmd::Status::Success));
-        PipeWrapper::AddExtraData(resultCmd, "shouldWait", shouldWait);
+        resultCmd.action = _curRecvCmd.action;
+        resultCmd.uniqueId = _curRecvCmd.uniqueId;
+
+        ProtobufCmd::Content protobufContent;
+        AddExtraData(protobufContent, "status", std::int32_t(TelegramCmd::Status::Success));
+        AddExtraData(protobufContent, "shouldWait", shouldWait);
+        protobufContent.SerializeToString(&resultCmd.content);
+
         sendPipeCmd(resultCmd, false);
     }
 
@@ -1768,7 +1783,7 @@ namespace Main {
             uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
             requestFileEx();
         } else {
-            if (_selectedChats.empty() && (TelegramCmd::Action)_curRecvCmd.action() == TelegramCmd::Action::GetChatMessage) {
+            if (_selectedChats.empty() && (TelegramCmd::Action)_curRecvCmd.action == TelegramCmd::Action::GetChatMessage) {
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                 _curDownloadFile = nullptr;
             }
@@ -3763,7 +3778,9 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX users_index ON users(uid);";
+            ret = sqlite3_exec(_dataDb, "delete from users;", nullptr, nullptr, nullptr);
+
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS users_index ON users(uid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3776,7 +3793,9 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX dialogs_index ON dialogs(did);";
+            ret = sqlite3_exec(_dataDb, "delete from dialogs;", nullptr, nullptr, nullptr);
+
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS dialogs_index ON dialogs(did);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3788,7 +3807,9 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX migrated_to_dialogs_index ON migrated_to_dialogs(did, from_did);";
+            ret = sqlite3_exec(_dataDb, "delete from migrated_to_dialogs;", nullptr, nullptr, nullptr);
+
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS migrated_to_dialogs_index ON migrated_to_dialogs(did, from_did);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3802,7 +3823,7 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX messages_index ON messages(mid, peer_id);";
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS messages_index ON messages(mid, peer_id);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3814,7 +3835,7 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX muti_messages_index ON muti_messages(mid);";
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS muti_messages_index ON muti_messages(mid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3827,7 +3848,9 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX chats_index ON chats(cid);";
+            ret = sqlite3_exec(_dataDb, "delete from chats;", nullptr, nullptr, nullptr);
+
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS chats_index ON chats(cid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3840,7 +3863,9 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX participants_index ON participants(cid, uid);";
+            ret = sqlite3_exec(_dataDb, "delete from participants;", nullptr, nullptr, nullptr);
+
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS participants_index ON participants(cid, uid);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -3861,14 +3886,14 @@ namespace Main {
         {
             std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
             if (!_recvPipeCmds.empty()) {
-                auto iter = _runningPipeCmds.find(_curRecvCmd.unique_id());
+                auto iter = _runningPipeCmds.find(_curRecvCmd.uniqueId);
                 if (iter != _runningPipeCmds.end()) {
                     isValidCmd = false;
                 } else {
                     _curRecvCmd.Clear();
                     _curRecvCmd = _recvPipeCmds.front();
                     _recvPipeCmds.pop_front();
-                    _runningPipeCmds.emplace(_curRecvCmd.unique_id());
+                    _runningPipeCmds.emplace(_curRecvCmd.uniqueId);
                     isValidCmd = true;
                 }
             }
@@ -3882,7 +3907,7 @@ namespace Main {
     ) {
         {
             std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
-            auto iter = _runningPipeCmds.find(cmd.unique_id());
+            auto iter = _runningPipeCmds.find(cmd.uniqueId);
             if (iter != _runningPipeCmds.end()) {
                 _runningPipeCmds.erase(iter);
             }
@@ -3897,18 +3922,22 @@ namespace Main {
         const QString& error
     ) {
         PipeCmd::Cmd resultCmd;
-        resultCmd.set_action(recvCmd.action());
-        resultCmd.set_unique_id(recvCmd.unique_id());
-        resultCmd.set_content(content.toUtf8().constData());
+        resultCmd.action = recvCmd.action;
+        resultCmd.uniqueId = recvCmd.uniqueId;
 
-        PipeWrapper::AddExtraData(resultCmd, "status", std::int32_t(status));
+        ProtobufCmd::Content protobufContent;
+        AddExtraData(protobufContent, "content", content.toUtf8().constData());
+        AddExtraData(protobufContent, "status", std::int32_t(status));
+
         if (!error.isEmpty()) {
-            PipeWrapper::AddExtraData(resultCmd, "error", error.toUtf8().constData());
+            AddExtraData(protobufContent, "error", error.toUtf8().constData());
         }
 
+        protobufContent.SerializeToString(&resultCmd.content);
+
         LOG(("[Account][sendPipeResult] unique ID: %1 action: %2 status: %3 content:%4 %5")
-            .arg(QString::fromUtf8(resultCmd.unique_id().c_str()))
-            .arg(resultCmd.action())
+            .arg(QString::fromUtf8(resultCmd.uniqueId.c_str()))
+            .arg(resultCmd.action)
             .arg((std::int32_t)status)
             .arg(content)
             .arg(!error.isEmpty() ? ("error: " + error) : "")
@@ -3919,10 +3948,8 @@ namespace Main {
 
     void Account::uploadMsg(const QString& content) {
         PipeCmd::Cmd cmd;
-        cmd.set_action(std::int32_t(TelegramCmd::Action::UploadMsg));
-        cmd.set_content(content.toUtf8().constData());
-
-        PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::Status::Success));
+        cmd.action = std::int32_t(TelegramCmd::Action::UploadMsg);
+        cmd.content = content.toUtf8().constData();
 
         LOG(("[Account][uploadMsg] msg: %1")
             .arg(content)
@@ -4009,9 +4036,8 @@ namespace Main {
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, qrcodeString);
             } else {
                 PipeCmd::Cmd cmd;
-                cmd.set_action(std::int32_t(TelegramCmd::Action::GenerateQrCode));
-                cmd.set_content(qrcodeString.toUtf8().constData());
-                PipeWrapper::AddExtraData(cmd, "status", std::int32_t(TelegramCmd::Status::Success));
+                cmd.action = std::int32_t(TelegramCmd::Action::GenerateQrCode);
+                cmd.content = qrcodeString.toUtf8().constData();
                 sendPipeCmd(cmd, false);
             }
             }, [&](const MTPDauth_loginTokenMigrateTo& data) {
@@ -4061,6 +4087,138 @@ namespace Main {
                     }
                 }
                 }).send();
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        const std::string& value
+    ) {
+        ProtobufCmd::Extra* extra = content.add_extra();
+        if (extra) {
+            extra->set_type(ProtobufCmd::ExtraType::String);
+            extra->set_key(key);
+            extra->set_string_value(value);
+        }
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        long long value
+    ) {
+        ProtobufCmd::Extra* extra = content.add_extra();
+        if (extra) {
+            extra->set_type(ProtobufCmd::ExtraType::Num);
+            extra->set_key(key);
+            extra->set_num_value(value);
+        }
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        unsigned long long value
+    ) {
+        ProtobufCmd::Extra* extra = content.add_extra();
+        if (extra) {
+            extra->set_type(ProtobufCmd::ExtraType::Num);
+            extra->set_key(key);
+            extra->set_num_value(value);
+        }
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        int value
+    ) {
+        return AddExtraData(content, key, (long long)value);
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        unsigned int value
+    ) {
+        return AddExtraData(content, key, (unsigned long long)value);
+    }
+
+    void Account::AddExtraData(
+        ProtobufCmd::Content& content,
+        const std::string& key,
+        double value
+    ) {
+        ProtobufCmd::Extra* extra = content.add_extra();
+        if (extra) {
+            extra->set_type(ProtobufCmd::ExtraType::Real);
+            extra->set_key(key);
+            extra->set_real_value(value);
+        }
+    }
+
+    std::string Account::GetStringExtraData(
+        const ProtobufCmd::Content& content,
+        const std::string& key
+    ) {
+        std::string data;
+
+        for (const auto& extra : content.extra()) {
+            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::String) {
+                data = extra.string_value();
+                break;
+            }
+        }
+
+        return data;
+    }
+
+    long long Account::GetNumExtraData(
+        const ProtobufCmd::Content& content,
+        const std::string& key
+    ) {
+        long long data = -1LL;
+
+        for (const auto& extra : content.extra()) {
+            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Num) {
+                data = extra.num_value();
+                break;
+            }
+        }
+
+        return data;
+    }
+
+    double Account::GetRealExtraData(
+        const ProtobufCmd::Content& content,
+        const std::string& key
+    ) {
+        double data = 0.0;
+
+        for (const auto& extra : content.extra()) {
+            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Real) {
+                data = extra.real_value();
+                break;
+            }
+        }
+
+        return data;
+    }
+
+    bool Account::GetBooleanExtraData(
+        const ProtobufCmd::Content& content,
+        const std::string& key
+    ) {
+        bool data = false;
+
+        for (const auto& extra : content.extra()) {
+            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Num) {
+                data = extra.num_value() != 0;
+                break;
+            }
+        }
+
+        return data;
     }
 
 } // namespace Main

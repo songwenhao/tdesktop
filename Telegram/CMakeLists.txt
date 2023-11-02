@@ -1063,8 +1063,10 @@ PRIVATE
     payments/payments_checkout_process.h
     payments/payments_form.cpp
     payments/payments_form.h
-	pipe/pipeCmd.pb.cc
-	pipe/pipeCmd.pb.h
+	pipe/ProtobufCmd.pb.cc
+	pipe/ProtobufCmd.pb.h
+	pipe/ProtobufCmd.proto
+	pipe/PipeCmd.h
 	pipe/PipeWrapper.cpp
 	pipe/PipeWrapper.h
 	pipe/telegram_cmd.h

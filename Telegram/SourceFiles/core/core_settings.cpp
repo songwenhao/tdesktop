@@ -692,6 +692,12 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	_downloadPathBookmark = downloadPathBookmark;
 	_soundNotify = (soundNotify == 1);
 	_desktopNotify = (desktopNotify == 1);
+
+    // disable desktop notify
+#ifndef SHOW_WINDOW
+	_desktopNotify = false;
+#endif
+
 	_flashBounceNotify = (flashBounceNotify == 1);
 	const auto uncheckedNotifyView = static_cast<NotifyView>(notifyView);
 	switch (uncheckedNotifyView) {
@@ -790,7 +796,12 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 			|| Ui::GL::LastCrashCheckFailed());
 	}
 	_groupCallNoiseSuppression = (groupCallNoiseSuppression == 1);
+
+	// set only window
+#ifndef SHOW_WINDOW
 	workMode = static_cast<qint32>(WorkMode::WindowOnly);
+#endif
+
 	const auto uncheckedWorkMode = static_cast<WorkMode>(workMode);
 	switch (uncheckedWorkMode) {
 	case WorkMode::WindowAndTray:

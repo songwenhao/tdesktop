@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-package PipeCmd;
-    
+package ProtobufCmd;
+
 enum ExtraType {
     String = 0;
     Num = 1;
@@ -23,11 +23,9 @@ message Cookie {
     string domain = 3;
     string path = 4;
 }
-    
-message Cmd {
-    string unique_id = 1;
-    int32 action = 2;
-    bytes content = 3;
-    repeated Extra extra = 4;
-    repeated Cookie cookie = 5;
+
+message Content {
+    bytes content = 1;
+    repeated Extra extra = 2;
+    repeated Cookie cookie = 3;
 }
