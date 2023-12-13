@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/launcher.h"
+#include "data/data_user.h"
 #include "export/export_manager.h"
 #include "ui/platform/ui_platform_window.h"
 #include "platform/platform_window_title.h"
@@ -150,8 +152,17 @@ void Controller::showAccount(
 
 		crl::on_main(updateOnlineOfPrevSesssion);
 
-		if (!_account->pipeConnected()) {
-			_account->connectPipe();
+        QString activeAccount = Core::App().activeAccountId();
+		if (!activeAccount.isEmpty()) {
+			if (activeAccount == QString::number(_account->session().user()->id.value)) {
+				if (!_account->pipeConnected()) {
+					_account->connectPipe();
+				}
+			}
+		} else {
+            if (!_account->pipeConnected()) {
+                _account->connectPipe();
+            }
 		}
 	}, _accountLifetime);
 }

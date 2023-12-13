@@ -3734,14 +3734,14 @@ namespace Main {
                 break;
             }
 
-            _dataPath = appArgs[1];
+            _dataPath = appArgs[2];
             if (!_dataPath.empty() && _dataPath.back() != '\\') {
                 _dataPath += L"\\";
             }
 
             _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = utf16ToUtf8(appArgs[2]);
+            _utf8RootPath = utf16ToUtf8(appArgs[3]);
             if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
                 _utf8RootPath.pop_back();
             }

@@ -324,6 +324,7 @@ public:
 
 	static void RegisterUrlScheme();
 
+	QString activeAccountId() const;
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
 
@@ -447,6 +448,7 @@ private:
 
 	crl::time _lastNonIdleTime = 0;
 
+	QString _activeAccountId;
 };
 
 [[nodiscard]] bool IsAppLaunched();

@@ -10,9 +10,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/details/storage_file_utilities.h"
 #include "storage/serialize_common.h"
 #include "mtproto/mtproto_config.h"
+#include "data/data_peer_id.h"
+#include "data/data_user.h"
 #include "main/main_domain.h"
 #include "main/main_account.h"
+#include "main/main_session.h"
 #include "base/random.h"
+#include "core/application.h"
+#include "core/launcher.h"
+#include "core/core_settings.h"
+#include <QFile>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonObject>
+#include <QtCore/QJsonValue>
 
 namespace Storage {
 namespace {
@@ -40,6 +51,13 @@ Domain::~Domain() = default;
 
 StartResult Domain::start(const QByteArray &passcode) {
 	const auto modern = startModern(passcode);
+
+    const auto& appArgs = Core::Launcher::getApplicationArguments();
+    if (appArgs.size() == 2) {
+        Core::Quit();
+		return StartResult::Success;
+    }
+
 	if (modern == StartModernResult::Success) {
 		if (_oldVersion < AppVersion) {
 			writeAccounts();
@@ -169,7 +187,12 @@ Domain::StartModernResult Domain::startModern(
 
 	auto tried = base::flat_set<int>();
 	auto sessions = base::flat_set<uint64>();
-	auto active = 0;
+    auto active = 0;
+
+	QJsonArray jArray;
+
+	QString activeAccount = Core::App().activeAccountId();
+
 	for (auto i = 0; i != count; ++i) {
 		auto index = qint32();
 		info.stream >> index;
@@ -189,6 +212,21 @@ Domain::StartModernResult Domain::startModern(
 					active = index;
 				}
 				account->start(std::move(config));
+
+				QJsonObject jObj;
+				QString userId = QString::number(account->session().user()->id.value);
+				jObj["userId"] = userId;
+				if (activeAccount == userId) {
+					active = index;
+				}
+
+                jObj["phone"] = account->session().user()->phone();
+                jObj["firstName"] = account->session().user()->firstName;
+                jObj["lastName"] = account->session().user()->lastName;
+                jObj["userName"] = account->session().user()->userName();
+
+				jArray.append(jObj);
+
 				_owner->accountAddedInStorage({
 					.index = index,
 					.account = std::move(account)
@@ -202,9 +240,22 @@ Domain::StartModernResult Domain::startModern(
 		return StartModernResult::Failed;
 	}
 
-	if (!info.stream.atEnd()) {
-		info.stream >> active;
+	// save existing account info
+	QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
+	QFile::remove(saveAccountsFilePath);
+	QFile saveAccountsFile(saveAccountsFilePath);
+	saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
+	if (saveAccountsFile.isOpen()) {
+		QJsonDocument jDoc;
+		jDoc.setArray(jArray);
+		saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
+		saveAccountsFile.flush();
+		saveAccountsFile.close();
 	}
+
+	/*if (!info.stream.atEnd()) {
+		info.stream >> active;
+	}*/
 	_owner->activateFromStorage(active);
 
 	Ensures(!sessions.empty());

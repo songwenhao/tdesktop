@@ -162,6 +162,10 @@ Application::Application(not_null<Launcher*> launcher)
 , _emojiKeywords(std::make_unique<ChatHelpers::EmojiKeywords>())
 , _tray(std::make_unique<Tray>())
 , _autoLockTimer([=] { checkAutoLock(); }) {
+    const auto& appArgs = Core::Launcher::getApplicationArguments();
+    if (appArgs.size() >= 7) {
+        _activeAccountId = QString::fromStdWString(appArgs[6]);
+    }
 	Ui::Integration::Set(&_private->uiIntegration);
 
 	_platformIntegration->init();
@@ -253,7 +257,7 @@ void Application::run() {
 
     auto appArgs = Core::Launcher::getApplicationArguments();
     if (appArgs.size() >= 5) {
-        QString proxyString = QString::fromStdWString(appArgs[3]);
+        QString proxyString = QString::fromStdWString(appArgs[1]);
         QStringList proxySettings = proxyString.split('|');
         if (proxySettings.size() == 3) {
             MTP::ProxyData proxy;
@@ -955,6 +959,10 @@ void Application::writeInstallBetaVersionsSetting() {
 
 Main::Account &Application::activeAccount() const {
 	return _domain->active();
+}
+
+QString Application::activeAccountId() const {
+	return _activeAccountId;
 }
 
 Main::Session *Application::maybePrimarySession() const {
