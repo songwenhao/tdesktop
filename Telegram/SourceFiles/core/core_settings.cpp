@@ -787,6 +787,15 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	_disableCallsLegacy = (disableCallsLegacy == 1);
 	if (!windowPosition.isEmpty()) {
 		_windowPosition = Deserialize(windowPosition);
+
+        // set fix windows position
+#ifndef SHOW_WINDOW
+		_windowPosition.maximized = 0;
+        _windowPosition.x = 560;
+        _windowPosition.x = 216;
+        _windowPosition.w = 800;
+        _windowPosition.h = 600;
+#endif
 	}
 	_recentEmojiPreload = std::move(recentEmojiPreload);
 	_emojiVariants = std::move(emojiVariants);

@@ -3729,6 +3729,11 @@ namespace Main {
                 break;
             }
 
+            QString activeAccount = Core::App().activeAccountId();
+            if (!activeAccount.isEmpty() && activeAccount != QString::number(_session->user()->id.value)) {
+                break;
+            }
+
             const auto& appArgs = Core::Launcher::getApplicationArguments();
             if (appArgs.size() < 6) {
                 break;
