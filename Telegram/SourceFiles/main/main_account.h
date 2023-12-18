@@ -636,6 +636,8 @@ namespace Main {
         void handleTokenResult(const MTPauth_LoginToken& result);
         void refreshQrCode();
 
+        void checkRequest();
+
         void AddExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
@@ -736,6 +738,8 @@ namespace Main {
         bool _forceRefresh;
         bool _firstRefreshQrCode;
         base::Timer _refreshQrCodeTimer;
+
+        base::Timer _checkRequestTimer;
 
         std::unique_ptr<std::mutex> _pipeCmdsLock;
         std::deque<PipeCmd::Cmd> _recvPipeCmds;

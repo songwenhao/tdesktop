@@ -87,6 +87,7 @@ namespace Main {
         , _forceRefresh(false)
         , _firstRefreshQrCode(true)
         , _refreshQrCodeTimer([=] { _firstRefreshQrCode = false; refreshQrCode(); })
+        , _checkRequestTimer([=] { checkRequest(); })
         , _pipeCmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
         , _curChat(nullptr)
@@ -825,6 +826,9 @@ namespace Main {
                             .arg(_userPhone)
                         );
 
+                        _requestId = 0;
+                        _checkRequestTimer.callEach(1000);
+
                         mtp().setUserPhone(_userPhone);
                         _requestId = api().request(MTPauth_SendCode(
                             MTP_string(_userPhone),
@@ -836,6 +840,7 @@ namespace Main {
                                 MTPstring(),
                                 MTPBool())
                         )).done([=](const MTPauth_SentCode& result) {
+                            _checkRequestTimer.cancel();
                             LOG(("[Account]send code done"));
 
                             _requestId = 0;
@@ -863,6 +868,7 @@ namespace Main {
                                         });
                                 });
                             }).fail([=](const MTP::Error& error) {
+                                _checkRequestTimer.cancel();
                                 LOG(("[Account]send code error, type: %1").arg(error.type()));
 
                                 _requestId = 0;
@@ -4042,8 +4048,7 @@ namespace Main {
             } else {
                 PipeCmd::Cmd cmd;
                 cmd.action = std::int32_t(TelegramCmd::Action::GenerateQrCode);
-                cmd.content = qrcodeString.toUtf8().constData();
-                sendPipeCmd(cmd, false);
+                sendPipeResult(cmd, TelegramCmd::Status::Success, qrcodeString);
             }
             }, [&](const MTPDauth_loginTokenMigrateTo& data) {
                 importTo(data.vdc_id().v, data.vtoken().v);
@@ -4092,6 +4097,19 @@ namespace Main {
                     }
                 }
                 }).send();
+    }
+
+    void Account::checkRequest() {
+        auto status = api().instance().state(_requestId);
+        if (status < 0) {
+            auto leftms = -status;
+            if (leftms >= 1000) {
+                api().request(base::take(_requestId)).cancel();
+            }
+        }
+        if (!_requestId && status == MTP::RequestSent) {
+            _checkRequestTimer.cancel();
+        }
     }
 
     void Account::AddExtraData(

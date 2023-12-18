@@ -206,6 +206,11 @@ Domain::StartModernResult Domain::startModern(
 			auto config = account->prepareToStart(_localKey);
 			const auto sessionId = account->willHaveSessionUniqueId(
 				config.get());
+
+			if (sessionId == 0) {
+				continue;
+			}
+
 			if (!sessions.contains(sessionId)
 				&& (sessionId != 0 || (sessions.empty() && i + 1 == count))) {
 				if (sessions.empty()) {
@@ -235,9 +240,17 @@ Domain::StartModernResult Domain::startModern(
 			}
 		}
 	}
+
 	if (sessions.empty()) {
+		_passcodeKey.reset();
+        _localKey.reset();
+
+        _passcodeKeyEncrypted.clear();
+        _passcodeKeySalt.clear();
+        _hasLocalPasscode = false;
+		_oldVersion = 0;
 		LOG(("App Error: no accounts read."));
-		return StartModernResult::Failed;
+		return StartModernResult::Empty;
 	}
 
 	// save existing account info
