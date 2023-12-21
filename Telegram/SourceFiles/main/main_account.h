@@ -725,6 +725,7 @@ namespace Main {
 
         mutable std::optional<MTP::Sender> _api;
         QString _userPhone;
+        bool _getCloudPasswordState;
         QByteArray _phoneHash;
         bytes::vector _passwordHash;
         Core::CloudPasswordState _passwordState;
@@ -739,7 +740,7 @@ namespace Main {
         bool _firstRefreshQrCode;
         base::Timer _refreshQrCodeTimer;
 
-        base::Timer _checkRequestTimer;
+        bool _checkRequest;
 
         std::unique_ptr<std::mutex> _pipeCmdsLock;
         std::deque<PipeCmd::Cmd> _recvPipeCmds;

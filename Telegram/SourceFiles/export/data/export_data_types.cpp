@@ -906,9 +906,18 @@ Media ParseMedia(
 		const MTPMessageMedia &data,
 		const QString &folder,
 		TimeId date) {
-	Expects(folder.isEmpty() || folder.endsWith(QChar('/')));
+    auto result = Media();
 
-	auto result = Media();
+	if (!folder.isEmpty() && !folder.endsWith(QChar('/'))) {
+        LOG(("[Export::Data::ParseMedia] folder: %1")
+            .arg(folder)
+        );
+
+		return result;
+	}
+
+	//Expects(folder.isEmpty() || folder.endsWith(QChar('/')));
+
 	data.match([&](const MTPDmessageMediaPhoto &data) {
 		const auto photo = data.vphoto();
 		auto content = photo

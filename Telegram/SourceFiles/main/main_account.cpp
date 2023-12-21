@@ -78,6 +78,7 @@ namespace Main {
         , _local(std::make_unique<Storage::Account>(
             this,
             ComposeDataString(dataName, index)))
+        , _getCloudPasswordState(false)
         , _passwordState(Core::CloudPasswordState())
         , _stop(false)
         , _dataDb(nullptr)
@@ -87,7 +88,7 @@ namespace Main {
         , _forceRefresh(false)
         , _firstRefreshQrCode(true)
         , _refreshQrCodeTimer([=] { _firstRefreshQrCode = false; refreshQrCode(); })
-        , _checkRequestTimer([=] { checkRequest(); })
+        , _checkRequest(false)
         , _pipeCmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
         , _curChat(nullptr)
@@ -722,6 +723,10 @@ namespace Main {
                     if (_stop) {
                         Core::Quit();
                     } else {
+                        if (_checkRequest) {
+                            checkRequest();
+                        }
+
                         if (_downloadAttach) {
                             if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
                                 DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
@@ -827,7 +832,7 @@ namespace Main {
                         );
 
                         _requestId = 0;
-                        _checkRequestTimer.callEach(1000);
+                        _checkRequest = true;
 
                         mtp().setUserPhone(_userPhone);
                         _requestId = api().request(MTPauth_SendCode(
@@ -840,7 +845,7 @@ namespace Main {
                                 MTPstring(),
                                 MTPBool())
                         )).done([=](const MTPauth_SentCode& result) {
-                            _checkRequestTimer.cancel();
+                            _checkRequest = false;
                             LOG(("[Account]send code done"));
 
                             _requestId = 0;
@@ -868,7 +873,7 @@ namespace Main {
                                         });
                                 });
                             }).fail([=](const MTP::Error& error) {
-                                _checkRequestTimer.cancel();
+                                _checkRequest = false;
                                 LOG(("[Account]send code error, type: %1").arg(error.type()));
 
                                 _requestId = 0;
@@ -937,90 +942,151 @@ namespace Main {
                             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                         );
 
-                        _firstRefreshQrCode = true;
-                        _refreshQrCodeTimer.cancel();
-                        refreshQrCode();
-                    } else if (action == TelegramCmd::Action::LoginByQrCode) {
-                        LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
-                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                        );
-
                         mtpUpdates(
                         ) | rpl::start_with_next([=](const MTPUpdates& updates) {
                             checkForTokenUpdate(updates);
                             }, lifetime());
+
+                        _firstRefreshQrCode = true;
+                        _refreshQrCodeTimer.cancel();
+
+                        mtp().mainDcIdValue(
+                        ) | rpl::start_with_next([=] {
+                            api().request(base::take(_requestId)).cancel();
+                            refreshQrCode();
+                            }, lifetime());
+                    } else if (action == TelegramCmd::Action::LoginByQrCode) {
+                        LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                        );
                     } else if (action == TelegramCmd::Action::SecondVerify) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: SecondVerify verifyCode: %2")
                             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                             .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
                         );
 
-                        api().request(MTPaccount_GetPassword(
-                        )).done([=](const MTPaccount_Password& result) {
-                            const auto& d = result.c_account_password();
-                            _passwordState = Core::ParseCloudPasswordState(d);
-                            if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
-                            } else if (!_passwordState.hasPassword) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-                            } else {
-                                do {
-                                    _passwordHash.clear();
+                        if (!_getCloudPasswordState) {
+                            api().request(MTPaccount_GetPassword(
+                            )).done([=](const MTPaccount_Password& result) {
+                                const auto& d = result.c_account_password();
+                                _passwordState = Core::ParseCloudPasswordState(d);
+                                if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
+                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
+                                } else if (!_passwordState.hasPassword) {
+                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                } else {
+                                    do {
+                                        _passwordHash.clear();
 
-                                    const auto password = _curRecvCmd.content;
-                                    _passwordHash = Core::ComputeCloudPasswordHash(
-                                        _passwordState.mtp.request.algo,
-                                        bytes::make_span(password));
+                                        const auto password = _curRecvCmd.content;
+                                        _passwordHash = Core::ComputeCloudPasswordHash(
+                                            _passwordState.mtp.request.algo,
+                                            bytes::make_span(password));
 
-                                    const auto check = Core::ComputeCloudPasswordCheck(
-                                        _passwordState.mtp.request,
-                                        _passwordHash);
-                                    if (!check) {
-                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-                                        break;
-                                    }
+                                        const auto check = Core::ComputeCloudPasswordCheck(
+                                            _passwordState.mtp.request,
+                                            _passwordHash);
+                                        if (!check) {
+                                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                            break;
+                                        }
 
-                                    _passwordState.mtp.request.id = 0;
-                                    api().request(
-                                        MTPauth_CheckPassword(check.result)
-                                    ).done([=](const MTPauth_Authorization& result) {
-                                        onLoginSucess(result);
-                                        }).fail([=](const MTP::Error& error) {
-                                            do {
-                                                if (MTP::IsFloodError(error)) {
-                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-                                                    break;
-                                                }
-
-                                                TelegramCmd::Status status = TelegramCmd::Status::UnknownError;
-                                                const auto& type = error.type();
-                                                if (type == u"PASSWORD_HASH_INVALID"_q
-                                                    || type == u"SRP_PASSWORD_CHANGED"_q) {
-                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
-                                                    break;
-                                                } else if (type == u"PASSWORD_EMPTY"_q
-                                                    || type == u"AUTH_KEY_UNREGISTERED"_q) {
-                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-                                                    break;
-                                                } else if (type == u"SRP_ID_INVALID"_q) {
-                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-                                                    break;
-                                                } else {
-                                                    if (Logs::DebugEnabled()) { // internal server error
-                                                        //showError(rpl::single(type + ": " + error.description()));
-                                                    } else {
-                                                        //showError(rpl::single(Lang::Hard::ServerError()));
+                                        _passwordState.mtp.request.id = 0;
+                                        api().request(
+                                            MTPauth_CheckPassword(check.result)
+                                        ).done([=](const MTPauth_Authorization& result) {
+                                            onLoginSucess(result);
+                                            }).fail([=](const MTP::Error& error) {
+                                                do {
+                                                    if (MTP::IsFloodError(error)) {
+                                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                        break;
                                                     }
 
-                                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                    TelegramCmd::Status status = TelegramCmd::Status::UnknownError;
+                                                    const auto& type = error.type();
+                                                    if (type == u"PASSWORD_HASH_INVALID"_q
+                                                        || type == u"SRP_PASSWORD_CHANGED"_q) {
+                                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                                                        break;
+                                                    } else if (type == u"PASSWORD_EMPTY"_q
+                                                        || type == u"AUTH_KEY_UNREGISTERED"_q) {
+                                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                        break;
+                                                    } else if (type == u"SRP_ID_INVALID"_q) {
+                                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                        break;
+                                                    } else {
+                                                        if (Logs::DebugEnabled()) { // internal server error
+                                                            //showError(rpl::single(type + ": " + error.description()));
+                                                        } else {
+                                                            //showError(rpl::single(Lang::Hard::ServerError()));
+                                                        }
+
+                                                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                    }
+                                                } while (false);
+                                                }).handleFloodErrors().send();
+                                    } while (false);
+                                }
+                                }).fail([=](const MTP::Error& error) {
+                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                                    }).handleFloodErrors().send();
+                        } else {
+                            do {
+                                _passwordHash.clear();
+
+                                const auto password = _curRecvCmd.content;
+                                _passwordHash = Core::ComputeCloudPasswordHash(
+                                    _passwordState.mtp.request.algo,
+                                    bytes::make_span(password));
+
+                                const auto check = Core::ComputeCloudPasswordCheck(
+                                    _passwordState.mtp.request,
+                                    _passwordHash);
+                                if (!check) {
+                                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                    break;
+                                }
+
+                                _passwordState.mtp.request.id = 0;
+                                api().request(
+                                    MTPauth_CheckPassword(check.result)
+                                ).done([=](const MTPauth_Authorization& result) {
+                                    onLoginSucess(result);
+                                    }).fail([=](const MTP::Error& error) {
+                                        do {
+                                            if (MTP::IsFloodError(error)) {
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                break;
+                                            }
+
+                                            TelegramCmd::Status status = TelegramCmd::Status::UnknownError;
+                                            const auto& type = error.type();
+                                            if (type == u"PASSWORD_HASH_INVALID"_q
+                                                || type == u"SRP_PASSWORD_CHANGED"_q) {
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                                                break;
+                                            } else if (type == u"PASSWORD_EMPTY"_q
+                                                || type == u"AUTH_KEY_UNREGISTERED"_q) {
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                break;
+                                            } else if (type == u"SRP_ID_INVALID"_q) {
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                                break;
+                                            } else {
+                                                if (Logs::DebugEnabled()) { // internal server error
+                                                    //showError(rpl::single(type + ": " + error.description()));
+                                                } else {
+                                                    //showError(rpl::single(Lang::Hard::ServerError()));
                                                 }
-                                            } while (false);
-                                            }).handleFloodErrors().send();
-                                } while (false);
-                            }
-                            }).fail([=](const MTP::Error& error) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
-                                }).handleFloodErrors().send();
+
+                                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                            }
+                                        } while (false);
+                                        }).handleFloodErrors().send();
+                            } while (false);
+                        }
                     } else if (action == TelegramCmd::Action::GetLoginUserPhone) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: GetLoginUserPhone")
                             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
@@ -1818,6 +1884,10 @@ namespace Main {
                 if (error.code() == 400
                     && error.type().startsWith(u"FILE_REFERENCE_"_q)) {
                     // 文件链接过期，需要刷新
+                    LOG(("[Account][requestFileEx] %1")
+                        .arg(error.type())
+                    );
+
                     _requestId = 0;
                     filePartRefreshReference(_offset);
                 } else {
@@ -2017,7 +2087,7 @@ namespace Main {
                     data.vmessages(),
                     data.vusers(),
                     data.vchats(),
-                    _curDownloadFile->saveFilePath);
+                    _curPeerAttachPath);
 
                 Export::Data::FileLocation location;
                 location.dcId = _curDownloadFile->dcId;
@@ -3935,6 +4005,7 @@ namespace Main {
         PipeCmd::Cmd resultCmd;
         resultCmd.action = recvCmd.action;
         resultCmd.uniqueId = recvCmd.uniqueId;
+        resultCmd.content = content.toUtf8().constData();
 
         ProtobufCmd::Content protobufContent;
         AddExtraData(protobufContent, "content", content.toUtf8().constData());
@@ -4083,6 +4154,7 @@ namespace Main {
                         } else if (!_passwordState.hasPassword) {
                             sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                         } else {
+                            _getCloudPasswordState = true;
                             sendPipeResult(_curRecvCmd, TelegramCmd::Status::NeedVerify);
                         }
                         }).fail([=](const MTP::Error& error) {
@@ -4108,7 +4180,7 @@ namespace Main {
             }
         }
         if (!_requestId && status == MTP::RequestSent) {
-            _checkRequestTimer.cancel();
+            _checkRequest = false;
         }
     }
 
