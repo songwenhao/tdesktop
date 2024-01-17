@@ -1607,9 +1607,7 @@ target_include_directories(Telegram PRIVATE ${src_loc} ${libs_loc}/protobuf/buil
 if (WIN32)
 	set(build_loc ${libs_loc}/protobuf/build/$<IF:$<CONFIG:Debug>,Debug,Release>)
     target_link_directories(Telegram PRIVATE ${build_loc})
-	
 	message(STATUS "build_loc=" ${build_loc})
-	
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/pipeCmd.pb.cc PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/pipe/PipeWrapper.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 	set_source_files_properties(${PROJECT_SOURCE_DIR}/Telegram/SourceFiles/sqlite/sqlite3.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

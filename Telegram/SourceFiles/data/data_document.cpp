@@ -1034,20 +1034,20 @@ void DocumentData::handleLoaderUpdates() {
 		status = FileDownloadFailed;
 		_owner->documentLoadFail(this, error.started);
 
-		HANDLE signaledEvent = CreateEventW(nullptr, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(id)).c_str());
+		/*HANDLE signaledEvent = CreateEventW(nullptr, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(id)).c_str());
 		if (signaledEvent) {
 			SetEvent(signaledEvent);
 			CloseHandle(signaledEvent);
-		}
+		}*/
 	}, [=] {
 		finishLoad();
 		_owner->documentLoadDone(this);
 
-        HANDLE signaledEvent = CreateEventW(nullptr, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(id)).c_str());
+        /*HANDLE signaledEvent = CreateEventW(nullptr, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(id)).c_str());
         if (signaledEvent) {
             SetEvent(signaledEvent);
             CloseHandle(signaledEvent);
-        }
+        }*/
 	}, _loader->lifetime());
 
 }

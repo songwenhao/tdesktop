@@ -17,9 +17,6 @@ class MainWidget;
 namespace Intro {
 class Widget;
 enum class EnterPoint : uchar;
-namespace details {
-	class Step;
-}
 } // namespace Intro
 
 namespace Window {
@@ -112,8 +109,6 @@ public:
 	void hideMediaPreview();
 
 	void updateControlsGeometry() override;
-
-	std::vector<Intro::details::Step*>* getIntroStepHistory();
 
 protected:
 	bool eventFilter(QObject *o, QEvent *e) override;

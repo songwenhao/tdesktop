@@ -97,7 +97,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_shared_media.h"
 #include "storage/storage_media_prepare.h"
 #include "storage/storage_account.h"
-#include "pipe/telegram_cmd.h"
 
 namespace {
 
@@ -786,10 +785,9 @@ void ApiWrap::requestContacts() {
 			}
 		}
 		_session->data().contactsLoaded() = true;
-
 	}).fail([=] {
 		_contactsRequestId = 0;
-        }).send();
+	}).send();
 }
 
 void ApiWrap::requestDialogs(Data::Folder *folder) {

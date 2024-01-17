@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -528,8 +528,10 @@ namespace Main {
         void requestChatMessage(bool first = false);
         void requestChatMessageEx();
 
-        void requestFile(bool first = false);
-        void requestFileEx();
+        void prepareRequestAttachFile();
+        void requestAttachFileByChatMessage();
+        void requestAttachFile();
+        void requestAttachFileEx();
 
         void FilePartDone(const MTPupload_File& result);
         void filePartRefreshReference(int64 offset);
@@ -768,8 +770,12 @@ namespace Main {
 
         struct SelectedChat {
             SelectedChat() {
-                peerId = 0;
+                peerId = 0ULL;
+                msgBeginTime = 0;
+                msgEndTime = 0;
                 peerData = nullptr;
+                inputPeer = MTP_inputPeerEmpty();
+                filter = MTP_inputMessagesFilterEmpty();
                 left = false;
                 onlyMyMsg = false;
                 downloadAttach = false;
@@ -777,27 +783,39 @@ namespace Main {
 
             SelectedChat(
                 std::uint64_t peerId,
+                std::int32_t msgBeginTime,
+                std::int32_t msgEndTime,
                 PeerData* peerData,
                 bool left,
                 bool onlyMyMsg,
-                bool downloadAttach
+                bool downloadAttach,
+                const std::list<MTPmessagesFilter>& filters
             ) {
                 this->peerId = peerId;
+                this->msgBeginTime = msgBeginTime;
+                this->msgEndTime = msgEndTime;
                 this->peerData = peerData;
                 this->left = left;
                 this->onlyMyMsg = onlyMyMsg;
                 this->downloadAttach = downloadAttach;
+
+                this->inputPeer = MTP_inputPeerEmpty();
+                this->filters = filters;
             }
 
             std::uint64_t peerId;
+            std::int32_t msgBeginTime;
+            std::int32_t msgEndTime;
             PeerData* peerData;
+            MTPinputPeer inputPeer;
+            MTPmessagesFilter filter;
+            std::list<MTPmessagesFilter> filters;
             bool left;
             bool onlyMyMsg;
             bool downloadAttach;
         };
 
         std::list<SelectedChat> _selectedChats;
-        std::map<std::uint64_t, bool> _selectedChatDownloadAttachMap;
         SelectedChat _curSelectedChat;
         int _curSelectedChatMsgCount;
 
@@ -814,10 +832,11 @@ namespace Main {
         std::unique_ptr<std::mutex> _downloadPeerProfilePhotosLock;
 
         bool _downloadAttach;
+        bool _requestChatParticipant;
         std::int64_t _maxAttachFileSize;
-        std::int64_t _msgBeginTime;
-        std::int64_t _msgEndTime;
         bool _exportLeftChannels;
+
+        std::list<MTPmessagesFilter> _messageFilters;
     };
 
 } // namespace Main

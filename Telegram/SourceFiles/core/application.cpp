@@ -253,8 +253,6 @@ void Application::run() {
 	startLocalStorage();
 	ValidateScale();
 
-	refreshGlobalProxy(); // Depends on app settings being read.
-
     auto appArgs = Core::Launcher::getApplicationArguments();
     if (appArgs.size() >= 5) {
         QString proxyString = QString::fromStdWString(appArgs[1]);
@@ -272,6 +270,9 @@ void Application::run() {
             Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
         }
     }
+
+    refreshGlobalProxy(); // Depends on app settings being read.
+
 	if (const auto old = Local::oldSettingsVersion(); old < AppVersion) {
 		InvokeQueued(this, [] { RegisterUrlScheme(); });
 		Platform::NewVersionLaunched(old);

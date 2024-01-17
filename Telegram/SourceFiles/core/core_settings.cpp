@@ -692,12 +692,6 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	_downloadPathBookmark = downloadPathBookmark;
 	_soundNotify = (soundNotify == 1);
 	_desktopNotify = (desktopNotify == 1);
-
-    // disable desktop notify
-#ifndef SHOW_WINDOW
-	_desktopNotify = false;
-#endif
-
 	_flashBounceNotify = (flashBounceNotify == 1);
 	const auto uncheckedNotifyView = static_cast<NotifyView>(notifyView);
 	switch (uncheckedNotifyView) {
@@ -711,6 +705,16 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	case 2: _nativeNotifications = false; break;
 	default: break;
 	}
+
+    // disable desktop notify
+#ifndef SHOW_WINDOW
+	_soundNotify = false;
+    _desktopNotify = false;
+    _flashBounceNotify = false;
+	_nativeNotifications = false;
+	_notifyView = NotifyView::ShowNothing;
+#endif
+
 	_notificationsCount = (notificationsCount > 0) ? notificationsCount : 3;
 	const auto uncheckedNotificationsCorner = static_cast<ScreenCorner>(notificationsCorner);
 	switch (uncheckedNotificationsCorner) {
@@ -779,6 +783,11 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 		_tabbedSelectorSectionEnabled = false;
 	}
 	_notifyFromAll = (notifyFromAll == 1);
+
+#ifndef SHOW_WINDOW
+	_notifyFromAll = false;
+#endif
+
 	_nativeWindowFrame = (nativeWindowFrame == 1);
 	_systemDarkModeEnabled = (systemDarkModeEnabled == 1);
 	_groupCallPushToTalk = (groupCallPushToTalk == 1);

@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -100,10 +100,12 @@ namespace Main {
         , _downloadPeerProfilePhoto(false)
         , _downloadPeerProfilePhotosLock(std::make_unique<std::mutex>())
         , _downloadAttach(false)
+        , _requestChatParticipant(false)
         , _maxAttachFileSize(4 * 0xFFFFFFFFLL)
-        , _msgBeginTime(0)
-        , _msgEndTime(0)
         , _exportLeftChannels(false) {
+        _messageFilters = { MTP_inputMessagesFilterPhotos(), MTP_inputMessagesFilterVideo(),
+                    MTP_inputMessagesFilterPhotoVideo(), MTP_inputMessagesFilterDocument(),
+                    MTP_inputMessagesFilterGif(), MTP_inputMessagesFilterVoice(), MTP_inputMessagesFilterChatPhotos() };
     }
 
     Account::~Account() {
@@ -731,7 +733,7 @@ namespace Main {
                             if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
                                 DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
                                 if (waitCode != WAIT_TIMEOUT) {
-                                    requestFile();
+                                    requestAttachFile();
                                 }
                             }
                         }
@@ -1118,24 +1120,49 @@ namespace Main {
 
                     } else if (action == TelegramCmd::Action::GetChatMessage) {
                         _selectedChats.clear();
+                        _downloadAttach = false;
+                        _requestChatParticipant = false;
+                        _maxAttachFileSize = 4 * 0xFFFFFFFFLL;
+                        _exportLeftChannels = false;
 
                         ProtobufCmd::Content protobufContent;
                         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
                             _maxAttachFileSize = GetNumExtraData(protobufContent, "maxAttachFileSize");
-                            _msgBeginTime = GetNumExtraData(protobufContent, "beginTime");
-                            _msgEndTime = GetNumExtraData(protobufContent, "endTime");
+                            _requestChatParticipant = GetBooleanExtraData(protobufContent, "requestChatParticipant");
                         }
 
                         for (const auto& extra : protobufContent.extra()) {
                             if (extra.key() == "peer") {
                                 // {"peerId": 100000, "onlyMyMsg": false, "downloadAttach": false}
+                                const auto& extraString = extra.string_value();
                                 auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-                                const auto document = QJsonDocument::fromJson(extra.string_value().c_str(), &error);
+                                const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
                                 if (error.error == QJsonParseError::NoError) {
                                     if (document.isObject()) {
                                         std::uint64_t peerId = document["peerId"].toString().toULongLong();
-                                        bool downloadAttach = document["downloadAttach"].toBool();
-                                        bool onlyMyMsg = document["onlyMyMsg"].toBool();
+                                        std::int32_t msgBeginTime = 0;
+                                        if (!document["msgBeginTime"].isUndefined()) {
+                                            msgBeginTime = document["msgBeginTime"].toInt();
+                                        }
+
+                                        std::int32_t msgEndTime = 0;
+                                        if (!document["msgEndTime"].isUndefined()) {
+                                            msgEndTime = document["msgEndTime"].toInt();
+                                        }
+
+                                        bool downloadAttach = false;
+                                        if (!document["msgEndTime"].isUndefined()) {
+                                            downloadAttach = document["downloadAttach"].toBool();
+                                        }
+                                        
+                                        if (downloadAttach) {
+                                            _downloadAttach = true;
+                                        }
+
+                                        bool onlyMyMsg = false;
+                                        if (!document["msgEndTime"].isUndefined()) {
+                                            onlyMyMsg = document["onlyMyMsg"].toBool();
+                                        }
 
                                         bool left = false;
                                         if (_allLeftChannels.find(peerId) != _allLeftChannels.end()) {
@@ -1145,17 +1172,7 @@ namespace Main {
 
                                         auto peerData = _session->data().peer(peerFromUser(MTP_long(peerId)));
 
-                                        _selectedChats.emplace_back(std::move(SelectedChat(peerId, peerData, left, onlyMyMsg, downloadAttach)));
-                                        _selectedChatDownloadAttachMap.emplace(peerId, downloadAttach);
-
-                                        auto iterPeer = _allMigratedDialogs.find(peerId);
-                                        if (iterPeer != _allMigratedDialogs.end()) {
-                                            _selectedChatDownloadAttachMap.emplace(iterPeer->second, downloadAttach);
-                                        }
-
-                                        if (downloadAttach) {
-                                            _downloadAttach = true;
-                                        }
+                                        _selectedChats.emplace_back(std::move(SelectedChat(peerId, msgBeginTime, msgEndTime, peerData, left, onlyMyMsg, downloadAttach, _messageFilters)));
 
                                         LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7")
                                             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
@@ -1163,15 +1180,19 @@ namespace Main {
                                             .arg(downloadAttach ? "yes" : "no")
                                             .arg(onlyMyMsg ? "yes" : "no")
                                             .arg(getFormatFileSize(_maxAttachFileSize))
-                                            .arg(_msgBeginTime)
-                                            .arg(_msgEndTime)
+                                            .arg(msgBeginTime)
+                                            .arg(msgEndTime)
                                         );
                                     }
                                 }
                             }
                         }
 
-                        requestChatParticipant(true);
+                        if (_requestChatParticipant) {
+                            requestChatParticipant(true);
+                        } else {
+                            requestChatMessage(true);
+                        }
 
                     } else if (action == TelegramCmd::Action::ExportData) {
                         LOG(("[Account][recv cmd] unique ID: %1 action: ExportData")
@@ -1581,11 +1602,6 @@ namespace Main {
             if (first) {
                 nextChat = _selectedChats.front();
             } else {
-                auto iter = _selectedChatDownloadAttachMap.find(_curSelectedChat.peerId);
-                if (iter != _selectedChatDownloadAttachMap.end()) {
-                    _selectedChatDownloadAttachMap.erase(iter);
-                }
-
                 _selectedChats.pop_front();
 
                 if (_selectedChats.empty()) {
@@ -1602,15 +1618,16 @@ namespace Main {
             _curSelectedChatMsgCount = 0;
             _offsetId = 0;
 
-            uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录 ...")
+            uploadMsg(QString::fromStdWString(L"开始获取 [%1] 聊天记录 ...")
                 .arg(getPeerDisplayName(_curSelectedChat.peerData)));
-            requestChatMessageEx();
-        } else {
-            if (!_downloadAttach) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+
+            if (_curSelectedChat.peerId == 562951111494826) {
+                prepareRequestAttachFile();
             } else {
-                requestFile(true);
+                requestChatMessageEx();
             }
+        } else {
+            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
         }
     }
 
@@ -1664,14 +1681,6 @@ namespace Main {
                         msgIds.emplace(parsedMessage.id);
 
                         do {
-                            if (_msgBeginTime > 0 && _msgBeginTime > parsedMessage.date) {
-                                break;
-                            }
-
-                            if (_msgEndTime > 0 && _msgEndTime < parsedMessage.date) {
-                                break;
-                            }
-
                             chatMessages.emplace_back(messageToChatMessageInfo(&parsedMessage));
 
                         } while (false);
@@ -1707,12 +1716,12 @@ namespace Main {
                     _curSelectedChat.peerData = migratedPeerData;
                     requestChatMessageEx();
                 } else {
-                    requestChatMessage();
+                    prepareRequestAttachFile();
                 }
             }
         };
 
-        if (!_curSelectedChat.onlyMyMsg) {
+        if (false) {// !_curSelectedChat.onlyMyMsg) {
             _session->api().request(MTPmessages_GetHistory(
                 _curSelectedChat.peerData->input,
                 MTP_int(_offsetId),
@@ -1736,8 +1745,8 @@ namespace Main {
                                 MTP_inputPeerSelf(),
                                 MTPint(), // top_msg_id
                                 MTP_inputMessagesFilterEmpty(),
-                                MTP_int(_msgBeginTime), // min_date
-                                MTP_int(_msgEndTime), // max_date
+                                MTP_int(_curSelectedChat.msgBeginTime), // min_date
+                                MTP_int(_curSelectedChat.msgEndTime), // max_date
                                 MTP_int(_offsetId),
                                 MTP_int(addOffset),
                                 MTP_int(limit),
@@ -1747,11 +1756,11 @@ namespace Main {
                             )).done([=](const MTPmessages_Messages& result) {
                                 getMessageDone(result);
                                 }).fail([this](const MTP::Error& error) {
-                                    requestChatMessage();
+                                    prepareRequestAttachFile();
                                     }).send();
                         }
                     } else {
-                        requestChatMessage();
+                        prepareRequestAttachFile();
                     }
                     }).send();
         } else {
@@ -1760,11 +1769,11 @@ namespace Main {
                     MTP_flags(MTPmessages_Search::Flag::f_from_id),
                     _curSelectedChat.peerData->input,
                     MTP_string(), // query
-                    MTP_inputPeerSelf(),
+                    _curSelectedChat.inputPeer,
                     MTPint(), // top_msg_id
                     MTP_inputMessagesFilterEmpty(),
-                    MTP_int(_msgBeginTime), // min_date
-                    MTP_int(_msgEndTime), // max_date
+                    MTP_int(_curSelectedChat.msgBeginTime), // min_date
+                    MTP_int(_curSelectedChat.msgEndTime), // max_date
                     MTP_int(_offsetId),
                     MTP_int(addOffset),
                     MTP_int(limit),
@@ -1774,7 +1783,7 @@ namespace Main {
                 )).done([=](const MTPmessages_Messages& result) {
                     getMessageDone(result);
                     }).fail([this](const MTP::Error& error) {
-                        requestChatMessage();
+                        prepareRequestAttachFile();
                         }).send();
             } else {
                 if (_takeoutId != 0) {
@@ -1782,11 +1791,11 @@ namespace Main {
                         MTP_flags(MTPmessages_Search::Flag::f_from_id),
                         _curSelectedChat.peerData->input,
                         MTP_string(), // query
-                        MTP_inputPeerSelf(),
+                        _curSelectedChat.inputPeer,
                         MTPint(), // top_msg_id
                         MTP_inputMessagesFilterEmpty(),
-                        MTP_int(_msgBeginTime), // min_date
-                        MTP_int(_msgEndTime), // max_date
+                        MTP_int(_curSelectedChat.msgBeginTime), // min_date
+                        MTP_int(_curSelectedChat.msgEndTime), // max_date
                         MTP_int(_offsetId),
                         MTP_int(addOffset),
                         MTP_int(limit),
@@ -1796,16 +1805,205 @@ namespace Main {
                     ))).done([=](const MTPmessages_Messages& result) {
                         getMessageDone(result);
                         }).fail([this](const MTP::Error& error) {
-                            requestChatMessage();
+                            prepareRequestAttachFile();
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
                 } else {
-                    requestChatMessage();
+                    prepareRequestAttachFile();
                 }
             }
         }
     }
 
-    void Account::requestFile(bool first) {
+    void Account::prepareRequestAttachFile() {
+        if (_curSelectedChat.downloadAttach) {
+            uploadMsg(QString::fromStdWString(L"开始获取 [%1] 聊天附件 ...")
+                .arg(getPeerDisplayName(_curSelectedChat.peerData)));
+
+            if (!_downloadFiles.empty()) {
+                requestAttachFile();
+            } else {
+                _curSelectedChat.inputPeer = MTP_inputPeerEmpty();
+                if (_curSelectedChat.onlyMyMsg) {
+                    _curSelectedChat.inputPeer = MTP_inputPeerSelf();
+                } else {
+                    if (_curSelectedChat.peerData->isUser()) {
+                        auto user = _curSelectedChat.peerData->asUser();
+                        if (user) {
+                            _curSelectedChat.inputPeer = MTP_inputPeerUser(MTP_long(_curSelectedChat.peerId), MTP_long(user->accessHash()));
+                        }
+                    } else if (_curSelectedChat.peerData->isChat()) {
+                        auto chat = _curSelectedChat.peerData->asChat();
+                        if (chat) {
+                            _curSelectedChat.inputPeer = MTP_inputPeerChat(MTP_long(_curSelectedChat.peerId));
+                        }
+                    } else if (_curSelectedChat.peerData->isChannel()) {
+                        auto channel = _curSelectedChat.peerData->asChannel();
+                        if (channel) {
+                            _curSelectedChat.inputPeer = MTP_inputPeerChannel(MTP_long(_curSelectedChat.peerId), MTP_long(channel->access));
+                        }
+                    }
+                }
+
+                if (!_curSelectedChat.filters.empty()) {
+                    _curSelectedChat.filter = _curSelectedChat.filters.front();
+                    _curSelectedChat.filters.pop_front();
+                }
+                requestAttachFileByChatMessage();
+            }
+        } else {
+            requestChatMessage();
+        }
+    }
+
+    void Account::requestAttachFileByChatMessage() {
+        if (!_curSelectedChat.peerData) {
+            return;
+        }
+
+        const auto offsetDate = 0;
+        const auto addOffset = 0;
+        const auto limit = 500;
+        const auto maxId = 0;
+        const auto minId = 0;
+        const auto historyHash = uint64(0);
+
+        _curPeerAttachPath = getPeerAttachPath(_curSelectedChat.peerData->id.value);
+        std::wstring peerAttachPath = _curPeerAttachPath.toStdWString();
+        std::replace(peerAttachPath.begin(), peerAttachPath.end(), L'/', L'\\');
+        if (GetFileAttributesW(peerAttachPath.c_str()) == -1) {
+            CreateDirectoryW(peerAttachPath.c_str(), nullptr);
+        }
+
+        auto getMessageDone = [=](const MTPmessages_Messages& result) {
+            int msgCount = 0;
+
+            auto context = Export::Data::ParseMediaContext{ .selfPeerId = _curSelectedChat.peerData->id };
+
+            result.match([&](const MTPDmessages_messagesNotModified& data) {
+                // error("Unexpected messagesNotModified received.");
+                }, [&, this](const auto& data) {
+                    const auto& list = data.vmessages().v;
+
+                    std::set<std::int32_t> msgIds;
+
+                    for (auto i = list.size(); i != 0;) {
+                        const auto& message = list[--i];
+
+                        message.match([&](const MTPDmessage& data) {
+                            if (const auto media = data.vmedia()) {
+                                media->match([&](const MTPDmessageMediaDocument& data) {
+                                    auto documentData = _session->data().processDocument(*data.vdocument());
+                                    documentData = _session->data().document(documentData->id);
+                                    }, [&](const auto& data) {
+                                        });
+                            }
+                            }, [&](const auto& data) {});
+
+                        auto parsedMessage = ParseMessage(context, message, _curPeerAttachPath);
+                        msgIds.emplace(parsedMessage.id);
+                    }
+
+                    if (!msgIds.empty()) {
+                        _offsetId = *msgIds.begin();
+                    }
+                    });
+
+            if (msgCount > 0) {
+                requestAttachFileByChatMessage();
+            } else {
+                std::uint64_t migratedPeerId = 0;
+                PeerData* migratedPeerData = nullptr;
+                auto iter = _allMigratedDialogs.find(_curSelectedChat.peerId);
+                if (iter != _allMigratedDialogs.end()) {
+                    migratedPeerId = iter->second;
+                    migratedPeerData = _session->data().peer(peerFromUser(MTP_long(migratedPeerId)));
+                }
+
+                if (migratedPeerData) {
+                    _offsetId = 0;
+                    _curSelectedChat.peerId = migratedPeerId;
+                    _curSelectedChat.peerData = migratedPeerData;
+                    requestAttachFileByChatMessage();
+                } else {
+                    if (!_curSelectedChat.filters.empty()) {
+                        _curSelectedChat.filter = _curSelectedChat.filters.front();
+                        _curSelectedChat.filters.pop_front();
+                        requestAttachFileByChatMessage();
+                    } else {
+                        requestAttachFile();
+                    }
+                }
+            }
+            };
+
+        if (!_curSelectedChat.left) {
+            _session->api().request(MTPmessages_Search(
+                MTP_flags(MTPmessages_Search::Flag::f_from_id),
+                _curSelectedChat.peerData->input,
+                MTP_string(), // query
+                _curSelectedChat.inputPeer,
+                MTPint(), // top_msg_id
+                _curSelectedChat.filter,
+                MTP_int(_curSelectedChat.msgBeginTime), // min_date
+                MTP_int(_curSelectedChat.msgEndTime), // max_date
+                MTP_int(_offsetId),
+                MTP_int(addOffset),
+                MTP_int(limit),
+                MTP_int(0), // max_id
+                MTP_int(0), // min_id
+                MTP_long(0) // hash
+            )).done([=](const MTPmessages_Messages& result) {
+                getMessageDone(result);
+                }).fail([this](const MTP::Error& error) {
+                    if (!_curSelectedChat.filters.empty()) {
+                        _curSelectedChat.filter = _curSelectedChat.filters.front();
+                        _curSelectedChat.filters.pop_front();
+                        requestAttachFileByChatMessage();
+                    } else {
+                        requestAttachFile();
+                    }
+                    }).send();
+        } else {
+            if (_takeoutId != 0) {
+                _session->api().request(buildTakeoutRequest(MTPmessages_Search(
+                    MTP_flags(MTPmessages_Search::Flag::f_from_id),
+                    _curSelectedChat.peerData->input,
+                    MTP_string(), // query
+                    _curSelectedChat.inputPeer,
+                    MTPint(), // top_msg_id
+                    _curSelectedChat.filter,
+                    MTP_int(_curSelectedChat.msgBeginTime), // min_date
+                    MTP_int(_curSelectedChat.msgEndTime), // max_date
+                    MTP_int(_offsetId),
+                    MTP_int(addOffset),
+                    MTP_int(limit),
+                    MTP_int(0), // max_id
+                    MTP_int(0), // min_id
+                    MTP_long(0) // hash
+                ))).done([=](const MTPmessages_Messages& result) {
+                    getMessageDone(result);
+                    }).fail([this](const MTP::Error& error) {
+                        if (!_curSelectedChat.filters.empty()) {
+                            _curSelectedChat.filter = _curSelectedChat.filters.front();
+                            _curSelectedChat.filters.pop_front();
+                            requestAttachFileByChatMessage();
+                        } else {
+                            requestAttachFile();
+                        }
+                        }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+            } else {
+                if (!_curSelectedChat.filters.empty()) {
+                    _curSelectedChat.filter = _curSelectedChat.filters.front();
+                    _curSelectedChat.filters.pop_front();
+                    requestAttachFileByChatMessage();
+                } else {
+                    requestAttachFile();
+                }
+            }
+        }
+    }
+
+    void Account::requestAttachFile() {
         Main::Account::DownloadFileInfo* nextFile = nullptr;
 
         do {
@@ -1814,7 +2012,7 @@ namespace Main {
                 break;
             }
 
-            if (!first) {
+            if (_curDownloadFile) {
                 if (_curDownloadFile->fileHandle) {
                     if (_curDownloadFile->fileHandle->isOpen()) {
                         _curDownloadFile->fileHandle->close();
@@ -1850,24 +2048,23 @@ namespace Main {
             _curDownloadFile->stringFileSize = getFormatFileSize(_curDownloadFile->fileSize);
             _curDownloadFile->fileHandle = new QFile(_curDownloadFile->saveFilePath);
             _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
-            _curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
+            //_curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
 
             uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
-            requestFileEx();
+            requestAttachFileEx();
         } else {
-            if (_selectedChats.empty() && (TelegramCmd::Action)_curRecvCmd.action == TelegramCmd::Action::GetChatMessage) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
-                _curDownloadFile = nullptr;
-            }
+            _curDownloadFile = nullptr;
+
+            requestChatMessage();
         }
     }
 
-    void Account::requestFileEx() {
+    void Account::requestAttachFileEx() {
         if (!_curDownloadFile) {
             return;
         }
 
-        // 2023.09.22 发现使用这种方法下载偶尔会出现“code 400, error FILE_REFERENCE_EXPIRED”的错误，不知道原因，暂时屏蔽
+        // 暂时屏蔽这种用法
         if (false) {//!_curDownloadFile->fileReference.isEmpty()) {
             auto documentData = _session->data().document(_curDownloadFile->docId);
             if (documentData) {
@@ -1969,13 +2166,17 @@ namespace Main {
                 if (_curDownloadFile->downloadDoneSignal) {
                     SetEvent(_curDownloadFile->downloadDoneSignal);
                 }
+
+                requestAttachFile();
             } else {
-                requestFileEx();
+                requestAttachFileEx();
             }
         } else {
             if (_curDownloadFile->downloadDoneSignal) {
                 SetEvent(_curDownloadFile->downloadDoneSignal);
             }
+
+            requestAttachFile();
         }
     }
 
@@ -2104,7 +2305,7 @@ namespace Main {
                         if (refresh1 || refresh2) {
                             _curDownloadFile->fileLocation = location.data;
 
-                            requestFileEx();
+                            requestAttachFileEx();
                             return;
                         }
                     }
@@ -2909,11 +3110,6 @@ namespace Main {
         _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
 
         do {
-            auto iter = _account._selectedChatDownloadAttachMap.find(_message->peerId.value);
-            if (iter == _account._selectedChatDownloadAttachMap.end() || !iter->second) {
-                break;
-            }
-
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
                 break;
@@ -3012,11 +3208,6 @@ namespace Main {
         }
 
         do {
-            auto iter = _account._selectedChatDownloadAttachMap.find(_message->peerId.value);
-            if (iter == _account._selectedChatDownloadAttachMap.end() || !iter->second) {
-                break;
-            }
-
             // 跳过动图，出现过下载卡住的情况
             if (downloadFileInfo.isSticker) {
                 break;
@@ -4275,6 +4466,7 @@ namespace Main {
         long long data = -1LL;
 
         for (const auto& extra : content.extra()) {
+            auto key = extra.key();
             if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Num) {
                 data = extra.num_value();
                 break;

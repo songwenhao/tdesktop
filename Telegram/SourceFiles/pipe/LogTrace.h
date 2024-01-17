@@ -1,4 +1,4 @@
-﻿#ifndef LOGTRACE_H
+#ifndef LOGTRACE_H
 #define LOGTRACE_H
 
 #ifndef WIN32_LEAN_AND_MEAN

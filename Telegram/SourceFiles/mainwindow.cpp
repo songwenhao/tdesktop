@@ -703,12 +703,6 @@ void MainWindow::updateControlsGeometry() {
 	if (_main) _main->checkMainSectionToLayer();
 }
 
-std::vector<Intro::details::Step*>* MainWindow::getIntroStepHistory() {
-	if (_intro) {
-        return _intro->getIntroStepHistory();
-	}
-	return nullptr;
-}
 void MainWindow::sendPaths() {
 	if (controller().locked()) {
 		return;

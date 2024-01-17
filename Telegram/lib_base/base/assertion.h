@@ -26,12 +26,12 @@ inline constexpr void noop() {
 		int line) {
 	log(message, file, line);
 
-	// Crash with access violation and generate crash report.
-	volatile auto nullptr_value = (int*)nullptr;
-	*nullptr_value = 0;
+	//// Crash with access violation and generate crash report.
+	//volatile auto nullptr_value = (int*)nullptr;
+	//*nullptr_value = 0;
 
-	// Silent the possible failure to comply noreturn warning.
-	std::abort();
+	//// Silent the possible failure to comply noreturn warning.
+	//std::abort();
 }
 
 constexpr const char* extract_basename(const char* path, size_t size) {
