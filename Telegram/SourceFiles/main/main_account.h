@@ -382,6 +382,45 @@ namespace Main {
             HANDLE downloadDoneSignal;
         };
 
+        struct TaskInfo {
+            TaskInfo() {
+                peerId = 0;
+                msgBeginTime = 0;
+                msgEndTime = 0;
+                offsetMsgId = 0;
+                getMsgCount = 0;
+                maxAttachFileSize = 0;
+                isLeftChannel = false;
+                onlyMyMsg = false;
+                downloadAttach = false;
+                getMsgDone = false;
+                getAttachDone = false;
+                needRetryGetAttach = false;
+                isExistInDb = false;
+                peerData = nullptr;
+                inputPeer = MTP_inputPeerEmpty();
+                curMsgfilter = MTP_inputMessagesFilterEmpty();
+            }
+
+            std::uint64_t peerId;
+            std::int32_t msgBeginTime;
+            std::int32_t msgEndTime;
+            std::int32_t offsetMsgId;
+            std::int64_t getMsgCount;
+            std::int64_t maxAttachFileSize;
+            bool isLeftChannel;
+            bool onlyMyMsg;
+            bool downloadAttach;
+            bool getMsgDone;
+            bool getAttachDone;
+            bool needRetryGetAttach;
+            bool isExistInDb;
+            PeerData* peerData;
+            MTPinputPeer inputPeer;
+            MTPmessagesFilter curMsgfilter;
+            std::list<MTPmessagesFilter> msgFilters;
+        };
+
         struct ServerMessageVisitor {
             ServerMessageVisitor(
                 Main::Account& account,
@@ -601,6 +640,12 @@ namespace Main {
 
         void saveChatMutiMessagesToDb(const Main::Account::ChatMessageInfo& chatMessage);
 
+        bool getTaskInfo(std::uint64_t peerId, Main::Account::TaskInfo& taskInfo);
+
+        void saveTaskInfoToDb(const Main::Account::TaskInfo& taskInfo);
+
+        void updateTaskInfoToDb(Main::Account::TaskInfo& taskInfo);
+
         void processExportDialog(
             const std::vector<Export::Data::DialogInfo>& parsedDialogs,
             std::int32_t left,
@@ -768,56 +813,8 @@ namespace Main {
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
-        struct SelectedChat {
-            SelectedChat() {
-                peerId = 0ULL;
-                msgBeginTime = 0;
-                msgEndTime = 0;
-                peerData = nullptr;
-                inputPeer = MTP_inputPeerEmpty();
-                filter = MTP_inputMessagesFilterEmpty();
-                left = false;
-                onlyMyMsg = false;
-                downloadAttach = false;
-            }
-
-            SelectedChat(
-                std::uint64_t peerId,
-                std::int32_t msgBeginTime,
-                std::int32_t msgEndTime,
-                PeerData* peerData,
-                bool left,
-                bool onlyMyMsg,
-                bool downloadAttach,
-                const std::list<MTPmessagesFilter>& filters
-            ) {
-                this->peerId = peerId;
-                this->msgBeginTime = msgBeginTime;
-                this->msgEndTime = msgEndTime;
-                this->peerData = peerData;
-                this->left = left;
-                this->onlyMyMsg = onlyMyMsg;
-                this->downloadAttach = downloadAttach;
-
-                this->inputPeer = MTP_inputPeerEmpty();
-                this->filters = filters;
-            }
-
-            std::uint64_t peerId;
-            std::int32_t msgBeginTime;
-            std::int32_t msgEndTime;
-            PeerData* peerData;
-            MTPinputPeer inputPeer;
-            MTPmessagesFilter filter;
-            std::list<MTPmessagesFilter> filters;
-            bool left;
-            bool onlyMyMsg;
-            bool downloadAttach;
-        };
-
-        std::list<SelectedChat> _selectedChats;
-        SelectedChat _curSelectedChat;
-        int _curSelectedChatMsgCount;
+        std::list<TaskInfo> _tasks;
+        TaskInfo _curTask;
 
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
