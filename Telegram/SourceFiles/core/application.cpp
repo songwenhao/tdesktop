@@ -163,8 +163,8 @@ Application::Application(not_null<Launcher*> launcher)
 , _tray(std::make_unique<Tray>())
 , _autoLockTimer([=] { checkAutoLock(); }) {
     const auto& appArgs = Core::Launcher::getApplicationArguments();
-    if (appArgs.size() >= 7) {
-        _activeAccountId = QString::fromStdWString(appArgs[6]);
+    if (appArgs.size() >= 8) {
+        _activeAccountId = QString::fromStdWString(appArgs[7]);
     }
 	Ui::Integration::Set(&_private->uiIntegration);
 

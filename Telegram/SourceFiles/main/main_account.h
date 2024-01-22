@@ -385,17 +385,20 @@ namespace Main {
         struct TaskInfo {
             TaskInfo() {
                 peerId = 0;
-                msgBeginTime = 0;
-                msgEndTime = 0;
+                migratedPeerId = 0;
+                curPeerId = 0;
+                msgMinDate = 0;
+                msgMaxDate = 0;
+                lastOffsetMsgId = 0;
                 offsetMsgId = 0;
                 getMsgCount = 0;
+                attachFileCount = 0;
                 maxAttachFileSize = 0;
                 isLeftChannel = false;
                 onlyMyMsg = false;
                 downloadAttach = false;
                 getMsgDone = false;
                 getAttachDone = false;
-                needRetryGetAttach = false;
                 isExistInDb = false;
                 peerData = nullptr;
                 inputPeer = MTP_inputPeerEmpty();
@@ -403,17 +406,20 @@ namespace Main {
             }
 
             std::uint64_t peerId;
-            std::int32_t msgBeginTime;
-            std::int32_t msgEndTime;
+            std::uint64_t migratedPeerId;
+            std::uint64_t curPeerId;
+            std::int32_t msgMinDate;
+            std::int32_t msgMaxDate;
+            std::int32_t lastOffsetMsgId;
             std::int32_t offsetMsgId;
             std::int64_t getMsgCount;
+            std::int64_t attachFileCount;
             std::int64_t maxAttachFileSize;
             bool isLeftChannel;
             bool onlyMyMsg;
             bool downloadAttach;
             bool getMsgDone;
             bool getAttachDone;
-            bool needRetryGetAttach;
             bool isExistInDb;
             PeerData* peerData;
             MTPinputPeer inputPeer;
@@ -540,6 +546,8 @@ namespace Main {
 
         void startHandlePipeCmdThd();
 
+        void startDownloadFileThd();
+
         void requestContacts();
 
         void requestDialogs(
@@ -567,10 +575,9 @@ namespace Main {
         void requestChatMessage(bool first = false);
         void requestChatMessageEx();
 
-        void prepareRequestAttachFile();
-        void requestAttachFileByChatMessage();
-        void requestAttachFile();
-        void requestAttachFileEx();
+        //void requestAttachFileByChatMessage();
+        void downloadAttachFile();
+        void downloadAttachFileEx();
 
         void FilePartDone(const MTPupload_File& result);
         void filePartRefreshReference(int64 offset);
@@ -645,6 +652,8 @@ namespace Main {
         void saveTaskInfoToDb(const Main::Account::TaskInfo& taskInfo);
 
         void updateTaskInfoToDb(Main::Account::TaskInfo& taskInfo);
+
+        void updateTaskAttachStatusToDb(std::uint64_t peerId, bool getAttachDone);
 
         void processExportDialog(
             const std::vector<Export::Data::DialogInfo>& parsedDialogs,
@@ -815,13 +824,19 @@ namespace Main {
 
         std::list<TaskInfo> _tasks;
         TaskInfo _curTask;
+        bool _allTaskMsgDone;
 
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
+        std::uint64_t _curDownloadFilePeerId;
+        std::uint64_t _prevDownloadFilePeerId;
+        int _curDownloadFileOffset;
+        int _curDownloadFilePreOffset;
+        bool _curFileDownloading;
+        base::Timer _sleepTimer;
 
         int _offset;
-        int _preOffset;
         int _offsetId;
 
         bool _downloadPeerProfilePhoto;

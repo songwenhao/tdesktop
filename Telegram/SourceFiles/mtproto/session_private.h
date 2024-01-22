@@ -196,6 +196,7 @@ private:
 
 	base::Timer _retryTimer; // exp retry timer
 	int _retryTimeout = 1;
+	bool _exit = false;
 	qint64 _retryWillFinish = 0;
 
 	base::Timer _oldConnectionTimer;

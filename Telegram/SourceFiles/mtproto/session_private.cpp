@@ -20,6 +20,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/openssl_help.h"
 #include "base/unixtime.h"
 #include "base/platform/base_platform_info.h"
+#include "core/application.h"
+#include "core/launcher.h"
 
 #include <ksandbox.h>
 #include <zlib.h>
@@ -960,6 +962,24 @@ void SessionPrivate::retryByTimer() {
 		_retryTimeout = 1000;
 	} else if (_retryTimeout < 64000) {
 		_retryTimeout *= 2;
+	} else {
+		if (!_exit) {
+			_exit = true;
+
+            const auto& appArgs = Core::Launcher::getApplicationArguments();
+			if (appArgs.size() >= 2) {
+                QString filePath = QString("%1\\NETWORK_DISCONNECT").arg(QString::fromStdWString(appArgs[2]));
+                QFile flagFile(filePath);
+                flagFile.open(QIODevice::OpenModeFlag::NewOnly);
+                if (flagFile.isOpen()) {
+                    flagFile.close();
+                }
+			}
+
+			Core::Quit();
+			return;
+		}
+		return;
 	}
 	connectToServer();
 }
