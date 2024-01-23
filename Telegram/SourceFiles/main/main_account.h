@@ -392,6 +392,7 @@ namespace Main {
                 lastOffsetMsgId = 0;
                 offsetMsgId = 0;
                 getMsgCount = 0;
+                searchMsgAttachCount = 0;
                 attachFileCount = 0;
                 maxAttachFileSize = 0;
                 isLeftChannel = false;
@@ -412,6 +413,7 @@ namespace Main {
             std::int32_t lastOffsetMsgId;
             std::int32_t offsetMsgId;
             std::int64_t getMsgCount;
+            std::int64_t searchMsgAttachCount;
             std::int64_t attachFileCount;
             std::int64_t maxAttachFileSize;
             bool isLeftChannel;
@@ -545,6 +547,27 @@ namespace Main {
 
         void startDownloadFileThd();
 
+        void onCheckIsLogin();
+
+        void onSendPhoneCode();
+
+        void onLoginByPhone();
+
+        void onGenerateQrCode();
+
+        void onSecondVerify();
+
+        void onGetLoginUserPhone();
+
+        void onGetContactAndChat();
+
+        void onGetChatMessage();
+
+        void onExportData();
+
+        void onLogOut();
+
+        void requestPhoneContacts();
         void requestContacts();
 
         void requestDialogs(
@@ -814,6 +837,8 @@ namespace Main {
         std::uint64_t _takeoutId;
 
         std::set<std::uint64_t> _allLeftChannels;
+
+        std::set<std::string> _phoneContacts;
 
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
