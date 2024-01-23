@@ -402,7 +402,6 @@ namespace Main {
                 isExistInDb = false;
                 peerData = nullptr;
                 inputPeer = MTP_inputPeerEmpty();
-                curMsgfilter = MTP_inputMessagesFilterEmpty();
             }
 
             std::uint64_t peerId;
@@ -423,8 +422,6 @@ namespace Main {
             bool isExistInDb;
             PeerData* peerData;
             MTPinputPeer inputPeer;
-            MTPmessagesFilter curMsgfilter;
-            std::list<MTPmessagesFilter> msgFilters;
         };
 
         struct ServerMessageVisitor {
@@ -575,7 +572,6 @@ namespace Main {
         void requestChatMessage(bool first = false);
         void requestChatMessageEx();
 
-        //void requestAttachFileByChatMessage();
         void downloadAttachFile();
         void downloadAttachFileEx();
 
@@ -826,6 +822,10 @@ namespace Main {
         TaskInfo _curTask;
         bool _allTaskMsgDone;
 
+        base::Timer _sleepTimer;
+        crl::time _requestMsgSleepTime;
+        crl::time _downloadAttachFileRemainSleepTime;
+
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
@@ -834,7 +834,6 @@ namespace Main {
         int _curDownloadFileOffset;
         int _curDownloadFilePreOffset;
         bool _curFileDownloading;
-        base::Timer _sleepTimer;
 
         int _offset;
         int _offsetId;
@@ -847,8 +846,6 @@ namespace Main {
         bool _requestChatParticipant;
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;
-
-        std::list<MTPmessagesFilter> _messageFilters;
     };
 
 } // namespace Main

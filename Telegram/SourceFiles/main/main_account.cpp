@@ -93,6 +93,8 @@ namespace Main {
         , _takeoutId(0)
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
+        , _requestMsgSleepTime(0)
+        , _downloadAttachFileRemainSleepTime(0)
         , _downloadFilesLock(std::make_unique<std::mutex>())
         , _curDownloadFile(nullptr)
         , _prevDownloadFilePeerId(0)
@@ -107,15 +109,6 @@ namespace Main {
         , _requestChatParticipant(false)
         , _maxAttachFileSize(4 * 0xFFFFFFFFLL)
         , _exportLeftChannels(false) {
-        _messageFilters = {
-            MTP_inputMessagesFilterPhotos(),
-            MTP_inputMessagesFilterVideo(),
-            MTP_inputMessagesFilterPhotoVideo(),
-            MTP_inputMessagesFilterDocument(),
-            MTP_inputMessagesFilterGif(),
-            MTP_inputMessagesFilterVoice(),
-            MTP_inputMessagesFilterChatPhotos()
-        };
     }
 
     Account::~Account() {
@@ -733,6 +726,8 @@ namespace Main {
             if (_pipe->ConnectPipe()) {
                 _taskTimer.setCallback([&] {
                     if (_stop) {
+                        _sleepTimer.cancel();
+
                         Core::Quit();
                     } else {
                         if (_checkRequest) {
@@ -740,19 +735,36 @@ namespace Main {
                         }
 
                         if (_downloadAttach) {
-                            /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
-                                DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
-                                if (waitCode != WAIT_TIMEOUT) {
-                                    requestAttachFile();
-                                }
-                            }*/
+                            if (_downloadAttachFileRemainSleepTime > 0) {
+                                --_downloadAttachFileRemainSleepTime;
+                            } else {
+                                /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
+                                    DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
+                                    if (waitCode != WAIT_TIMEOUT) {
+                                        requestAttachFile();
+                                    }
+                                }*/
 
-                            downloadAttachFile();
+                                downloadAttachFile();
+                            }
                         }
                     }
                     });
 
                 _taskTimer.callEach(crl::time(1000));
+
+                _sleepTimer.setCallback([&] {
+                    // 休眠定时器已触发
+                    qsrand(QTime::currentTime().msec());
+                    _requestMsgSleepTime = 10 + qrand() % 10;
+                    _downloadAttachFileRemainSleepTime = _requestMsgSleepTime;
+
+                    // 重新启动休眠定时器，触发时间为5~10分钟
+                    _sleepTimer.callOnce((qrand() % 5 + 5) * 60 * 1000);
+                    });
+
+                // 首次启动休眠定时器，触发时间为10分钟
+                _sleepTimer.callOnce(10 * 60 * 1000);
 
                 startHandlePipeCmdThd();
             }
@@ -1221,7 +1233,6 @@ namespace Main {
                                         if (task.onlyMyMsg) {
                                             task.inputPeer = MTP_inputPeerSelf();
                                         }
-                                        task.msgFilters = _messageFilters;
 
                                         if (!task.getMsgDone || !task.getAttachDone) {
                                             _tasks.emplace_back(std::move(task));
@@ -1715,6 +1726,12 @@ namespace Main {
     }
 
     void Account::requestChatMessageEx() {
+        if (_requestMsgSleepTime > 0) {
+            // 休眠定时器已触发，休眠
+            QThread::sleep(_requestMsgSleepTime);
+            _requestMsgSleepTime = 0;
+        }
+
         const auto offsetDate = 0;
         const auto addOffset = 0;
         const auto limit = 500;
@@ -1901,176 +1918,12 @@ namespace Main {
         }
     }
 
-    //void Account::requestAttachFileByChatMessage() {
-    //    if (!_curTask.peerData) {
-    //        return;
-    //    }
-
-    //    const auto offsetDate = 0;
-    //    const auto addOffset = 0;
-    //    const auto limit = 500;
-    //    const auto maxId = 0;
-    //    const auto minId = 0;
-    //    const auto historyHash = uint64(0);
-
-    //    _curPeerAttachPath = getPeerAttachPath(_curTask.peerData->id.value);
-    //    std::wstring peerAttachPath = _curPeerAttachPath.toStdWString();
-    //    std::replace(peerAttachPath.begin(), peerAttachPath.end(), L'/', L'\\');
-    //    if (GetFileAttributesW(peerAttachPath.c_str()) == -1) {
-    //        CreateDirectoryW(peerAttachPath.c_str(), nullptr);
-    //    }
-
-    //    auto getMessageDone = [=](const MTPmessages_Messages& result) {
-    //        int msgCount = 0;
-
-    //        auto context = Export::Data::ParseMediaContext{ .selfPeerId = _curTask.peerData->id };
-
-    //        result.match([&](const MTPDmessages_messagesNotModified& data) {
-    //            // error("Unexpected messagesNotModified received.");
-    //            }, [&, this](const auto& data) {
-    //                const auto& list = data.vmessages().v;
-
-    //                std::set<std::int32_t> msgIds;
-
-    //                for (auto i = list.size(); i != 0;) {
-    //                    const auto& message = list[--i];
-
-    //                    message.match([&](const MTPDmessage& data) {
-    //                        if (const auto media = data.vmedia()) {
-    //                            media->match([&](const MTPDmessageMediaDocument& data) {
-    //                                auto documentData = _session->data().processDocument(*data.vdocument());
-    //                                documentData = _session->data().document(documentData->id);
-    //                                }, [&](const auto& data) {
-    //                                    });
-    //                        }
-    //                        }, [&](const auto& data) {});
-
-    //                    auto parsedMessage = ParseMessage(context, message, _curPeerAttachPath);
-    //                    msgIds.emplace(parsedMessage.id);
-
-    //                    auto msg = messageToChatMessageInfo(&parsedMessage);
-    //                }
-
-    //                if (!msgIds.empty()) {
-    //                    _offsetId = *msgIds.begin();
-    //                    msgCount = msgIds.size();
-    //                }
-    //                });
-
-    //        if (msgCount > 0) {
-    //            _curTask.attachFileCount += msgCount;
-    //            /*if (_downloadFiles.size() > _curTask.attachFileCount) {
-    //                _curTask.attachFileCount = _downloadFiles.size();
-    //                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天附件列表, 已获取 %2 条 ...")
-    //                    .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.attachFileCount));
-    //            }*/
-
-    //            requestAttachFileByChatMessage();
-    //        } else {
-    //            std::uint64_t migratedPeerId = 0;
-    //            PeerData* migratedPeerData = nullptr;
-    //            auto iter = _allMigratedDialogs.find(_curTask.peerId);
-    //            if (iter != _allMigratedDialogs.end()) {
-    //                migratedPeerId = iter->second;
-    //                migratedPeerData = _session->data().peer(peerFromUser(MTP_long(migratedPeerId)));
-    //            }
-
-    //            if (migratedPeerData) {
-    //                _offsetId = 0;
-    //                _curTask.peerId = migratedPeerId;
-    //                _curTask.peerData = migratedPeerData;
-    //                requestAttachFileByChatMessage();
-    //            } else {
-    //                if (!_curTask.msgFilters.empty()) {
-    //                    _curTask.curMsgfilter = _curTask.msgFilters.front();
-    //                    _curTask.msgFilters.pop_front();
-    //                    requestAttachFileByChatMessage();
-    //                } else {
-    //                    requestAttachFile();
-    //                }
-    //            }
-    //        }
-    //        };
-
-    //    if (!_curTask.isLeftChannel) {
-    //        _session->api().request(MTPmessages_Search(
-    //            MTP_flags(MTPmessages_Search::Flag::f_from_id),
-    //            _curTask.peerData->input,
-    //            MTP_string(), // query
-    //            _curTask.inputPeer,
-    //            MTPint(), // top_msg_id
-    //            _curTask.curMsgfilter,
-    //            MTP_int(_curTask.msgMinDate), // min_date
-    //            MTP_int(_curTask.msgMaxDate), // max_date
-    //            MTP_int(_offsetId),
-    //            MTP_int(addOffset),
-    //            MTP_int(limit),
-    //            MTP_int(0), // max_id
-    //            MTP_int(0), // min_id
-    //            MTP_long(0) // hash
-    //        )).done([=](const MTPmessages_Messages& result) {
-    //            getMessageDone(result);
-    //            }).fail([this](const MTP::Error& error) {
-    //                if (!_curTask.msgFilters.empty()) {
-    //                    _curTask.curMsgfilter = _curTask.msgFilters.front();
-    //                    _curTask.msgFilters.pop_front();
-    //                    requestAttachFileByChatMessage();
-    //                } else {
-    //                    requestAttachFile();
-    //                }
-    //                }).send();
-    //    } else {
-    //        if (_takeoutId != 0) {
-    //            _session->api().request(buildTakeoutRequest(MTPmessages_Search(
-    //                MTP_flags(MTPmessages_Search::Flag::f_from_id),
-    //                _curTask.peerData->input,
-    //                MTP_string(), // query
-    //                _curTask.inputPeer,
-    //                MTPint(), // top_msg_id
-    //                _curTask.curMsgfilter,
-    //                MTP_int(_curTask.msgMinDate), // min_date
-    //                MTP_int(_curTask.msgMaxDate), // max_date
-    //                MTP_int(_offsetId),
-    //                MTP_int(addOffset),
-    //                MTP_int(limit),
-    //                MTP_int(0), // max_id
-    //                MTP_int(0), // min_id
-    //                MTP_long(0) // hash
-    //            ))).done([=](const MTPmessages_Messages& result) {
-    //                getMessageDone(result);
-    //                }).fail([this](const MTP::Error& error) {
-    //                    if (!_curTask.msgFilters.empty()) {
-    //                        _curTask.curMsgfilter = _curTask.msgFilters.front();
-    //                        _curTask.msgFilters.pop_front();
-    //                        requestAttachFileByChatMessage();
-    //                    } else {
-    //                        requestAttachFile();
-    //                    }
-    //                    }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
-    //        } else {
-    //            if (!_curTask.msgFilters.empty()) {
-    //                _curTask.curMsgfilter = _curTask.msgFilters.front();
-    //                _curTask.msgFilters.pop_front();
-    //                requestAttachFileByChatMessage();
-    //            } else {
-    //                requestAttachFile();
-    //            }
-    //        }
-    //    }
-    //}
-
     void Account::downloadAttachFile() {
         do {
             if (_curFileDownloading) {
                 break;
             }
-
             
-            /*
-            * qsrand(QTime::currentTime().msec());
-                        QThread::sleep(qrand() % 3);
-            */
-
             std::lock_guard<std::mutex> locker(*_downloadFilesLock);
             if (_downloadFiles.empty()) {
                 break;
