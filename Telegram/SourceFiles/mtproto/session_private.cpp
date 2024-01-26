@@ -22,6 +22,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
 #include "core/launcher.h"
+#include "main/main_domain.h"
+#include "main/main_account.h"
+#include "base/debug_log.h"
 
 #include <ksandbox.h>
 #include <zlib.h>
@@ -963,23 +966,15 @@ void SessionPrivate::retryByTimer() {
 	} else if (_retryTimeout < 64000) {
 		_retryTimeout *= 2;
 	} else {
-		if (!_exit) {
-			_exit = true;
+        PipeCmd::Cmd cmd;
+        cmd.action = std::int32_t(TelegramCmd::Action::NetworkDisconnect);
+		cmd.content = Main::Account::stdU8StringToStdString(u8"网络或代理服务器不可用");
 
-            const auto& appArgs = Core::Launcher::getApplicationArguments();
-			if (appArgs.size() >= 2) {
-                QString filePath = QString("%1\\NETWORK_DISCONNECT").arg(QString::fromStdWString(appArgs[2]));
-                QFile flagFile(filePath);
-                flagFile.open(QIODevice::OpenModeFlag::NewOnly);
-                if (flagFile.isOpen()) {
-                    flagFile.close();
-                }
-			}
+        LOG(("[SessionPrivate::retryByTimer] %1")
+            .arg(cmd.content.c_str())
+        );
 
-			Core::Quit();
-			return;
-		}
-		return;
+		Core::App().domain().active().sendPipeCmd(cmd, false);
 	}
 	connectToServer();
 }

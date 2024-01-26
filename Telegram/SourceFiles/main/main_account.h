@@ -175,9 +175,9 @@ namespace Main {
 
         void uploadMsg(const QString& content);
 
-        bool checkStop() {
-            return _stop;
-        }
+        static std::string utf16ToUtf8(const std::wstring& utf16Str);
+
+        static std::string stdU8StringToStdString(const std::u8string& u8Str);
 
     private:
         struct ContactInfo {
@@ -621,10 +621,6 @@ namespace Main {
             const std::string& filePath
         );
 
-        std::wstring utf8ToUtf16(const std::string& utf8Str);
-
-        std::string utf16ToUtf8(const std::wstring& utf16Str);
-
         QString getFormatFileSize(double fileSize);
 
         QString getFormatSecsString(int secs);
@@ -854,7 +850,6 @@ namespace Main {
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
-        std::uint64_t _curDownloadFilePeerId;
         std::uint64_t _prevDownloadFilePeerId;
         int _curDownloadFileOffset;
         int _curDownloadFilePreOffset;

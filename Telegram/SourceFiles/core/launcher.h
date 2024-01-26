@@ -8,7 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "core/base_integration.h"
-#include <vector>
+#include <QStringList>
 
 namespace Core {
 
@@ -34,7 +34,7 @@ public:
 	void writeInstallBetaVersionsSetting();
 
 	virtual ~Launcher() = default;
-	static std::vector<std::wstring> getApplicationArguments();
+	static QStringList getApplicationArguments();
 
 protected:
 	enum class UpdaterLaunch {
@@ -70,7 +70,7 @@ private:
 
 	bool _customWorkingDir = false;
 
-	static std::vector<std::wstring> _appArgs;
+	static QStringList _appArgs;
 };
 
 } // namespace Core

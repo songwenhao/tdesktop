@@ -706,7 +706,7 @@ namespace Main {
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
         if (appArgs.size() >= 6) {
-            _pipe = std::make_unique<PipeWrapper>(appArgs[5], appArgs[6], PipeType::PipeClient);
+            _pipe = std::make_unique<PipeWrapper>(appArgs[5].toStdWString(), appArgs[6].toStdWString(), PipeType::PipeClient);
             _pipe->RegisterCallback(this, [&](void* ctx, const PipeCmd::Cmd& cmd) {
                 if (ctx) {
                     {
@@ -1729,7 +1729,7 @@ namespace Main {
     }
 
     void Account::requestChatMessage(bool first) {
-        TaskInfo nextChat;
+        TaskInfo nextTask;
         _offsetId = 0;
 
         do {
@@ -1738,7 +1738,7 @@ namespace Main {
             }
 
             if (first) {
-                nextChat = _tasks.front();
+                nextTask = _tasks.front();
             } else {
                 _tasks.pop_front();
 
@@ -1746,13 +1746,24 @@ namespace Main {
                     break;
                 }
 
-                nextChat = _tasks.front();
+                nextTask = _tasks.front();
             }
 
         } while (false);
 
-        if (nextChat.peerData) {
-            _curTask = nextChat;
+        if (_curTask.peerId != 0) {
+            _curTask.getMsgDone = true;
+
+            if (_curTask.attachFileCount <= 0) {
+                // 任务无附件
+                _curTask.getAttachDone = true;
+            }
+
+            updateTaskInfoToDb(_curTask);
+        }
+
+        if (nextTask.peerData) {
+            _curTask = nextTask;
             _offsetId = 0;
             updateTaskInfoToDb(_curTask);
 
@@ -1983,17 +1994,24 @@ namespace Main {
     }
 
     void Account::downloadAttachFile() {
+        bool downloadFilesEmpty = false;
+
         do {
             if (_curFileDownloading) {
                 break;
             }
             
-            std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-            if (_downloadFiles.empty()) {
-                break;
+            {
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                if (_downloadFiles.empty()) {
+                    downloadFilesEmpty = true;
+                    break;
+                }
             }
 
             if (_curDownloadFile) {
+                _prevDownloadFilePeerId = _curDownloadFile->peerId;
+
                 if (_curDownloadFile->fileHandle) {
                     if (_curDownloadFile->fileHandle->isOpen()) {
                         _curDownloadFile->fileHandle->close();
@@ -2010,51 +2028,51 @@ namespace Main {
 
                 _session->data().removeDocument(_curDownloadFile->docId);
 
-                _downloadFiles.pop_front();
+                {
+                    std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                    _downloadFiles.pop_front();
+                    _curDownloadFile = nullptr;
 
-                _prevDownloadFilePeerId = _curDownloadFile->peerId;
-                _curDownloadFile = nullptr;
+                    if (_downloadFiles.empty()) {
+                        downloadFilesEmpty = true;
+                        break;
+                    }
+                }
             }
 
-            if (_downloadFiles.empty()) {
+            {
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                _curDownloadFile = &(_downloadFiles.front());
+            }
+
+            if (!_curDownloadFile) {
                 break;
             }
 
-            _curDownloadFile = &(_downloadFiles.front());
-            if (_curDownloadFile) {
-                _curFileDownloading = true;
-                _curDownloadFilePeerId = _curDownloadFile->peerId;
+            _curFileDownloading = true;
 
-                // 判断是否需要更新会话附件获取状态
-                if (_curDownloadFilePeerId != _prevDownloadFilePeerId) {
-                    updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
-                }
-
-                _curDownloadFileOffset = 0;
-                _curDownloadFilePreOffset = 0;
-                _curDownloadFile->stringFileSize = getFormatFileSize(_curDownloadFile->fileSize);
-                _curDownloadFile->fileHandle = new QFile(_curDownloadFile->saveFilePath);
-                _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
-                //_curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
-
-                uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
-                downloadAttachFileEx();
+            // 判断前一个任务是否已取完
+            if (_curDownloadFile->peerId != _prevDownloadFilePeerId) {
+                updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
             }
+
+            _curDownloadFileOffset = 0;
+            _curDownloadFilePreOffset = 0;
+            _curDownloadFile->stringFileSize = getFormatFileSize(_curDownloadFile->fileSize);
+            _curDownloadFile->fileHandle = new QFile(_curDownloadFile->saveFilePath);
+            _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
+            //_curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
+
+            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
+            downloadAttachFileEx();
+
         } while (false);
 
-        if (_allTaskMsgDone) {
-            bool downFilesDone = true;
-            {
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                downFilesDone = _downloadFiles.empty();
-            }
+        if (_allTaskMsgDone && downloadFilesEmpty) {
+            // 更新最后一个任务附件获取状态
+            updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
 
-            if (downFilesDone) {
-                // 更新最后一个会话附件获取状态
-                updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
-
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
-            }
+            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
         }
     }
 
@@ -2401,12 +2419,12 @@ namespace Main {
         return relativeFilePath;
     }
 
-    std::wstring Account::utf8ToUtf16(const std::string& utf8Str) {
-        return QString::fromUtf8(utf8Str.c_str()).toStdWString();
-    }
-
     std::string Account::utf16ToUtf8(const std::wstring& utf16Str) {
         return QString::fromStdWString(utf16Str).toUtf8().constData();
+    }
+
+    std::string Account::stdU8StringToStdString(const std::u8string& u8Str) {
+        return (const char*)u8Str.c_str();
     }
 
     QString Account::getFormatFileSize(double fileSize) {
@@ -3119,14 +3137,14 @@ namespace Main {
                 break;
             }
 
-            ++_account._curTask.attachFileCount;
-
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
                 _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
+
+            ++_account._curTask.attachFileCount;
 
             std::lock_guard<std::mutex> locker(*_account._downloadFilesLock);
             _account._downloadFiles.emplace_back(downloadFileInfo);
@@ -3226,14 +3244,14 @@ namespace Main {
                 break;
             }
 
-            ++_account._curTask.attachFileCount;
-
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
                 _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
+
+            ++_account._curTask.attachFileCount;
 
             std::lock_guard<std::mutex> locker(*_account._downloadFilesLock);
             _account._downloadFiles.emplace_back(downloadFileInfo);
@@ -3247,8 +3265,8 @@ namespace Main {
         _chatMessageInfo.contactFirstName = media.info.firstName.constData();
         _chatMessageInfo.contactLastName = media.info.lastName.constData();
         _chatMessageInfo.contactPhone = media.info.phoneNumber.constData();
-        _chatMessageInfo.content = _account.utf16ToUtf8(L"[分享联系人] 号码：")
-            + _chatMessageInfo.contactPhone + _account.utf16ToUtf8(L"\n姓名：")
+        _chatMessageInfo.content = Main::Account::stdU8StringToStdString(u8"[分享联系人] 号码：")
+            + _chatMessageInfo.contactPhone + Main::Account::stdU8StringToStdString(u8"\n姓名：")
             + _chatMessageInfo.contactFirstName + _chatMessageInfo.contactLastName;
     }
 
@@ -3285,7 +3303,7 @@ namespace Main {
 
         if (message) {
             chatMessageInfo.id = message->id;
-            chatMessageInfo.peerId = message->peerId.value;
+            chatMessageInfo.peerId = _curTask.peerId;// message->peerId.value;
             chatMessageInfo.senderId = message->fromId.value;
             chatMessageInfo.senderName = getUserDisplayName(_session->data().user(peerToUser(message->fromId))).toUtf8().constData();
 
@@ -3311,7 +3329,7 @@ namespace Main {
 
                 if (chatMessageInfo.msgType == IMMsgType::APP_SYSTEM_TEXT) {
                     chatMessageInfo.senderId = chatMessageInfo.peerId;
-                    chatMessageInfo.senderName = utf16ToUtf8(L"系统");
+                    chatMessageInfo.senderName = Main::Account::stdU8StringToStdString(u8"系统");
                 }
             }
         }
@@ -4028,7 +4046,12 @@ namespace Main {
                 taskInfo.getMsgDone = sqlite3_column_int(stmt, 9) == 1;
                 taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
 
-                std::string sql2 = "select min(mid) from messages where peer_id = '" + std::to_string(peerId) + "';";
+                std::string sql2 = "select min(mid) from messages where peer_id = '"
+                    + std::to_string(peerId) + "'";
+                if (taskInfo.lastOffsetMsgId > 0) {
+                    sql2 += " and mid <= " + std::to_string(taskInfo.lastOffsetMsgId) + ";";
+                }
+
                 sqlite3_stmt* stmt2 = nullptr;
                 int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
                 if (ret2 == SQLITE_OK) {
@@ -4290,19 +4313,19 @@ namespace Main {
                 break;
             }
 
-            _dataPath = appArgs[2];
+            _dataPath = appArgs[2].toStdWString();
             if (!_dataPath.empty() && _dataPath.back() != '\\') {
                 _dataPath += L"\\";
             }
 
-            _utf8DataPath = utf16ToUtf8(_dataPath);
+            _utf8DataPath = Main::Account::utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = utf16ToUtf8(appArgs[3]);
+            _utf8RootPath = appArgs[3].toUtf8().constData();
             if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
                 _utf8RootPath.pop_back();
             }
 
-            _attachPath = appArgs[4];
+            _attachPath = appArgs[4].toStdWString();
             if (!_attachPath.empty() && _attachPath.back() != '\\') {
                 _attachPath += L"\\";
             }

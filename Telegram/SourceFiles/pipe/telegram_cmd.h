@@ -19,7 +19,8 @@ namespace TelegramCmd {
         GetChatMessage,
         ExportData,
         UploadMsg,
-        LogOut
+        LogOut,
+        NetworkDisconnect
     };
 
     enum class Status : std::int32_t {
