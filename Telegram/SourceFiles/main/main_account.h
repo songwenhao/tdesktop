@@ -707,6 +707,8 @@ namespace Main {
         void handleTokenResult(const MTPauth_LoginToken& result);
         void refreshQrCode();
 
+        void requestPasswordData();
+        void checkPasswd(const std::string& password);
         void checkRequest();
 
         void AddExtraData(
@@ -789,6 +791,7 @@ namespace Main {
         MTP::Instance::Fields _mtpFields;
         MTP::AuthKeysList _mtpKeysToDestroy;
         bool _loggingOut = false;
+        bool _logined = false;
 
         rpl::lifetime _lifetime;
 
@@ -796,7 +799,6 @@ namespace Main {
 
         mutable std::optional<MTP::Sender> _api;
         QString _userPhone;
-        bool _getCloudPasswordState;
         QByteArray _phoneHash;
         bytes::vector _passwordHash;
         Core::CloudPasswordState _passwordState;
@@ -807,9 +809,11 @@ namespace Main {
         bool _pipeConnected;
 
         mtpRequestId _requestId;
+        mtpRequestId _setRequest = 0;
         bool _forceRefresh;
         bool _firstRefreshQrCode;
         base::Timer _refreshQrCodeTimer;
+        crl::time _lastSrpIdInvalidTime = 0;
 
         bool _checkRequest;
 
@@ -846,6 +850,8 @@ namespace Main {
         base::Timer _sleepTimer;
         crl::time _requestMsgSleepTime;
         crl::time _downloadAttachFileRemainSleepTime;
+
+        base::Timer _checkLoginTimer;
 
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;

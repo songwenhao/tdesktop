@@ -84,6 +84,7 @@ PRIVATE
     base/platform/mac/base_utilities_mac.h
     base/platform/mac/base_utilities_mac.mm
     base/platform/win/base_battery_saving_win.cpp
+    base/platform/win/base_battery_saving_win.cpp
     base/platform/win/base_battery_saving_win.h
     base/platform/win/base_file_utilities_win.cpp
     base/platform/win/base_file_utilities_win.h
@@ -111,6 +112,8 @@ PRIVATE
     base/platform/win/base_windows_winrt.h
     base/platform/win/base_windows_wrl.cpp
     base/platform/win/base_windows_wrl.h
+    base/platform/win/utils.h
+    base/platform/win/utils.cpp
     base/platform/win/wrl/wrl_implements_h.h
     base/platform/win/wrl/wrl_module_h.h
     base/platform/base_platform_custom_app_icon.h

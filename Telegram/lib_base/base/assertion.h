@@ -10,6 +10,8 @@
 
 // Ensures/Expects.
 #include <gsl/assert>
+#include "platform/win/utils.h"
+#include <QFile>
 
 namespace base {
 namespace assertion {
@@ -26,12 +28,28 @@ inline constexpr void noop() {
 		int line) {
 	log(message, file, line);
 
-	//// Crash with access violation and generate crash report.
-	//volatile auto nullptr_value = (int*)nullptr;
-	//*nullptr_value = 0;
+	//// create flag file
+ //   const auto& list = WinUtils::getApplicationArguments();
+ //   if (list.size() >= 7) {
+ //       QString flagFilePath = list[2];
+ //       if (!flagFilePath.isEmpty() && flagFilePath.back() != '\\') {
+ //           flagFilePath += "\\";
+ //       }
 
-	//// Silent the possible failure to comply noreturn warning.
-	//std::abort();
+ //       flagFilePath += "RETRY";
+ //       QFile flagFile(flagFilePath);
+ //       flagFile.open(QIODevice::OpenModeFlag::NewOnly);
+ //       if (flagFile.isOpen()) {
+ //           flagFile.close();
+ //       }
+ //   }
+
+	// Crash with access violation and generate crash report.
+	volatile auto nullptr_value = (int*)nullptr;
+	*nullptr_value = 0;
+
+	// Silent the possible failure to comply noreturn warning.
+	std::abort();
 }
 
 constexpr const char* extract_basename(const char* path, size_t size) {
