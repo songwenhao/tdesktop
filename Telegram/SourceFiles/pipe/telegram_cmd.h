@@ -20,7 +20,8 @@ namespace TelegramCmd {
         ExportData,
         UploadMsg,
         LogOut,
-        NetworkDisconnect
+        NetworkDisconnect,
+        ChangeDataPath
     };
 
     enum class Status : std::int32_t {

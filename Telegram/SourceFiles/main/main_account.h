@@ -175,6 +175,8 @@ namespace Main {
 
         void uploadMsg(const QString& content);
 
+        static std::wstring utf8ToUtf16(const std::string& utf8Str);
+
         static std::string utf16ToUtf8(const std::wstring& utf16Str);
 
         static std::string stdU8StringToStdString(const std::u8string& u8Str);
@@ -557,6 +559,8 @@ namespace Main {
 
         void onSecondVerify();
 
+        void onLoginEnd();
+
         void onGetLoginUserPhone();
 
         void onGetContactAndChat();
@@ -566,6 +570,8 @@ namespace Main {
         void onExportData();
 
         void onLogOut();
+
+        void onChangeDataPath();
 
         void requestPhoneContacts();
         void requestContacts();
@@ -704,11 +710,14 @@ namespace Main {
         void checkForTokenUpdate(const MTPUpdates& updates);
         void checkForTokenUpdate(const MTPUpdate& update);
         void importTo(MTP::DcId dcId, const QByteArray& token);
+        void showTokenError(const MTP::Error& error);
         void handleTokenResult(const MTPauth_LoginToken& result);
         void refreshQrCode();
 
+        void checkPasswordHash();
         void requestPasswordData();
         void checkPasswd(const std::string& password);
+        void handleSrpIdInvalid();
         void checkRequest();
 
         void AddExtraData(
@@ -766,6 +775,8 @@ namespace Main {
             const ProtobufCmd::Content& content,
             const std::string& key
         );
+
+        QString telegramActionToString(TelegramCmd::Action action);
 
         /* Member variables */
         const not_null<Domain*> _domain;
