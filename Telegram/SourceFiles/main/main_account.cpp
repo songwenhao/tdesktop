@@ -809,12 +809,12 @@ namespace Main {
                     _requestMsgSleepTime = 10 + qrand() % 10;
                     _downloadAttachFileRemainSleepTime = _requestMsgSleepTime;
 
-                    // 重新启动休眠定时器，触发时间为5~10分钟
-                    _sleepTimer.callOnce((qrand() % 5 + 5) * 60 * 1000);
+                    //// 重新启动休眠定时器，触发时间为5~10分钟
+                    //_sleepTimer.callOnce((qrand() % 5 + 5) * 60 * 1000);
                     });
 
                 // 首次启动休眠定时器，触发时间为10分钟
-                _sleepTimer.callOnce(10 * 60 * 1000);
+                //_sleepTimer.callOnce(10 * 60 * 1000);
 
                 startHandlePipeCmdThd();
             }
@@ -1917,6 +1917,9 @@ namespace Main {
                         });
             }
 
+            // 固定休眠一下
+            QThread::sleep(1);
+
             if (msgCount > 0) {
                 requestChatMessageEx();
             } else {
@@ -2156,6 +2159,7 @@ namespace Main {
                     }
 
                     _curFileDownloading = false;
+                    _downloadAttachFileRemainSleepTime = 1;
                 }
             };
 
@@ -2227,6 +2231,7 @@ namespace Main {
                 }
 
                 _curFileDownloading = false;
+                _downloadAttachFileRemainSleepTime = 1;
             } else {
                 downloadAttachFileEx();
             }
@@ -2236,6 +2241,7 @@ namespace Main {
             }
 
             _curFileDownloading = false;
+            _downloadAttachFileRemainSleepTime = 1;
         }
     }
 
@@ -3316,6 +3322,7 @@ namespace Main {
 
             // 跳过动图，出现过下载卡住的情况
             if (downloadFileInfo.isSticker) {
+                _chatMessageInfo.content = utf16ToUtf8(L"动态表情");
                 break;
             }
 

@@ -3,42 +3,13 @@
 #include <cstdint>
 #include <string>
 #include <chrono>
-#include <combaseapi.h>
-
-#pragma comment(lib, "Ole32")
 
 namespace PipeCmd {
 
     inline std::string GenerateUniqueId() {
-        std::string uniqueId;
-        char buf[256] = { 0 };
-        GUID guid = { 0 };
-
-        HRESULT ret = ::CoInitializeEx(NULL, COINIT_MULTITHREADED);
-        if (SUCCEEDED(::CoCreateGuid(&guid))) {
-            _snprintf_s(buf, _countof(buf), _TRUNCATE,
-                "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-                guid.Data1,
-                guid.Data2,
-                guid.Data3,
-                guid.Data4[0], guid.Data4[1],
-                guid.Data4[2], guid.Data4[3],
-                guid.Data4[4], guid.Data4[5],
-                guid.Data4[6], guid.Data4[7]);
-            uniqueId = buf;
-        }
-
-        if (uniqueId.empty()) {
-            auto duration_since_epoch = std::chrono::system_clock::now().time_since_epoch();
-            auto microseconds_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(duration_since_epoch).count();
-            uniqueId = std::to_string(microseconds_since_epoch);
-        }
-
-        if (SUCCEEDED(ret)) {
-            ::CoUninitialize();
-        }
-
-        return uniqueId;
+        auto duration_since_epoch = std::chrono::system_clock::now().time_since_epoch();
+        auto nanoseconds_since_epoch = std::chrono::duration_cast<std::chrono::nanoseconds>(duration_since_epoch).count();
+        return std::to_string(nanoseconds_since_epoch);
     }
 
     struct Cmd {
