@@ -7,9 +7,20 @@
 target_compile_definitions(common_options
 INTERFACE
     WIN32
+    WIN32_LEAN_AND_MEAN
     _WINDOWS
     _SCL_SECURE_NO_WARNINGS
     NOMINMAX
+    NOSERVICE
+    NOMCX
+    NOIME
+    NOSOUND
+    NOCOMM
+    NOKANJI
+    NORPC
+    NOPROXYSTUB
+    NOIMAGE
+    NOTAPE
     UNICODE
     _UNICODE
 )
@@ -39,6 +50,17 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         $<IF:$<CONFIG:Debug>,/NODEFAULTLIB:LIBCMT,/DEBUG;/OPT:REF>
         $<$<BOOL:${DESKTOP_APP_NO_PDB}>:/DEBUG:NONE>
     )
+
+    if (DESKTOP_APP_ASAN)
+        target_compile_options(common_options INTERFACE /fsanitize=address)
+
+        # https://developercommunity.visualstudio.com/t/Linker-error-LNK2038-when-using-Parallel/10512721
+        target_compile_definitions(common_options
+        INTERFACE
+            _DISABLE_VECTOR_ANNOTATION
+            _DISABLE_STRING_ANNOTATION
+        )
+    endif()
 
     if (build_win64)
         target_compile_options(common_options

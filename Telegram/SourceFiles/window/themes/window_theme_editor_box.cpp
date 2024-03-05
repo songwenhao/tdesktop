@@ -14,7 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/text/text_utilities.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
@@ -44,7 +44,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_widgets.h"
 #include "styles/style_window.h"
-#include "styles/style_settings.h"
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 
@@ -451,8 +450,7 @@ SendMediaReady PrepareThemeMedia(
 		MTP_photoEmpty(MTP_long(0)),
 		thumbnails,
 		document,
-		thumbnailBytes,
-		0);
+		thumbnailBytes);
 }
 
 Fn<void()> SavePreparedTheme(
@@ -693,7 +691,7 @@ void CreateForExistingBox(
 	box->addRow(
 		object_ptr<Ui::SettingsButton>(
 			box,
-			tr::lng_theme_editor_import_existing() | Ui::Text::ToUpper(),
+			tr::lng_theme_editor_import_existing(),
 			st::createThemeImportButton),
 		style::margins(
 			0,
@@ -854,8 +852,8 @@ void SaveThemeBox(
 		object_ptr<Ui::FlatLabel>(
 			box,
 			tr::lng_theme_editor_background_image(),
-			st::settingsSubsectionTitle),
-		st::settingsSubsectionTitlePadding);
+			st::defaultSubsectionTitle),
+		st::defaultSubsectionTitlePadding);
 	const auto back = box->addRow(
 		object_ptr<BackgroundSelector>(
 			box,
@@ -892,12 +890,11 @@ void SaveThemeBox(
 			} else if (error == u"THEME_SLUG_INVALID"_q) {
 				type = SaveErrorType::Link;
 			} else if (error == u"THEME_SLUG_OCCUPIED"_q) {
-				Ui::Toast::Show(
-					Ui::BoxShow(box).toastParent(),
+				box->showToast(
 					tr::lng_create_channel_link_occupied(tr::now));
 				type = SaveErrorType::Link;
 			} else if (!error.isEmpty()) {
-				Ui::Toast::Show(Ui::BoxShow(box).toastParent(), error);
+				box->showToast(error);
 			}
 			if (type == SaveErrorType::Name) {
 				name->showError();

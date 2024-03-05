@@ -75,6 +75,10 @@ public:
 	void setUntoggledOverride(
 		std::optional<QColor> untoggledOverride);
 
+	[[nodiscard]] static Fn<void()> PrepareNonToggledError(
+		not_null<CheckView*> view,
+		rpl::lifetime &lifetime);
+
 private:
 	QSize rippleSize() const;
 
@@ -181,7 +185,7 @@ public:
 	void setAllowTextLines(int lines = 0);
 	void setTextBreakEverywhere(bool allow = true);
 
-	void setLink(uint16 lnkIndex, const ClickHandlerPtr &lnk);
+	void setLink(uint16 index, const ClickHandlerPtr &lnk);
 	void setLinksTrusted();
 
 	using ClickHandlerFilter = Fn<bool(const ClickHandlerPtr&, Qt::MouseButton)>;

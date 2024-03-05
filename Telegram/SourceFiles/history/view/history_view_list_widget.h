@@ -48,6 +48,10 @@ struct ChosenReaction;
 struct ButtonParameters;
 } // namespace HistoryView::Reactions
 
+namespace Window {
+struct SectionShow;
+} // namespace Window
+
 namespace HistoryView {
 
 struct TextState;
@@ -93,6 +97,7 @@ public:
 	virtual bool listScrollTo(int top, bool syntetic = true) = 0;
 	virtual void listCancelRequest() = 0;
 	virtual void listDeleteRequest() = 0;
+	virtual void listTryProcessKeyInput(not_null<QKeyEvent*> e) = 0;
 	virtual rpl::producer<Data::MessagesSlice> listSource(
 		Data::MessagePosition aroundId,
 		int limitBefore,
@@ -118,6 +123,9 @@ public:
 		not_null<const Element*> view) = 0;
 	virtual void listSendBotCommand(
 		const QString &command,
+		const FullMsgId &context) = 0;
+	virtual void listSearch(
+		const QString &query,
 		const FullMsgId &context) = 0;
 	virtual void listHandleViaClick(not_null<UserData*> bot) = 0;
 	virtual not_null<Ui::ChatTheme*> listChatTheme() = 0;
@@ -226,11 +234,14 @@ public:
 	[[nodiscard]] bool animatedScrolling() const;
 	bool isAbovePosition(Data::MessagePosition position) const;
 	bool isBelowPosition(Data::MessagePosition position) const;
-	void highlightMessage(FullMsgId itemId);
+	void highlightMessage(
+		FullMsgId itemId,
+		const TextWithEntities &part,
+		int partOffsetHint);
 
 	void showAtPosition(
 		Data::MessagePosition position,
-		anim::type animated = anim::type::normal,
+		const Window::SectionShow &params,
 		Fn<void(bool found)> done = nullptr);
 	void refreshViewer();
 
@@ -276,8 +287,8 @@ public:
 	[[nodiscard]] rpl::producer<FullMsgId> editMessageRequested() const;
 	void editMessageRequestNotify(FullMsgId item) const;
 	[[nodiscard]] bool lastMessageEditRequestNotify() const;
-	[[nodiscard]] rpl::producer<FullMsgId> replyToMessageRequested() const;
-	void replyToMessageRequestNotify(FullMsgId item);
+	[[nodiscard]] rpl::producer<FullReplyTo> replyToMessageRequested() const;
+	void replyToMessageRequestNotify(FullReplyTo id);
 	[[nodiscard]] rpl::producer<FullMsgId> readMessageRequested() const;
 	[[nodiscard]] rpl::producer<FullMsgId> showMessageRequested() const;
 	void replyNextMessage(FullMsgId fullId, bool next = true);
@@ -291,8 +302,6 @@ public:
 	// ElementDelegate interface.
 	Context elementContext() override;
 	bool elementUnderCursor(not_null<const Element*> view) override;
-	[[nodiscard]] float64 elementHighlightOpacity(
-		not_null<const HistoryItem*> item) const override;
 	bool elementInSelectionMode() override;
 	bool elementIntersectsRange(
 		not_null<const Element*> view,
@@ -319,10 +328,13 @@ public:
 	void elementSendBotCommand(
 		const QString &command,
 		const FullMsgId &context) override;
+	void elementSearchInList(
+		const QString &query,
+		const FullMsgId &context) override;
 	void elementHandleViaClick(not_null<UserData*> bot) override;
 	bool elementIsChatWide() override;
 	not_null<Ui::PathShiftGradient*> elementPathShiftGradient() override;
-	void elementReplyTo(const FullMsgId &to) override;
+	void elementReplyTo(const FullReplyTo &to) override;
 	void elementStartInteraction(not_null<const Element*> view) override;
 	void elementStartPremium(
 		not_null<const Element*> view,
@@ -429,7 +441,7 @@ private:
 		Fn<bool()> overrideInitialScroll);
 	bool showAtPositionNow(
 		Data::MessagePosition position,
-		anim::type animated,
+		const Window::SectionShow &params,
 		Fn<void(bool found)> done);
 
 	Ui::ChatPaintContext preparePaintContext(const QRect &clip) const;
@@ -644,6 +656,7 @@ private:
 	base::flat_map<MsgId, Ui::PeerUserpicView> _hiddenSenderUserpics;
 
 	const std::unique_ptr<Ui::PathShiftGradient> _pathGradient;
+	QPainterPath _highlightPathCache;
 
 	base::unique_qptr<Ui::RpWidget> _emptyInfo = nullptr;
 
@@ -734,7 +747,7 @@ private:
 	base::Timer _touchScrollTimer;
 
 	rpl::event_stream<FullMsgId> _requestedToEditMessage;
-	rpl::event_stream<FullMsgId> _requestedToReplyToMessage;
+	rpl::event_stream<FullReplyTo> _requestedToReplyToMessage;
 	rpl::event_stream<FullMsgId> _requestedToReadMessage;
 	rpl::event_stream<FullMsgId> _requestedToShowMessage;
 

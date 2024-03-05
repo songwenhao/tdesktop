@@ -14,7 +14,6 @@ if (DESKTOP_APP_USE_PACKAGED)
     INTERFACE
         Qt::Core
         Qt::CorePrivate
-        $<TARGET_NAME_IF_EXISTS:Qt::Core5Compat>
         Qt::Gui
         Qt::GuiPrivate
         $<TARGET_NAME_IF_EXISTS:Qt::OpenGL>
@@ -24,7 +23,6 @@ if (DESKTOP_APP_USE_PACKAGED)
         Qt::Network
         Qt::Svg
         $<TARGET_NAME_IF_EXISTS:Qt::DBus>
-        $<TARGET_NAME_IF_EXISTS:Qt::Qml>
         $<TARGET_NAME_IF_EXISTS:Qt::Quick>
         $<TARGET_NAME_IF_EXISTS:Qt::QuickWidgets>
         $<TARGET_NAME_IF_EXISTS:Qt::WaylandCompositor>
@@ -37,14 +35,12 @@ target_include_directories(external_qt SYSTEM
 INTERFACE
     ${qt_loc}/include
     ${qt_loc}/include/QtCore
-    $<$<TARGET_EXISTS:Qt::Core5Compat>:${qt_loc}/include/QtCore5Compat>
     ${qt_loc}/include/QtGui
     $<$<TARGET_EXISTS:Qt::OpenGL>:${qt_loc}/include/QtOpenGL>
     ${qt_loc}/include/QtWidgets
     $<$<TARGET_EXISTS:Qt::OpenGLWidgets>:${qt_loc}/include/QtOpenGLWidgets>
     ${qt_loc}/include/QtSvg
     $<$<TARGET_EXISTS:Qt::DBus>:${qt_loc}/include/QtDBus>
-    $<$<TARGET_EXISTS:Qt::Qml>:${qt_loc}/include/QtQml>
     $<$<TARGET_EXISTS:Qt::Quick>:${qt_loc}/include/QtQuick>
     $<$<TARGET_EXISTS:Qt::QuickWidgets>:${qt_loc}/include/QtQuickWidgets>
     $<$<TARGET_EXISTS:Qt::WaylandCompositor>:${qt_loc}/include/QtWaylandCompositor>
@@ -62,7 +58,6 @@ INTERFACE
     QT_STATICPLUGIN
     QT_PLUGIN
     QT_CORE_LIB
-    $<$<TARGET_EXISTS:Qt::Core5Compat>:QT_CORE5COMPAT_LIB>
     QT_GUI_LIB
     $<$<TARGET_EXISTS:Qt::OpenGL>:QT_OPENGL_LIB>
     QT_WIDGETS_LIB
@@ -70,7 +65,6 @@ INTERFACE
     QT_NETWORK_LIB
     QT_SVG_LIB
     $<$<TARGET_EXISTS:Qt::DBus>:QT_DBUS_LIB>
-    $<$<TARGET_EXISTS:Qt::Qml>:QT_QML_LIB>
     $<$<TARGET_EXISTS:Qt::Quick>:QT_QUICK_LIB>
     $<$<TARGET_EXISTS:Qt::QuickWidgets>:QT_QUICKWIDGETS_LIB>
     $<$<TARGET_EXISTS:Qt::WaylandCompositor>:QT_WAYLANDCOMPOSITOR_LIB>
@@ -79,6 +73,11 @@ INTERFACE
 if (WIN32)
     set(qt_lib_prefix "")
     set(qt_lib_suffix $<$<CONFIG:Debug>:d>.lib)
+
+    target_compile_definitions(external_qt
+    INTERFACE
+        _SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING
+    )
 else()
     set(qt_lib_prefix lib)
     if (APPLE)
@@ -99,12 +98,6 @@ set(common_qt_libs
     lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Core
 )
 
-if (TARGET Qt::Core5Compat)
-    list(PREPEND common_qt_libs
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Core5Compat
-    )
-endif()
-
 if (TARGET Qt::OpenGL)
     list(PREPEND common_qt_libs
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}OpenGL
@@ -117,23 +110,10 @@ if (TARGET Qt::OpenGLWidgets)
     )
 endif()
 
-if (TARGET Qt::Qml)
-    list(PREPEND common_qt_libs
-        qml/QtQml/WorkerScript/${qt_lib_prefix}workerscriptplugin
-        qml/QtQml/Models/${qt_lib_prefix}modelsplugin
-        qml/QtQml/Base/${qt_lib_prefix}qmlplugin
-        qml/QtQml/${qt_lib_prefix}qmlmetaplugin
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}QmlWorkerScript
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}QmlModels
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Qml
-    )
-endif()
-
 if (TARGET Qt::Quick)
     list(PREPEND common_qt_libs
-        qml/QtQuick/Window/${qt_lib_prefix}quickwindowplugin
-        qml/QtQuick/${qt_lib_prefix}qtquick2plugin
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Quick
+        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Qml
     )
 endif()
 
@@ -155,9 +135,18 @@ else()
         lib/${qt_lib_prefix}qtlibpng
         lib/${qt_lib_prefix}qtpcre2
     )
+
 endif()
 
 set(qt_libs_list "")
+if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+    list(APPEND qt_libs_list
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWebpPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QJpegPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QGifPlugin_init>
+    )
+endif()
+
 if (WIN32)
     target_include_directories(external_qt SYSTEM
     INTERFACE
@@ -195,33 +184,53 @@ elseif (APPLE)
         plugins/tls/${qt_lib_prefix}qsecuretransportbackend
         plugins/networkinformation/${qt_lib_prefix}qscnetworkreachability
     )
+    list(APPEND qt_libs_list
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QCocoaIntegrationPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QSecureTransportBackendPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QSCNetworkReachabilityNetworkInformationPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QCocoaIntegrationPlugin_resources_1>
+    )
     foreach (lib ${qt_libs})
         list(APPEND qt_libs_list "${qt_loc}/${lib}${qt_lib_suffix}")
     endforeach()
-    list(APPEND qt_libs_list
-        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QCocoaIntegrationPlugin_resources_1>
-    )
 else()
     set(qt_libs
-        plugins/platforminputcontexts/${qt_lib_prefix}composeplatforminputcontextplugin
-        plugins/platformthemes/${qt_lib_prefix}qgtk3
         plugins/platforms/${qt_lib_prefix}qxcb
-        plugins/tls/${qt_lib_prefix}qopensslbackend
         plugins/xcbglintegrations/${qt_lib_prefix}qxcb-egl-integration
         plugins/xcbglintegrations/${qt_lib_prefix}qxcb-glx-integration
+        plugins/platforminputcontexts/${qt_lib_prefix}composeplatforminputcontextplugin
         plugins/iconengines/${qt_lib_prefix}qsvgicon
+        plugins/platformthemes/${qt_lib_prefix}qgtk3
+        plugins/tls/${qt_lib_prefix}qopensslbackend
+        plugins/networkinformation/${qt_lib_prefix}qglib
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}XcbQpa
         ${common_qt_libs}
     )
+    list(APPEND qt_libs_list
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QXcbIntegrationPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QXcbEglIntegrationPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QXcbGlxIntegrationPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QComposePlatformInputContextPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QSvgIconPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QGtk3ThemePlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QTlsBackendOpenSSLPlugin_init>
+        $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QGlibNetworkInformationPlugin_init>
+    )
     if (TARGET Qt::DBus)
-        list(APPEND qt_libs
+        list(PREPEND qt_libs
             plugins/platforminputcontexts/${qt_lib_prefix}ibusplatforminputcontextplugin
             plugins/platformthemes/${qt_lib_prefix}qxdgdesktopportal
+        )
+        list(APPEND qt_libs
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}DBus
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Core
         )
+        list(APPEND qt_libs_list
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QIbusPlatformInputContextPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QXdgDesktopPortalThemePlugin_init>
+        )
     endif()
-    if (NOT DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
+    if (TARGET Qt::WaylandClient)
         list(PREPEND qt_libs
             plugins/platforms/${qt_lib_prefix}qwayland-generic
             plugins/platforms/${qt_lib_prefix}qwayland-egl
@@ -231,28 +240,24 @@ else()
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandEglClientHwIntegration
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandClient
         )
+        list(APPEND qt_libs_list
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandIntegrationPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandEglPlatformIntegrationPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandEglClientBufferPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandXdgShellIntegrationPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandBradientDecorationPlugin_init>
+        )
     endif()
     if (TARGET Qt::WaylandCompositor)
         list(PREPEND qt_libs
+            plugins/wayland-graphics-integration-server/${qt_lib_prefix}qt-wayland-compositor-wayland-egl
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandEglCompositorHwIntegration
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandCompositor
         )
         list(APPEND qt_libs_list
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandEglClientBufferIntegrationPlugin_init>
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositor_resources_1>
         )
-        if (TARGET Qt::Quick)
-            list(PREPEND qt_libs
-                qml/QtWayland/Compositor/${qt_lib_prefix}qwaylandcompositorplugin
-                qml/QtWayland/Compositor/XdgShell/${qt_lib_prefix}waylandcompositorxdgshellplugin
-            )
-            list(APPEND qt_libs_list
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::qwaylandcompositorplugin_init>
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositorXdgShell_init>
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositor_qmlcache>
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositor_resources_2>
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositor_resources_3>
-                $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::WaylandCompositorXdgShell_resources_1>
-            )
-        endif()
     endif()
     foreach (lib ${qt_libs})
         list(APPEND qt_libs_list "${qt_loc}/${lib}${qt_lib_suffix}")
@@ -268,26 +273,9 @@ if (QT_VERSION_MAJOR GREATER_EQUAL 6)
         $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::Widgets_resources_3>
     )
 
-    if (TARGET Qt::Qml)
-        list(APPEND qt_libs_list
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QmlMeta_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::qmlplugin_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::modelsplugin_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::workerscriptplugin_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QmlMeta_resources_1>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::Qml_resources_1>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QmlModels_resources_1>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QmlWorkerScript_resources_1>
-        )
-    endif()
-
     if (TARGET Qt::Quick)
         list(APPEND qt_libs_list
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::qtquick2plugin_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::quickwindow_init>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::Quick_resources_1>
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::Quick_resources_2>
-            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::quickwindow_resources_1>
         )
     endif()
 endif()
@@ -304,14 +292,36 @@ INTERFACE
     $<TARGET_FILE:desktop-app::external_zlib>
 )
 
-if (LINUX)
+if (WIN32)
+    if (build_win64)
+        set(libwebp_release_folder x64)
+    else()
+        set(libwebp_release_folder x86)
+    endif()
+
+    set(webp_lib_loc ${libs_loc}/libwebp/out/$<IF:$<CONFIG:Debug>,debug,release>-static/${libwebp_release_folder}/lib)
+
+    target_link_libraries(external_qt
+    INTERFACE
+        ${webp_lib_loc}/libwebp$<$<CONFIG:Debug>:_debug>.lib
+        ${webp_lib_loc}/libwebpdemux$<$<CONFIG:Debug>:_debug>.lib
+        ${webp_lib_loc}/libwebpmux$<$<CONFIG:Debug>:_debug>.lib
+    )
+elseif (APPLE)
+    target_link_libraries(external_qt
+    INTERFACE
+        ${libs_loc}/local/lib/libwebp.a
+        ${libs_loc}/local/lib/libwebpdemux.a
+        ${libs_loc}/local/lib/libwebpmux.a
+        ${libs_loc}/local/lib/libsharpyuv.a
+    )
+ elseif (LINUX)
     target_include_directories(external_qt SYSTEM
     INTERFACE
         ${qt_loc}/mkspecs/linux-g++
     )
     target_link_static_libraries(external_qt
     INTERFACE
-        proxy
         lcms2
         xkbcommon
         xkbcommon-x11
@@ -329,30 +339,44 @@ if (LINUX)
         xcb-util
         xcb-render-util
         xcb-keysyms
+        webpmux
+        webpdemux
+        webp
+        sharpyuv
     )
-    if (NOT DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-        target_link_libraries(external_qt
+    if (TARGET Qt::WaylandClient)
+        target_link_optional_libraries(external_qt
         INTERFACE
-            desktop-app::linux_wayland_helper
+            wayland-egl
+            wayland-cursor
+            wayland-client
         )
     endif()
     if (TARGET Qt::WaylandCompositor)
-        target_link_static_libraries(external_qt
+        target_link_optional_libraries(external_qt
         INTERFACE
             wayland-server
-            ffi
         )
     endif()
-    target_link_libraries(external_qt
+    target_link_optional_libraries(external_qt
     INTERFACE
-        desktop-app::linux_xcb_helper
-        fontconfig
-        freetype
+        gtk-3
+        gdk-3
+        gdk_pixbuf-2.0
+        pango-1.0
         EGL
         GL
-        xcb
-        X11
         X11-xcb
+        xcb
+    )
+    target_link_libraries(external_qt
+    INTERFACE
+        fontconfig
+        freetype
+        X11
+        gio-2.0
+        gobject-2.0
         glib-2.0
+        rt
     )
 endif()

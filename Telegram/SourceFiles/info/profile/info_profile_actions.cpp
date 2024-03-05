@@ -7,34 +7,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_actions.h"
 
+#include "api/api_chat_participants.h"
+#include "base/options.h"
 #include "data/data_peer_values.h"
 #include "data/data_session.h"
 #include "data/data_folder.h"
 #include "data/data_forum_topic.h"
 #include "data/data_channel.h"
 #include "data/data_changes.h"
+#include "data/data_chat.h"
 #include "data/data_user.h"
 #include "data/notify/data_notify_settings.h"
+#include "ui/vertical_list.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/widgets/shadow.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/box_content_divider.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/boxes/report_box.h"
-#include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/toast/toast.h"
 #include "ui/text/text_utilities.h" // Ui::Text::ToUpper
 #include "ui/text/text_variant.h"
 #include "history/history_location_manager.h" // LocationClickHandler.
 #include "history/view/history_view_context_menu.h" // HistoryView::ShowReportPeerBox
-#include "boxes/abstract_box.h"
-#include "boxes/peer_list_box.h"
-#include "boxes/peer_list_controllers.h"
-#include "boxes/add_contact_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_contact_box.h"
 #include "boxes/report_messages_box.h"
@@ -48,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_phone_menu.h"
 #include "info/profile/info_profile_values.h"
 #include "info/profile/info_profile_text.h"
+#include "info/profile/info_profile_widget.h"
 #include "support/support_helper.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h" // Window::Controller::show.
@@ -57,10 +57,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
-#include "settings/settings_common.h"
 #include "apiwrap.h"
 #include "api/api_blocked_peers.h"
 #include "styles/style_info.h"
+#include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 #include "styles/style_menu_icons.h"
 
@@ -70,6 +70,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Info {
 namespace Profile {
 namespace {
+
+base::options::toggle ShowPeerIdBelowAbout({
+	.id = kOptionShowPeerIdBelowAbout,
+	.name = "Show Peer IDs in Profile",
+	.description = "Show peer IDs from API below their Bio / Description."
+		" Add contact IDs to exported data.",
+});
 
 [[nodiscard]] rpl::producer<TextWithEntities> UsernamesSubtext(
 		not_null<PeerData*> peer,
@@ -103,7 +110,7 @@ namespace {
 
 [[nodiscard]] Fn<void(QString)> UsernamesLinkCallback(
 		not_null<PeerData*> peer,
-		Window::Show show,
+		std::shared_ptr<Ui::Show> show,
 		const QString &addToLink) {
 	return [=](QString link) {
 		if (!link.startsWith(u"https://"_q)) {
@@ -112,9 +119,7 @@ namespace {
 		}
 		if (!link.isEmpty()) {
 			QGuiApplication::clipboard()->setText(link);
-			Ui::Toast::Show(
-				show.toastParent(),
-				tr::lng_username_copied(tr::now));
+			show->showToast(tr::lng_username_copied(tr::now));
 		}
 	};
 }
@@ -131,6 +136,27 @@ namespace {
 		st::infoProfileSkip);
 	result->setDuration(st::infoSlideDuration);
 	return result;
+}
+
+[[nodiscard]] rpl::producer<TextWithEntities> AboutWithIdValue(
+		not_null<PeerData*> peer) {
+
+	return AboutValue(
+		peer
+	) | rpl::map([=](TextWithEntities &&value) {
+		if (!ShowPeerIdBelowAbout.value()) {
+			return std::move(value);
+		}
+		using namespace Ui::Text;
+		if (!value.empty()) {
+			value.append("\n");
+		}
+		value.append(Italic(u"id: "_q));
+		const auto raw = peer->id.value & PeerId::kChatTypeMask;
+		const auto id = QString::number(raw);
+		value.append(Link(Italic(id), "internal:copy:" + id));
+		return std::move(value);
+	});
 }
 
 template <typename Text, typename ToggleOn, typename Callback>
@@ -170,14 +196,15 @@ template <typename Text, typename ToggleOn, typename Callback>
 		Text &&text,
 		ToggleOn &&toggleOn,
 		Callback &&callback,
-		Ui::MultiSlideTracker &tracker) {
+		Ui::MultiSlideTracker &tracker,
+		const style::SettingsButton &st = st::infoMainButton) {
 	tracker.track(AddActionButton(
 		parent,
 		std::move(text) | Ui::Text::ToUpper(),
 		std::move(toggleOn),
 		std::move(callback),
 		nullptr,
-		st::infoMainButton));
+		st));
 }
 
 class DetailsFiller {
@@ -185,7 +212,8 @@ public:
 	DetailsFiller(
 		not_null<Controller*> controller,
 		not_null<Ui::RpWidget*> parent,
-		not_null<PeerData*> peer);
+		not_null<PeerData*> peer,
+		Origin origin);
 	DetailsFiller(
 		not_null<Controller*> controller,
 		not_null<Ui::RpWidget*> parent,
@@ -203,6 +231,12 @@ private:
 	Ui::MultiSlideTracker fillChannelButtons(
 		not_null<ChannelData*> channel);
 
+	void addReportReaction(Ui::MultiSlideTracker &tracker);
+	void addReportReaction(
+		GroupReactionOrigin data,
+		bool ban,
+		Ui::MultiSlideTracker &tracker);
+
 	template <
 		typename Widget,
 		typename = std::enable_if_t<
@@ -219,6 +253,7 @@ private:
 	not_null<Ui::RpWidget*> _parent;
 	not_null<PeerData*> _peer;
 	Data::ForumTopic *_topic = nullptr;
+	Origin _origin;
 	object_ptr<Ui::VerticalLayout> _wrap;
 
 };
@@ -252,13 +287,65 @@ private:
 
 };
 
+void ReportReactionBox(
+		not_null<Ui::GenericBox*> box,
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> participant,
+		GroupReactionOrigin data,
+		bool ban,
+		Fn<void()> sent) {
+	box->setTitle(tr::lng_report_reaction_title());
+	box->addRow(object_ptr<Ui::FlatLabel>(
+		box,
+		tr::lng_report_reaction_about(),
+		st::boxLabel));
+	const auto check = ban
+		? box->addRow(
+			object_ptr<Ui::Checkbox>(
+				box,
+				tr::lng_report_and_ban_button(tr::now),
+				true),
+			st::boxRowPadding + QMargins{ 0, st::boxLittleSkip, 0, 0 })
+		: nullptr;
+	box->addButton(tr::lng_report_button(), [=] {
+		const auto chat = data.group->asChat();
+		const auto channel = data.group->asMegagroup();
+		if (check && check->checked()) {
+			if (chat) {
+				chat->session().api().chatParticipants().kick(
+					chat,
+					participant);
+			} else if (channel) {
+				channel->session().api().chatParticipants().kick(
+					channel,
+					participant,
+					ChatRestrictionsInfo());
+			}
+		}
+		data.group->session().api().request(MTPmessages_ReportReaction(
+			data.group->input,
+			MTP_int(data.messageId.bare),
+			participant->input
+		)).done(crl::guard(controller, [=] {
+			controller->showToast(tr::lng_report_thanks(tr::now));
+		})).send();
+		sent();
+		box->closeBox();
+	}, st::attentionBoxButton);
+	box->addButton(tr::lng_cancel(), [=] {
+		box->closeBox();
+	});
+}
+
 DetailsFiller::DetailsFiller(
 	not_null<Controller*> controller,
 	not_null<Ui::RpWidget*> parent,
-	not_null<PeerData*> peer)
+	not_null<PeerData*> peer,
+	Origin origin)
 : _controller(controller)
 , _parent(parent)
 , _peer(peer)
+, _origin(origin)
 , _wrap(_parent) {
 }
 
@@ -352,6 +439,7 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 			result,
 			v::text::take_marked(std::move(label)),
 			std::move(text),
+			st::infoLabel,
 			textSt,
 			padding);
 		tracker.track(result->add(std::move(line.wrap)));
@@ -407,8 +495,8 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 			? tr::lng_info_about_label()
 			: tr::lng_info_bio_label();
 		addTranslateToMenu(
-			addInfoLine(std::move(label), AboutValue(user)).text,
-			AboutValue(user));
+			addInfoLine(std::move(label), AboutWithIdValue(user)).text,
+			AboutWithIdValue(user));
 
 		const auto usernameLine = addInfoOneLine(
 			UsernamesSubtext(_peer, tr::lng_info_username_label()),
@@ -424,7 +512,7 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 			st::infoProfileLabeledUsernamePadding);
 		const auto callback = UsernamesLinkCallback(
 			_peer,
-			Window::Show(controller),
+			controller->uiShow(),
 			QString());
 		const auto hook = [=](Ui::FlatLabel::ContextMenuRequest request) {
 			if (!request.link) {
@@ -471,9 +559,7 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 					user->userName());
 				if (!link.isEmpty()) {
 					QGuiApplication::clipboard()->setText(link);
-					Ui::Toast::Show(
-						Window::Show(controller).toastParent(),
-						tr::lng_username_copied(tr::now));
+					controller->showToast(tr::lng_username_copied(tr::now));
 				}
 				return false;
 			});
@@ -511,7 +597,7 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 		const auto controller = _controller->parentController();
 		const auto linkCallback = UsernamesLinkCallback(
 			_peer,
-			Window::Show(controller),
+			controller->uiShow(),
 			addToLink);
 		linkLine.text->overrideLinkClickHandler(linkCallback);
 		linkLine.subtext->overrideLinkClickHandler(linkCallback);
@@ -533,11 +619,11 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupInfo() {
 			).text->setLinksTrusted();
 		}
 
-		const auto about = addInfoLine(
-			tr::lng_info_about_label(),
-			_topic ? rpl::single(TextWithEntities()) : AboutValue(_peer));
+		const auto about = addInfoLine(tr::lng_info_about_label(), _topic
+			? rpl::single(TextWithEntities())
+			: AboutWithIdValue(_peer));
 		if (!_topic) {
-			addTranslateToMenu(about.text, AboutValue(_peer));
+			addTranslateToMenu(about.text, AboutWithIdValue(_peer));
 		}
 	}
 	if (!_peer->isSelf()) {
@@ -603,7 +689,7 @@ object_ptr<Ui::RpWidget> DetailsFiller::setupMuteToggle() {
 			}
 		}) | rpl::to_empty,
 		makeThread,
-		std::make_shared<Window::Show>(_controller));
+		_controller->uiShow());
 	object_ptr<FloatingIcon>(
 		result,
 		st::infoIconNotifications,
@@ -632,6 +718,62 @@ void DetailsFiller::setupMainButtons() {
 			});
 		}
 	}
+}
+
+void DetailsFiller::addReportReaction(Ui::MultiSlideTracker &tracker) {
+	v::match(_origin.data, [&](GroupReactionOrigin data) {
+		const auto user = _peer->asUser();
+		if (_peer->isSelf()) {
+			return;
+#if 0 // Only public groups allow reaction reports for now.
+		} else if (const auto chat = data.group->asChat()) {
+			const auto ban = chat->canBanMembers()
+				&& (!user || !chat->admins.contains(_peer))
+				&& (!user || chat->creator != user->id);
+			addReportReaction(data, ban, tracker);
+#endif
+		} else if (const auto channel = data.group->asMegagroup()) {
+			if (channel->isPublic()) {
+				const auto ban = channel->canBanMembers()
+					&& (!user || !channel->mgInfo->admins.contains(user->id))
+					&& (!user || channel->mgInfo->creator != user);
+				addReportReaction(data, ban, tracker);
+			}
+		}
+	}, [](const auto &) {});
+}
+
+void DetailsFiller::addReportReaction(
+		GroupReactionOrigin data,
+		bool ban,
+		Ui::MultiSlideTracker &tracker) {
+	const auto peer = _peer;
+	if (!peer) {
+		return;
+	}
+	const auto controller = _controller->parentController();
+	const auto forceHidden = std::make_shared<rpl::variable<bool>>(false);
+	const auto user = peer->asUser();
+	auto shown = user
+		? rpl::combine(
+			Info::Profile::IsContactValue(user),
+			forceHidden->value(),
+			!rpl::mappers::_1 && !rpl::mappers::_2
+		) | rpl::type_erased()
+		: (forceHidden->value() | rpl::map(!rpl::mappers::_1));
+	const auto sent = [=] {
+		*forceHidden = true;
+	};
+	AddMainButton(
+		_wrap,
+		(ban
+			? tr::lng_report_and_ban()
+			: tr::lng_report_reaction()),
+		std::move(shown),
+		[=] { controller->show(
+			Box(ReportReactionBox, controller, peer, data, ban, sent)); },
+		tracker,
+		st::infoMainButtonAttention);
 }
 
 Ui::MultiSlideTracker DetailsFiller::fillTopicButtons() {
@@ -700,6 +842,9 @@ Ui::MultiSlideTracker DetailsFiller::fillUserButtons(
 	} else {
 		addSendMessageButton();
 	}
+
+	addReportReaction(tracker);
+
 	return tracker;
 }
 
@@ -773,11 +918,11 @@ void ActionsFiller::addInviteToGroupAction(
 			_wrap.data(),
 			object_ptr<Ui::VerticalLayout>(_wrap.data())));
 	about->toggleOn(InviteToChatAbout(user) | rpl::map(notEmpty));
-	::Settings::AddSkip(about->entity());
-	::Settings::AddDividerText(
+	Ui::AddSkip(about->entity());
+	Ui::AddDividerText(
 		about->entity(),
 		InviteToChatAbout(user) | rpl::filter(notEmpty));
-	::Settings::AddSkip(about->entity());
+	Ui::AddSkip(about->entity());
 	about->finishAnimating();
 }
 
@@ -1031,11 +1176,14 @@ object_ptr<Ui::RpWidget> ActionsFiller::fill() {
 
 } // namespace
 
+const char kOptionShowPeerIdBelowAbout[] = "show-peer-id-below-about";
+
 object_ptr<Ui::RpWidget> SetupDetails(
 		not_null<Controller*> controller,
 		not_null<Ui::RpWidget*> parent,
-		not_null<PeerData*> peer) {
-	DetailsFiller filler(controller, parent, peer);
+		not_null<PeerData*> peer,
+		Origin origin) {
+	DetailsFiller filler(controller, parent, peer, origin);
 	return filler.fill();
 }
 

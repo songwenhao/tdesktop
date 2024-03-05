@@ -35,11 +35,13 @@ public:
 public Q_SLOTS:
     QDBusPendingReply<> focusIn();
     QDBusPendingReply<> focusOut();
+    QDBusPendingReply<> hideVirtualKeyboard();
     QDBusPendingReply<bool> processKeyEvent(unsigned int keyval,
                                             unsigned int keycode,
                                             unsigned int state, bool type,
                                             unsigned int time);
     QDBusPendingReply<> reset();
+    QDBusPendingReply<> setSupportedCapability(qulonglong caps);
     QDBusPendingReply<> setCapability(qulonglong caps);
     QDBusPendingReply<> setCursorRect(int x, int y, int w, int h);
     QDBusPendingReply<> setCursorRectV2(int x, int y, int w, int h,
@@ -49,10 +51,12 @@ public Q_SLOTS:
                                            unsigned int anchor);
     QDBusPendingReply<> setSurroundingTextPosition(unsigned int cursor,
                                                    unsigned int anchor);
+    QDBusPendingReply<> showVirtualKeyboard();
     QDBusPendingReply<> prevPage();
     QDBusPendingReply<> nextPage();
     QDBusPendingReply<> selectCandidate(int i);
     QDBusPendingReply<> invokeAction(unsigned int action, int cursor);
+    bool isVirtualKeyboardVisible();
 
     bool supportInvokeAction() const;
 
@@ -72,6 +76,9 @@ Q_SIGNALS:
                             int candidateIndex, int layoutHint, bool hasPrev,
                             bool hasNext);
     void inputContextCreated(const QByteArray &uuid);
+    void inputContextCreationFailed();
+    void notifyFocusOut();
+    void virtualKeyboardVisibilityChanged(bool visible);
 
 private:
     FcitxQtInputContextProxyPrivate *const d_ptr;

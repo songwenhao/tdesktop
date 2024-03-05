@@ -7,28 +7,44 @@
 #include "ui/platform/linux/ui_utility_linux.h"
 
 #include "base/platform/base_platform_info.h"
-#include "ui/platform/linux/ui_linux_wayland_integration.h"
-#include "base/const_string.h"
-
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-#include "base/platform/linux/base_linux_glibmm_helper.h"
-#include "base/platform/linux/base_linux_xdp_utilities.h"
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
+#include "base/platform/linux/base_linux_library.h"
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 #include "base/platform/linux/base_linux_xcb_utilities.h"
-#include "base/platform/linux/base_linux_xsettings.h"
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
 #include <QtCore/QPoint>
 #include <QtGui/QWindow>
 #include <QtWidgets/QApplication>
+#include <qpa/qplatformwindow.h>
+#include <qpa/qplatformwindow_p.h>
+
+extern "C" {
+
+typedef int32_t wl_fixed_t;
+struct wl_object;
+struct wl_array;
+struct wl_proxy;
+struct xdg_toplevel;
+
+union wl_argument {
+	int32_t i;           /**< `int`    */
+	uint32_t u;          /**< `uint`   */
+	wl_fixed_t f;        /**< `fixed`  */
+	const char *s;       /**< `string` */
+	struct wl_object *o; /**< `object` */
+	uint32_t n;          /**< `new_id` */
+	struct wl_array *a;  /**< `array`  */
+	int32_t h;           /**< `fd`     */
+};
+
+}
 
 namespace Ui {
 namespace Platform {
 namespace {
 
-constexpr auto kXCBFrameExtentsAtomName = "_GTK_FRAME_EXTENTS"_cs;
+static const auto kXCBFrameExtentsAtomName = u"_GTK_FRAME_EXTENTS"_q;
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 std::optional<bool> XCBWindowMapped(xcb_window_t window) {
@@ -299,7 +315,7 @@ void SetXCBFrameExtents(not_null<QWidget*> widget, const QMargins &extents) {
 
 	const auto frameExtentsAtom = base::Platform::XCB::GetAtom(
 		connection,
-		kXCBFrameExtentsAtomName.utf16());
+		kXCBFrameExtentsAtomName);
 
 	if (!frameExtentsAtom.has_value()) {
 		return;
@@ -334,7 +350,7 @@ void UnsetXCBFrameExtents(not_null<QWidget*> widget) {
 
 	const auto frameExtentsAtom = base::Platform::XCB::GetAtom(
 		connection,
-		kXCBFrameExtentsAtomName.utf16());
+		kXCBFrameExtentsAtomName);
 
 	if (!frameExtentsAtom.has_value()) {
 		return;
@@ -397,40 +413,53 @@ void ShowXCBWindowMenu(not_null<QWidget*> widget, const QPoint &point) {
 }
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
-TitleControls::Control GtkKeywordToTitleControl(const QString &keyword) {
-	if (keyword == qstr("minimize")) {
-		return TitleControls::Control::Minimize;
-	} else if (keyword == qstr("maximize")) {
-		return TitleControls::Control::Maximize;
-	} else if (keyword == qstr("close")) {
-		return TitleControls::Control::Close;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+void ShowWaylandWindowMenu(not_null<QWidget*> widget, const QPoint &point) {
+	static const auto wl_proxy_marshal_array = [] {
+		void (*result)(
+			struct wl_proxy *p,
+			uint32_t opcode,
+			union wl_argument *args) = nullptr;
+
+		if (const auto lib = base::Platform::LoadLibrary(
+				"libwayland-client.so.0",
+				RTLD_NODELETE)) {
+			base::Platform::LoadSymbol(lib, "wl_proxy_marshal_array", result);
+		}
+
+		return result;
+	}();
+
+	if (!wl_proxy_marshal_array) {
+		return;
 	}
 
-	return TitleControls::Control::Unknown;
-}
-
-TitleControls::Layout GtkKeywordsToTitleControlsLayout(const QString &keywords) {
-	const auto splitted = keywords.split(':');
-
-	std::vector<TitleControls::Control> controlsLeft;
-	ranges::transform(
-		splitted[0].split(','),
-		ranges::back_inserter(controlsLeft),
-		GtkKeywordToTitleControl);
-
-	std::vector<TitleControls::Control> controlsRight;
-	if (splitted.size() > 1) {
-		ranges::transform(
-			splitted[1].split(','),
-			ranges::back_inserter(controlsRight),
-			GtkKeywordToTitleControl);
+	using namespace QNativeInterface;
+	using namespace QNativeInterface::Private;
+	const auto window = not_null(widget->windowHandle());
+	const auto native = qApp->nativeInterface<QWaylandApplication>();
+	const auto nativeWindow = window->nativeInterface<QWaylandWindow>();
+	if (!native || !nativeWindow) {
+		return;
 	}
 
-	return TitleControls::Layout{
-		.left = controlsLeft,
-		.right = controlsRight
-	};
+	const auto toplevel = nativeWindow->surfaceRole<xdg_toplevel>();
+	const auto seat = native->lastInputSeat();
+	if (!toplevel || !seat) {
+		return;
+	}
+
+	wl_proxy_marshal_array(
+		reinterpret_cast<wl_proxy*>(toplevel),
+		4, // XDG_TOPLEVEL_SHOW_WINDOW_MENU
+		std::array{
+			wl_argument{ .o = reinterpret_cast<wl_object*>(seat) },
+			wl_argument{ .u = native->lastInputSerial() },
+			wl_argument{ .i = point.x() },
+			wl_argument{ .i = point.y() },
+		}.data());
 }
+#endif // Qt >= 6.5.0
 
 } // namespace
 
@@ -503,17 +532,26 @@ std::optional<bool> IsOverlapped(
 	return std::nullopt;
 }
 
-bool WindowExtentsSupported() {
-	if (const auto integration = WaylandIntegration::Instance()) {
-		return integration->windowExtentsSupported();
+bool WindowMarginsSupported() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	static const auto WaylandResult = [] {
+		using namespace QNativeInterface::Private;
+		QWindow window;
+		window.create();
+		return bool(window.nativeInterface<QWaylandWindow>());
+	}();
+
+	if (WaylandResult) {
+		return true;
 	}
+#endif // Qt >= 6.5.0
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 	namespace XCB = base::Platform::XCB;
 	if (::Platform::IsX11()
 		&& XCB::IsSupportedByWM(
 			XCB::GetConnectionFromQt(),
-			kXCBFrameExtentsAtomName.utf16())) {
+			kXCBFrameExtentsAtomName)) {
 		return true;
 	}
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
@@ -521,124 +559,66 @@ bool WindowExtentsSupported() {
 	return false;
 }
 
-void SetWindowExtents(not_null<QWidget*> widget, const QMargins &extents) {
-	if (const auto integration = WaylandIntegration::Instance()) {
-		integration->setWindowExtents(widget, extents);
-	} else if (::Platform::IsX11()) {
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-		SetXCBFrameExtents(widget, extents);
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
+void SetWindowMargins(not_null<QWidget*> widget, const QMargins &margins) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	using namespace QNativeInterface::Private;
+	const auto window = not_null(widget->windowHandle());
+	const auto platformWindow = not_null(window->handle());
+	if (const auto native = window->nativeInterface<QWaylandWindow>()) {
+		native->setCustomMargins(
+			margins
+				* window->devicePixelRatio()
+				/ platformWindow->devicePixelRatio());
+		return;
 	}
+#endif // Qt >= 6.5.0
+
+#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
+	if (::Platform::IsX11()) {
+		SetXCBFrameExtents(widget, margins);
+		return;
+	}
+#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 }
 
-void UnsetWindowExtents(not_null<QWidget*> widget) {
-	if (const auto integration = WaylandIntegration::Instance()) {
-		integration->unsetWindowExtents(widget);
-	} else if (::Platform::IsX11()) {
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-		UnsetXCBFrameExtents(widget);
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
+void UnsetWindowMargins(not_null<QWidget*> widget) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	using namespace QNativeInterface::Private;
+	if (const auto native = not_null(widget->windowHandle())
+			->nativeInterface<QWaylandWindow>()) {
+		native->setCustomMargins(QMargins());
+		return;
 	}
+#endif // Qt >= 6.5.0
+
+#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
+	if (::Platform::IsX11()) {
+		UnsetXCBFrameExtents(widget);
+		return;
+	}
+#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 }
 
 void ShowWindowMenu(not_null<QWidget*> widget, const QPoint &point) {
-	if (const auto integration = WaylandIntegration::Instance()) {
-		integration->showWindowMenu(widget, point);
-	} else if (::Platform::IsX11()) {
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-		ShowXCBWindowMenu(widget, point);
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	if (::Platform::IsWayland()) {
+		ShowWaylandWindowMenu(widget, point);
+		return;
 	}
+#endif // Qt >= 6.5.0
+
+#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
+	if (::Platform::IsX11()) {
+		ShowXCBWindowMenu(widget, point);
+		return;
+	}
+#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 }
 
-TitleControls::Layout TitleControlsLayout() {
-	[[maybe_unused]] static const auto Inited = [] {
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-		using base::Platform::XCB::XSettings;
-		if (const auto xSettings = XSettings::Instance()) {
-			xSettings->registerCallbackForProperty("Gtk/DecorationLayout", [](
-					xcb_connection_t *,
-					const QByteArray &,
-					const QVariant &,
-					void *) {
-				NotifyTitleControlsLayoutChanged();
-			}, nullptr);
-		}
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
-
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-		using XDPSettingWatcher = base::Platform::XDP::SettingWatcher;
-		static const XDPSettingWatcher settingWatcher(
-			[=](
-				const Glib::ustring &group,
-				const Glib::ustring &key,
-				const Glib::VariantBase &value) {
-				if (group == "org.gnome.desktop.wm.preferences"
-					&& key == "button-layout") {
-					NotifyTitleControlsLayoutChanged();
-				}
-			});
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-
-		return true;
-	}();
-
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-	const auto xSettingsResult = []() -> std::optional<TitleControls::Layout> {
-		using base::Platform::XCB::XSettings;
-		const auto xSettings = XSettings::Instance();
-		if (!xSettings) {
-			return std::nullopt;
-		}
-
-		const auto decorationLayout = xSettings->setting("Gtk/DecorationLayout");
-		if (!decorationLayout.isValid()) {
-			return std::nullopt;
-		}
-
-		return GtkKeywordsToTitleControlsLayout(decorationLayout.toString());
-	}();
-
-	if (xSettingsResult.has_value()) {
-		return *xSettingsResult;
-	}
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
-
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-	const auto portalResult = []() -> std::optional<TitleControls::Layout> {
-		try {
-			using namespace base::Platform::XDP;
-
-			const auto decorationLayout = ReadSetting(
-				"org.gnome.desktop.wm.preferences",
-				"button-layout");
-
-			if (!decorationLayout.has_value()) {
-				return std::nullopt;
-			}
-
-			return GtkKeywordsToTitleControlsLayout(
-				QString::fromStdString(
-					base::Platform::GlibVariantCast<Glib::ustring>(
-						*decorationLayout)));
-		} catch (...) {
-		}
-
-		return std::nullopt;
-	}();
-
-	if (portalResult.has_value()) {
-		return *portalResult;
-	}
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-
-	return TitleControls::Layout{
-		.right = {
-			TitleControls::Control::Minimize,
-			TitleControls::Control::Maximize,
-			TitleControls::Control::Close,
-		}
-	};
+void SetGeometryWithPossibleScreenChange(
+		not_null<QWidget*> widget,
+		QRect geometry) {
+	widget->setGeometry(geometry);
 }
 
 } // namespace Platform

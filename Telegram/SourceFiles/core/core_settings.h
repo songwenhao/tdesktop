@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/media_common.h"
 #include "window/themes/window_themes_embedded.h"
 #include "ui/chat/attach/attach_send_files_way.h"
-#include "platform/platform_notifications_manager.h"
 #include "base/flags.h"
 #include "emoji.h"
 
@@ -29,10 +28,6 @@ enum class DoubleClickQuickAction;
 namespace Window {
 enum class Column;
 } // namespace Window
-
-namespace Webrtc {
-enum class Backend;
-} // namespace Webrtc
 
 namespace Calls::Group {
 enum class StickedTooltip;
@@ -72,7 +67,7 @@ struct WindowTitleContent {
 		WindowTitleContent) = default;
 };
 
-constexpr auto kRecentEmojiLimit = 42;
+constexpr auto kRecentEmojiLimit = 54;
 
 struct RecentEmojiDocument {
 	DocumentId id = 0;
@@ -221,14 +216,10 @@ public:
 	void setNotifyView(NotifyView value) {
 		_notifyView = value;
 	}
-	[[nodiscard]] bool nativeNotifications() const {
-		return _nativeNotifications.value_or(Platform::Notifications::ByDefault());
-	}
-	void setNativeNotifications(bool value) {
-		_nativeNotifications = (value == Platform::Notifications::ByDefault())
-			? std::nullopt
-			: std::make_optional(value);
-	}
+
+	[[nodiscard]] bool nativeNotifications() const;
+	void setNativeNotifications(bool value);
+
 	[[nodiscard]] int notificationsCount() const {
 		return _notificationsCount;
 	}
@@ -268,30 +259,68 @@ public:
 	void setAutoLock(int value) {
 		_autoLock = value;
 	}
-	[[nodiscard]] QString callOutputDeviceId() const {
-		return _callOutputDeviceId.isEmpty()
-			? u"default"_q
-			: _callOutputDeviceId;
+
+	[[nodiscard]] QString playbackDeviceId() const {
+		return _playbackDeviceId.current();
 	}
-	void setCallOutputDeviceId(const QString &value) {
-		_callOutputDeviceId = value;
+	[[nodiscard]] rpl::producer<QString> playbackDeviceIdChanges() const {
+		return _playbackDeviceId.changes();
 	}
-	[[nodiscard]] QString callInputDeviceId() const {
-		return _callInputDeviceId.isEmpty()
-			? u"default"_q
-			: _callInputDeviceId;
+	[[nodiscard]] rpl::producer<QString> playbackDeviceIdValue() const {
+		return _playbackDeviceId.value();
 	}
-	void setCallInputDeviceId(const QString &value) {
-		_callInputDeviceId = value;
+	void setPlaybackDeviceId(const QString &value) {
+		_playbackDeviceId = value;
 	}
-	[[nodiscard]] QString callVideoInputDeviceId() const {
-		return _callVideoInputDeviceId.isEmpty()
-			? u"default"_q
-			: _callVideoInputDeviceId;
+	[[nodiscard]] QString captureDeviceId() const {
+		return _captureDeviceId.current();
 	}
-	void setCallVideoInputDeviceId(const QString &value) {
-		_callVideoInputDeviceId = value;
+	[[nodiscard]] rpl::producer<QString> captureDeviceIdChanges() const {
+		return _captureDeviceId.changes();
 	}
+	[[nodiscard]] rpl::producer<QString> captureDeviceIdValue() const {
+		return _captureDeviceId.value();
+	}
+	void setCaptureDeviceId(const QString &value) {
+		_captureDeviceId = value;
+	}
+	[[nodiscard]] QString cameraDeviceId() const {
+		return _cameraDeviceId.current();
+	}
+	[[nodiscard]] rpl::producer<QString> cameraDeviceIdChanges() const {
+		return _cameraDeviceId.changes();
+	}
+	[[nodiscard]] rpl::producer<QString> cameraDeviceIdValue() const {
+		return _cameraDeviceId.value();
+	}
+	void setCameraDeviceId(const QString &value) {
+		_cameraDeviceId = value;
+	}
+	[[nodiscard]] QString callPlaybackDeviceId() const {
+		return _callPlaybackDeviceId.current();
+	}
+	[[nodiscard]] rpl::producer<QString> callPlaybackDeviceIdChanges() const {
+		return _callPlaybackDeviceId.changes();
+	}
+	[[nodiscard]] rpl::producer<QString> callPlaybackDeviceIdValue() const {
+		return _callPlaybackDeviceId.value();
+	}
+	void setCallPlaybackDeviceId(const QString &value) {
+		_callPlaybackDeviceId = value;
+	}
+	[[nodiscard]] QString callCaptureDeviceId() const {
+		return _callCaptureDeviceId.current();
+	}
+	[[nodiscard]] rpl::producer<QString> callCaptureDeviceIdChanges() const {
+		return _callCaptureDeviceId.changes();
+	}
+	[[nodiscard]] rpl::producer<QString> callCaptureDeviceIdValue() const {
+		return _callCaptureDeviceId.value();
+	}
+	void setCallCaptureDeviceId(const QString &value) {
+		_callCaptureDeviceId = value;
+	}
+
 	[[nodiscard]] int callOutputVolume() const {
 		return _callOutputVolume;
 	}
@@ -310,7 +339,6 @@ public:
 	void setCallAudioDuckingEnabled(bool value) {
 		_callAudioDuckingEnabled = value;
 	}
-	[[nodiscard]] Webrtc::Backend callAudioBackend() const;
 	[[nodiscard]] bool disableCallsLegacy() const {
 		return _disableCallsLegacy;
 	}
@@ -660,6 +688,8 @@ public:
 
 	[[nodiscard]] const std::vector<RecentEmoji> &recentEmoji() const;
 	void incrementRecentEmoji(RecentEmojiId id);
+	void hideRecentEmoji(RecentEmojiId id);
+	void resetRecentEmoji();
 	void setLegacyRecentEmojiPreload(QVector<QPair<QString, ushort>> data);
 	[[nodiscard]] rpl::producer<> recentEmojiUpdated() const {
 		return _recentEmojiUpdated.events();
@@ -668,7 +698,10 @@ public:
 	[[nodiscard]] const base::flat_map<QString, uint8> &emojiVariants() const {
 		return _emojiVariants;
 	}
+	[[nodiscard]] EmojiPtr lookupEmojiVariant(EmojiPtr emoji) const;
+	[[nodiscard]] bool hasChosenEmojiVariant(EmojiPtr emoji) const;
 	void saveEmojiVariant(EmojiPtr emoji);
+	void saveAllEmojiVariants(EmojiPtr emoji);
 	void setLegacyEmojiVariants(QMap<QString, int> data);
 
 	[[nodiscard]] bool disableOpenGL() const {
@@ -696,6 +729,15 @@ public:
 	}
 	[[nodiscard]] rpl::producer<bool> closeToTaskbarChanges() const {
 		return _closeToTaskbar.changes();
+	}
+	void setTrayIconMonochrome(bool value) {
+		_trayIconMonochrome = value;
+	}
+	[[nodiscard]] bool trayIconMonochrome() const {
+		return _trayIconMonochrome.current();
+	}
+	[[nodiscard]] rpl::producer<bool> trayIconMonochromeChanges() const {
+		return _trayIconMonochrome.changes();
 	}
 
 	void setCustomDeviceModel(const QString &model) {
@@ -802,6 +844,24 @@ public:
 	[[nodiscard]] std::optional<uint64> macRoundIconDigest() const {
 		return _macRoundIconDigest;
 	}
+	[[nodiscard]] bool storiesClickTooltipHidden() const {
+		return _storiesClickTooltipHidden.current();
+	}
+	[[nodiscard]] rpl::producer<bool> storiesClickTooltipHiddenValue() const {
+		return _storiesClickTooltipHidden.value();
+	}
+	void setStoriesClickTooltipHidden(bool value) {
+		_storiesClickTooltipHidden = value;
+	}
+	[[nodiscard]] bool ttlVoiceClickTooltipHidden() const {
+		return _ttlVoiceClickTooltipHidden.current();
+	}
+	[[nodiscard]] rpl::producer<bool> ttlVoiceClickTooltipHiddenValue() const {
+		return _ttlVoiceClickTooltipHidden.value();
+	}
+	void setTtlVoiceClickTooltipHidden(bool value) {
+		_ttlVoiceClickTooltipHidden = value;
+	}
 
 	[[nodiscard]] static bool ThirdColumnByDefault();
 	[[nodiscard]] static float64 DefaultDialogsWidthRatio();
@@ -848,9 +908,11 @@ private:
 	bool _countUnreadMessages = true;
 	rpl::variable<bool> _notifyAboutPinned = true;
 	int _autoLock = 3600;
-	QString _callOutputDeviceId = u"default"_q;
-	QString _callInputDeviceId = u"default"_q;
-	QString _callVideoInputDeviceId = u"default"_q;
+	rpl::variable<QString> _playbackDeviceId;
+	rpl::variable<QString> _captureDeviceId;
+	rpl::variable<QString> _cameraDeviceId;
+	rpl::variable<QString> _callPlaybackDeviceId;
+	rpl::variable<QString> _callCaptureDeviceId;
 	int _callOutputVolume = 100;
 	int _callInputVolume = 100;
 	bool _callAudioDuckingEnabled = true;
@@ -882,6 +944,8 @@ private:
 	rpl::variable<bool> _mainMenuAccountsShown = true;
 	mutable std::vector<RecentEmojiPreload> _recentEmojiPreload;
 	mutable std::vector<RecentEmoji> _recentEmoji;
+	base::flat_set<QString> _recentEmojiSkip;
+	mutable bool _recentEmojiResolved = false;
 	base::flat_map<QString, uint8> _emojiVariants;
 	rpl::event_stream<> _recentEmojiUpdated;
 	bool _tabbedSelectorSectionEnabled = false; // per-window
@@ -899,9 +963,10 @@ private:
 	rpl::variable<WindowTitleContent> _windowTitleContent;
 	WindowPosition _windowPosition; // per-window
 	bool _disableOpenGL = false;
-	rpl::variable<WorkMode> _workMode = WorkMode::WindowOnly;
+	rpl::variable<WorkMode> _workMode = WorkMode::WindowAndTray;
 	base::flags<Calls::Group::StickedTooltip> _hiddenGroupCallTooltips;
 	rpl::variable<bool> _closeToTaskbar = false;
+	rpl::variable<bool> _trayIconMonochrome = true;
 	rpl::variable<QString> _customDeviceModel;
 	rpl::variable<Media::RepeatMode> _playerRepeatMode;
 	rpl::variable<Media::OrderMode> _playerOrderMode;
@@ -923,6 +988,8 @@ private:
 	WindowPosition _mediaViewPosition = { .maximized = 2 };
 	rpl::variable<bool> _ignoreBatterySaving = false;
 	std::optional<uint64> _macRoundIconDigest;
+	rpl::variable<bool> _storiesClickTooltipHidden = false;
+	rpl::variable<bool> _ttlVoiceClickTooltipHidden = false;
 
 	bool _tabbedReplacedWithInfo = false; // per-window
 	rpl::event_stream<bool> _tabbedReplacedWithInfoValue; // per-window

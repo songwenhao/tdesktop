@@ -14,9 +14,11 @@
 
 #include <QtCore/QSet>
 #include <QtCore/QFile>
+#include <QtGui/QtEvents>
 #include <QtGui/QWindow>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLFunctions>
+#include <QOpenGLWindow>
 #include <QOpenGLWidget>
 
 #ifdef Q_OS_WIN
@@ -33,7 +35,7 @@ namespace {
 bool ForceDisabled/* = false*/;
 
 #ifdef Q_OS_WIN
-ANGLE ResolvedANGLE = ANGLE::Auto;
+ANGLE ResolvedANGLE/* = ANGLE::Auto*/;
 #endif // Q_OS_WIN
 
 base::options::toggle AllowLinuxNvidiaOpenGL({
@@ -56,7 +58,7 @@ void CrashCheckStart() {
 
 const char kOptionAllowLinuxNvidiaOpenGL[] = "allow-linux-nvidia-opengl";
 
-Capabilities CheckCapabilities(QWidget *widget) {
+Capabilities CheckCapabilities(QWidget *widget, bool avoidWidgetCreation) {
 	if (ForceDisabled) {
 		LOG_ONCE(("OpenGL: Force-disabled."));
 		return {};
@@ -86,21 +88,45 @@ Capabilities CheckCapabilities(QWidget *widget) {
 	} else {
 		format.setAlphaBufferSize(8);
 	}
-	auto tester = QOpenGLWidget(widget);
-	tester.setFormat(format);
 
 	CrashCheckStart();
-	tester.grabFramebuffer(); // Force initialize().
+	const auto tester = [&] {
+		std::unique_ptr<QObject> result;
+		if (avoidWidgetCreation) {
+			const auto w = new QOpenGLWindow();
+			auto e = QResizeEvent(QSize(), QSize());
+			w->setFormat(format);
+			w->create();
+			static_cast<QObject*>(w)->event(&e); // Force initialize().
+			w->grabFramebuffer(); // Force makeCurrent().
+			result.reset(w);
+		} else {
+			const auto w = new QOpenGLWidget(widget);
+			w->setFormat(format);
+			w->grabFramebuffer(); // Force initialize().
+			if (!w->window()->windowHandle()) {
+				w->window()->createWinId();
+			}
+			result.reset(w);
+		}
+		return result;
+	}();
+	const auto testerWidget = avoidWidgetCreation
+		? nullptr
+		: static_cast<QOpenGLWidget*>(tester.get());
+	const auto testerWindow = avoidWidgetCreation
+		? static_cast<QOpenGLWindow*>(tester.get())
+		: nullptr;
+	/*const auto testerQWindow = avoidWidgetCreation
+		? static_cast<QWindow*>(tester.get())
+		: testerWidget->window()->windowHandle();*/
 	CrashCheckFinish();
 
-	if (!tester.window()->windowHandle()) {
-		tester.window()->createWinId();
-	}
-	const auto context = tester.context();
+	const auto context = avoidWidgetCreation ? testerWindow->context() : testerWidget->context();
 	if (!context
 		|| !context->isValid()/*
 		// This check doesn't work for a widget with WA_NativeWindow.
-		|| !context->makeCurrent(tester.window()->windowHandle())*/) {
+		|| !context->makeCurrent(testerQWindow)*/) {
 		LOG_ONCE(("OpenGL: Could not create widget in a window."));
 		return {};
 	}
@@ -160,8 +186,9 @@ Capabilities CheckCapabilities(QWidget *widget) {
 		const auto version = reinterpret_cast<const char*>(
 			functions->glGetString(GL_VERSION));
 		LOG(("OpenGL Version: %1").arg(version ? version : "[nullptr]"));
+		const auto extensions = context->extensions();
 		auto list = QStringList();
-		for (const auto &extension : context->extensions()) {
+		for (const auto &extension : extensions) {
 			list.append(QString::fromLatin1(extension));
 		}
 		LOG(("OpenGL Extensions: %1").arg(list.join(", ")));
@@ -247,7 +274,7 @@ void ConfigureANGLE() {
 			qputenv("DESKTOP_APP_QT_ANGLE_PLATFORM", backend);
 		}
 	};
-	check("gl", ANGLE::OpenGL);
+	//check("gl", ANGLE::OpenGL);
 	check("d3d9", ANGLE::D3D9);
 	check("d3d11", ANGLE::D3D11);
 	check("d3d11on12", ANGLE::D3D11on12);
@@ -272,7 +299,7 @@ void ChangeANGLE(ANGLE backend) {
 	case ANGLE::D3D9: write("d3d9"); break;
 	case ANGLE::D3D11: write("d3d11"); break;
 	case ANGLE::D3D11on12: write("d3d11on12"); break;
-	case ANGLE::OpenGL: write("gl"); break;
+	//case ANGLE::OpenGL: write("gl"); break;
 	default: Unexpected("ANGLE backend value.");
 	}
 }

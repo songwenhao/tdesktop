@@ -7,6 +7,7 @@
 add_library(external_gsl INTERFACE IMPORTED GLOBAL)
 add_library(desktop-app::external_gsl ALIAS external_gsl)
 
+#[[
 if (DESKTOP_APP_USE_PACKAGED)
     if (DESKTOP_APP_USE_PACKAGED_LAZY)
         find_package(Microsoft.GSL 4.0.0 QUIET)
@@ -18,6 +19,12 @@ if (DESKTOP_APP_USE_PACKAGED)
         target_link_libraries(external_gsl INTERFACE Microsoft.GSL::GSL)
         return()
     endif()
+endif()
+]]
+
+# https://gitlab.kitware.com/cmake/cmake/-/issues/25222
+if (NOT EXISTS ${third_party_loc}/GSL/include)
+    message(FATAL_ERROR "Guidelines Support Library is not found")
 endif()
 
 target_include_directories(external_gsl SYSTEM

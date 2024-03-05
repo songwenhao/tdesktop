@@ -6,20 +6,16 @@
 //
 #pragma once
 
+#include "webrtc/webrtc_device_common.h"
+
 #include <crl/crl_object_on_thread.h>
 
 namespace Webrtc {
 
-enum class Backend;
-
 class AudioInputTester {
 public:
-	AudioInputTester(
-		const Backend &backend,
-		const QString &deviceId);
+	explicit AudioInputTester(rpl::producer<DeviceResolvedId> deviceId);
 	~AudioInputTester();
-
-	void setDeviceId(const QString &deviceId);
 
 	[[nodiscard]] float getAndResetLevel();
 
@@ -28,6 +24,7 @@ private:
 
 	std::shared_ptr<std::atomic<int>> _maxSample;
 	crl::object_on_thread<Impl> _impl;
+	rpl::lifetime _lifetime;
 
 };
 

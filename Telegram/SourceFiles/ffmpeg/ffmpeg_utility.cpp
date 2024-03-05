@@ -10,6 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/algorithm.h"
 #include "logs.h"
 
+#if !defined TDESKTOP_USE_PACKAGED && !defined Q_OS_WIN && !defined Q_OS_MAC
+#include "base/platform/linux/base_linux_library.h"
+#include <deque>
+#endif // !TDESKTOP_USE_PACKAGED && !Q_OS_WIN && !Q_OS_MAC
+
 #include <QImage>
 
 #ifdef LIB_FFMPEG_USE_QT_PRIVATE_API
@@ -85,6 +90,34 @@ void PremultiplyLine(uchar *dst, const uchar *src, int intsCount) {
 #endif // LIB_FFMPEG_USE_QT_PRIVATE_API
 }
 
+#if !defined TDESKTOP_USE_PACKAGED && !defined Q_OS_WIN && !defined Q_OS_MAC
+[[nodiscard]] auto CheckHwLibs() {
+	auto list = std::deque{
+		AV_PIX_FMT_CUDA,
+	};
+	if (base::Platform::LoadLibrary("libvdpau.so.1")) {
+		list.push_front(AV_PIX_FMT_VDPAU);
+	}
+	if ([&] {
+		const auto list = std::array{
+			"libva-drm.so.2",
+			"libva-x11.so.2",
+			"libva.so.2",
+			"libdrm.so.2",
+		};
+		for (const auto lib : list) {
+			if (!base::Platform::LoadLibrary(lib)) {
+				return false;
+			}
+		}
+		return true;
+	}()) {
+		list.push_front(AV_PIX_FMT_VAAPI);
+	}
+	return list;
+}
+#endif // !TDESKTOP_USE_PACKAGED && !Q_OS_WIN && !Q_OS_MAC
+
 [[nodiscard]] bool InitHw(AVCodecContext *context, AVHWDeviceType type) {
 	AVCodecContext *parent = static_cast<AVCodecContext*>(context->opaque);
 
@@ -101,8 +134,9 @@ void PremultiplyLine(uchar *dst, const uchar *src, int intsCount) {
 	}
 	DEBUG_LOG(("Video Info: "
 		"Trying \"%1\" hardware acceleration for \"%2\" decoder."
-		).arg(av_hwdevice_get_type_name(type)
-		).arg(context->codec->name));
+		).arg(
+			av_hwdevice_get_type_name(type),
+			context->codec->name));
 	if (parent->hw_device_ctx) {
 		av_buffer_unref(&parent->hw_device_ctx);
 	}
@@ -125,6 +159,9 @@ void PremultiplyLine(uchar *dst, const uchar *src, int intsCount) {
 		}
 		return false;
 	};
+#if !defined TDESKTOP_USE_PACKAGED && !defined Q_OS_WIN && !defined Q_OS_MAC
+	static const auto list = CheckHwLibs();
+#else // !TDESKTOP_USE_PACKAGED && !Q_OS_WIN && !Q_OS_MAC
 	const auto list = std::array{
 #ifdef Q_OS_WIN
 		AV_PIX_FMT_D3D11,
@@ -138,6 +175,7 @@ void PremultiplyLine(uchar *dst, const uchar *src, int intsCount) {
 		AV_PIX_FMT_CUDA,
 #endif // Q_OS_WIN || Q_OS_MAC
 	};
+#endif // TDESKTOP_USE_PACKAGED || Q_OS_WIN || Q_OS_MAC
 	for (const auto format : list) {
 		if (!has(format)) {
 			continue;
@@ -230,6 +268,7 @@ FormatPointer MakeFormatPointer(
 	if (!io) {
 		return {};
 	}
+	io->seekable = (seek != nullptr);
 	auto result = avformat_alloc_context();
 	if (!result) {
 		LogError(u"avformat_alloc_context"_q);
@@ -250,7 +289,9 @@ FormatPointer MakeFormatPointer(
 		LogError(u"avformat_open_input"_q, error);
 		return {};
 	}
-	result->flags |= AVFMT_FLAG_FAST_SEEK;
+	if (seek) {
+		result->flags |= AVFMT_FLAG_FAST_SEEK;
+	}
 
 	// Now FormatPointer will own and free the IO context.
 	io.release();
@@ -481,7 +522,7 @@ AVRational ValidateAspectRatio(AVRational aspect) {
 QSize CorrectByAspect(QSize size, AVRational aspect) {
 	Expects(IsValidAspectRatio(aspect));
 
-	return QSize(size.width() * aspect.num / aspect.den, size.height());
+	return QSize(size.width() * av_q2d(aspect), size.height());
 }
 
 bool RotationSwapWidthHeight(int rotation) {

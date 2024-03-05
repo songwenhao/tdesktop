@@ -15,6 +15,7 @@ struct SendAction;
 } // namespace Api
 
 namespace Data {
+class Story;
 class Thread;
 } // namespace Data
 
@@ -42,7 +43,9 @@ enum class MediaCheckResult {
 	Good,
 	Unsupported,
 	Empty,
-	HasTimeToLive,
+	HasExpiredMediaTimeToLive,
+	HasUnsupportedTimeToLive,
+	HasStoryMention,
 };
 [[nodiscard]] MediaCheckResult CheckMessageMedia(
 	const MTPMessageMedia &media);
@@ -63,29 +66,41 @@ void CheckReactionNotificationSchedule(
 	not_null<PeerData*> peer,
 	PeerId from,
 	not_null<HistoryItem*> fwd);
-[[nodiscard]] MessageFlags FinalizeMessageFlags(MessageFlags flags);
+[[nodiscard]] MessageFlags FinalizeMessageFlags(
+	not_null<History*> history,
+	MessageFlags flags);
 [[nodiscard]] bool CopyMarkupToForward(not_null<const HistoryItem*> item);
 [[nodiscard]] TextWithEntities EnsureNonEmpty(
 	const TextWithEntities &text = TextWithEntities());
 [[nodiscard]] TextWithEntities UnsupportedMessageText();
 
-void RequestDependentMessageData(
+void RequestDependentMessageItem(
 	not_null<HistoryItem*> item,
 	PeerId peerId,
 	MsgId msgId);
+void RequestDependentMessageStory(
+	not_null<HistoryItem*> item,
+	PeerId peerId,
+	StoryId storyId);
 [[nodiscard]] MessageFlags NewMessageFlags(not_null<PeerData*> peer);
 [[nodiscard]] bool ShouldSendSilent(
 	not_null<PeerData*> peer,
 	const Api::SendOptions &options);
 [[nodiscard]] HistoryItem *LookupReplyTo(
 	not_null<History*> history,
-	MsgId replyToId);
-[[nodiscard]] MsgId LookupReplyToTop(HistoryItem *replyTo);
+	FullMsgId replyToId);
+[[nodiscard]] MsgId LookupReplyToTop(
+	not_null<History*> history,
+	HistoryItem *replyTo);
+[[nodiscard]] MsgId LookupReplyToTop(
+	not_null<History*> history,
+	FullReplyTo replyTo);
 [[nodiscard]] bool LookupReplyIsTopicPost(HistoryItem *replyTo);
 
 struct SendingErrorRequest {
 	MsgId topicRootId = 0;
 	const HistoryItemsList *forward = nullptr;
+	const Data::Story *story = nullptr;
 	const TextWithTags *text = nullptr;
 	bool ignoreSlowmodeCountdown = false;
 };
@@ -96,7 +111,9 @@ struct SendingErrorRequest {
 	not_null<Data::Thread*> thread,
 	SendingErrorRequest request);
 
-[[nodiscard]] TextWithEntities DropCustomEmoji(TextWithEntities text);
+[[nodiscard]] TextWithEntities DropDisallowedCustomEmoji(
+	not_null<PeerData*> to,
+	TextWithEntities text);
 
 [[nodiscard]] Main::Session *SessionByUniqueId(uint64 sessionUniqueId);
 [[nodiscard]] HistoryItem *MessageByGlobalId(GlobalMsgId globalId);
@@ -111,10 +128,20 @@ struct SendingErrorRequest {
 [[nodiscard]] ClickHandlerPtr JumpToMessageClickHandler(
 	not_null<PeerData*> peer,
 	MsgId msgId,
-	FullMsgId returnToId = FullMsgId());
+	FullMsgId returnToId = FullMsgId(),
+	TextWithEntities highlightPart = {},
+	int highlightPartOffsetHint = 0);
 [[nodiscard]] ClickHandlerPtr JumpToMessageClickHandler(
 	not_null<HistoryItem*> item,
-	FullMsgId returnToId = FullMsgId());
+	FullMsgId returnToId = FullMsgId(),
+	TextWithEntities highlightPart = {},
+	int highlightPartOffsetHint = 0);
+[[nodiscard]] ClickHandlerPtr JumpToStoryClickHandler(
+	not_null<Data::Story*> story);
+ClickHandlerPtr JumpToStoryClickHandler(
+	not_null<PeerData*> peer,
+	StoryId storyId);
+[[nodiscard]] ClickHandlerPtr HideSponsoredClickHandler();
 
 [[nodiscard]] not_null<HistoryItem*> GenerateJoinedMessage(
 	not_null<History*> history,
@@ -131,3 +158,10 @@ struct SendingErrorRequest {
 [[nodiscard]] ClickHandlerPtr GroupCallClickHandler(
 	not_null<PeerData*> peer,
 	CallId callId);
+
+void ShowTrialTranscribesToast(int left, TimeId until);
+
+void ClearMediaAsExpired(not_null<HistoryItem*> item);
+
+[[nodiscard]] int ItemsForwardSendersCount(const HistoryItemsList &list);
+[[nodiscard]] int ItemsForwardCaptionsCount(const HistoryItemsList &list);

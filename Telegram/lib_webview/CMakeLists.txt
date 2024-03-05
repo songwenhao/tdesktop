@@ -10,10 +10,11 @@ init_target(lib_webview)
 
 get_filename_component(src_loc . REALPATH)
 
-set_target_properties(lib_webview PROPERTIES AUTOMOC ON)
-
 nice_target_sources(lib_webview ${src_loc}
 PRIVATE
+    webview/webview_data_stream.h
+    webview/webview_data_stream_memory.cpp
+    webview/webview_data_stream_memory.h
     webview/webview_dialog.cpp
     webview/webview_dialog.h
     webview/webview_embed.cpp
@@ -25,15 +26,18 @@ PRIVATE
 
     webview/platform/linux/webview_linux.h
     webview/platform/linux/webview_linux.cpp
-    webview/platform/linux/webview_linux.qrc
-    webview/platform/linux/webview_linux_webkit_gtk.cpp
-    webview/platform/linux/webview_linux_webkit_gtk.h
-    webview/platform/linux/webview_linux_webkit2gtk.cpp
-    webview/platform/linux/webview_linux_webkit2gtk_dummy.cpp
-    webview/platform/linux/webview_linux_webkit2gtk.h
+    webview/platform/linux/webview_linux_compositor.cpp
+    webview/platform/linux/webview_linux_compositor.h
+    webview/platform/linux/webview_linux_webkitgtk_dummy.cpp
+    webview/platform/linux/webview_linux_webkitgtk_library.cpp
+    webview/platform/linux/webview_linux_webkitgtk_library.h
+    webview/platform/linux/webview_linux_webkitgtk.cpp
+    webview/platform/linux/webview_linux_webkitgtk.h
 
     webview/platform/win/webview_win.cpp
     webview/platform/win/webview_win.h
+    webview/platform/win/webview_windows_data_stream.cpp
+    webview/platform/win/webview_windows_data_stream.h
     webview/platform/win/webview_windows_edge_chromium.cpp
     webview/platform/win/webview_windows_edge_chromium.h
     webview/platform/win/webview_windows_edge_html.cpp
@@ -55,19 +59,21 @@ if (WIN32)
     nuget_add_webview(lib_webview)
     nuget_add_winrt(lib_webview)
 elseif (LINUX)
-    if (DESKTOP_APP_DISABLE_DBUS_INTEGRATION OR DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
+    find_package(Qt${QT_VERSION_MAJOR} OPTIONAL_COMPONENTS Quick QuickWidgets WaylandCompositor)
+    if (TARGET Qt::Quick AND TARGET Qt::QuickWidgets AND TARGET Qt::WaylandCompositor)
         remove_target_sources(lib_webview ${src_loc}
-            webview/platform/linux/webview_linux_webkit_gtk.cpp
-            webview/platform/linux/webview_linux_webkit_gtk.h
-            webview/platform/linux/webview_linux_webkit2gtk.cpp
+            webview/platform/linux/webview_linux_webkitgtk_dummy.cpp
         )
+
+        include(${cmake_helpers_loc}/external/glib/generate_dbus.cmake)
+        generate_dbus(lib_webview org.desktop_app.GtkIntegration.Webview. Webview ${src_loc}/webview/platform/linux/webview_linux_interface.xml)
     else()
         remove_target_sources(lib_webview ${src_loc}
-            webview/platform/linux/webview_linux_webkit2gtk_dummy.cpp
+            webview/platform/linux/webview_linux_compositor.cpp
+            webview/platform/linux/webview_linux_compositor.h
+            webview/platform/linux/webview_linux_webkitgtk_library.cpp
+            webview/platform/linux/webview_linux_webkitgtk_library.h
+            webview/platform/linux/webview_linux_webkitgtk.cpp
         )
-
-        find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Qml Quick QuickWidgets WaylandCompositor REQUIRED)
     endif()
 endif()
-
-target_prepare_qrc(lib_webview)

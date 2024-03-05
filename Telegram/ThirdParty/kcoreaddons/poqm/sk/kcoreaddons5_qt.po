@@ -26,47 +26,47 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 "X-Qt-Contexts: true\n"
 
-#: lib/io/kfilesystemtype.cpp:236
+#: lib/io/kfilesystemtype.cpp:243
 msgctxt "KFileSystemType|"
 msgid "NFS"
 msgstr "NFS"
 
-#: lib/io/kfilesystemtype.cpp:238
+#: lib/io/kfilesystemtype.cpp:245
 msgctxt "KFileSystemType|"
 msgid "SMB"
 msgstr "SMB"
 
-#: lib/io/kfilesystemtype.cpp:240
+#: lib/io/kfilesystemtype.cpp:247
 msgctxt "KFileSystemType|"
 msgid "FAT"
 msgstr "FAT"
 
-#: lib/io/kfilesystemtype.cpp:242
+#: lib/io/kfilesystemtype.cpp:249
 msgctxt "KFileSystemType|"
 msgid "RAMFS"
 msgstr "RAMFS"
 
-#: lib/io/kfilesystemtype.cpp:244
+#: lib/io/kfilesystemtype.cpp:251
 msgctxt "KFileSystemType|"
 msgid "Other"
 msgstr "Iný"
 
-#: lib/io/kfilesystemtype.cpp:246
+#: lib/io/kfilesystemtype.cpp:253
 msgctxt "KFileSystemType|"
 msgid "NTFS"
 msgstr "NTFS"
 
-#: lib/io/kfilesystemtype.cpp:248
+#: lib/io/kfilesystemtype.cpp:255
 msgctxt "KFileSystemType|"
 msgid "ExFAT"
 msgstr "ExFAT"
 
-#: lib/io/kfilesystemtype.cpp:250
+#: lib/io/kfilesystemtype.cpp:257
 msgctxt "KFileSystemType|"
 msgid "FUSE"
 msgstr ""
 
-#: lib/io/kfilesystemtype.cpp:252
+#: lib/io/kfilesystemtype.cpp:259
 msgctxt "KFileSystemType|"
 msgid "Unknown"
 msgstr "Neznámy"
@@ -800,14 +800,20 @@ msgctxt "KFormat|"
 msgid "Just now"
 msgstr "Práve teraz"
 
-#: lib/util/kformatprivate.cpp:512
-#, qt-format
+#. @item:intext %1 is a whole number
+#: lib/util/kformatprivate.cpp:515
+#, fuzzy, qt-format
+#| msgctxt "KFormat|"
+#| msgid "%1 minutes ago"
 msgctxt "KFormat|"
-msgid "%1 minutes ago"
-msgstr "Pred %1 minútami"
+msgid "%n minute(s) ago"
+msgid_plural "%n minute(s) ago"
+msgstr[0] "Pred %1 minútami"
+msgstr[1] "Pred %1 minútami"
+msgstr[2] "Pred %1 minútami"
 
 #. relative datetime with %1 result of QLocale.toString(date, format) or formatRelativeDate and %2 result of QLocale.toString(time, timeformatType) If this does not fit the grammar of your language please contact the i18n team to solve the problem
-#: lib/util/kformatprivate.cpp:528
+#: lib/util/kformatprivate.cpp:531
 #, qt-format
 msgctxt "KFormat|"
 msgid "%1 at %2"

@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_location_factory.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
+#include "styles/style_chat_helpers.h"
 
 namespace InlineBots {
 namespace {
@@ -262,6 +263,12 @@ std::unique_ptr<Result> Result::Create(
 		result->sendData = std::make_unique<internal::SendInvoice>(
 			session,
 			media);
+	}, [&](const MTPDbotInlineMessageMediaWebPage &data) {
+		result->sendData = std::make_unique<internal::SendText>(
+			session,
+			qs(data.vmessage()),
+			Api::EntitiesFromMTP(session, data.ventities().value_or_empty()),
+			false);
 	});
 
 	if (!result->sendData || !result->sendData->isValid()) {
@@ -374,7 +381,7 @@ void Result::addToHistory(
 		PeerId fromId,
 		TimeId date,
 		UserId viaBotId,
-		MsgId replyToId,
+		FullReplyTo replyTo,
 		const QString &postAuthor) const {
 	flags |= MessageFlag::FromInlineBot;
 
@@ -390,7 +397,7 @@ void Result::addToHistory(
 		fromId,
 		date,
 		viaBotId,
-		replyToId,
+		replyTo,
 		postAuthor,
 		std::move(markup));
 }

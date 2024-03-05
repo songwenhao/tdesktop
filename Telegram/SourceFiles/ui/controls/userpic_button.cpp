@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "calls/calls_instance.h"
 #include "core/application.h"
+#include "ui/effects/premium_graphics.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/menu/menu_action.h"
@@ -33,7 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/streaming/media_streaming_player.h"
 #include "media/streaming/media_streaming_document.h"
 #include "settings/settings_calls.h" // Calls::AddCameraSubsection.
-#include "webrtc/webrtc_media_devices.h" // Webrtc::GetVideoInputList.
+#include "webrtc/webrtc_environment.h"
 #include "webrtc/webrtc_video_track.h"
 #include "ui/widgets/popup_menu.h"
 #include "window/window_controller.h"
@@ -45,13 +46,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
+#include "styles/style_premium.h"
 
 namespace Ui {
 namespace {
 
 [[nodiscard]] bool IsCameraAvailable() {
 	return (Core::App().calls().currentCall() == nullptr)
-		&& !Webrtc::GetVideoInputList().empty();
+		&& !Core::App().mediaDevices().defaultId(
+			Webrtc::DeviceType::Camera).isEmpty();
 }
 
 void CameraBox(
@@ -63,7 +66,7 @@ void CameraBox(
 	using namespace Webrtc;
 
 	const auto track = Settings::Calls::AddCameraSubsection(
-		std::make_shared<Ui::BoxShow>(box),
+		box->uiShow(),
 		box->verticalLayout(),
 		false);
 	if (!track) {
@@ -234,6 +237,7 @@ void UserpicButton::requestSuggestAvailability() {
 bool UserpicButton::canSuggestPhoto(not_null<UserData*> user) const {
 	// Server allows suggesting photos only in non-empty chats.
 	return !user->isSelf()
+		&& !user->isBot()
 		&& (user->owner().history(user)->lastServerMessage() != nullptr);
 }
 
@@ -870,6 +874,11 @@ void UserpicButton::switchChangePhotoOverlay(
 	}
 }
 
+void UserpicButton::forceForumShape(bool force) {
+	_forceForumShape = force;
+	prepare();
+}
+
 void UserpicButton::showSavedMessagesOnSelf(bool enabled) {
 	if (_showSavedMessagesOnSelf != enabled) {
 		_showSavedMessagesOnSelf = enabled;
@@ -1002,7 +1011,26 @@ void UserpicButton::prepareUserpicPixmap() {
 	_userpic = CreateSquarePixmap(size, [&](Painter &p) {
 		if (_userpicHasImage) {
 			if (_showPeerUserpic) {
-				_peer->paintUserpic(p, _userpicView, 0, 0, size);
+				if (useForumShape()) {
+					const auto ratio = style::DevicePixelRatio();
+					if (const auto cloud = _peer->userpicCloudImage(_userpicView)) {
+						Ui::ValidateUserpicCache(
+							_userpicView,
+							cloud,
+							nullptr,
+							size * ratio,
+							true);
+						p.drawImage(QRect(0, 0, size, size), _userpicView.cached);
+					} else {
+						const auto empty = _peer->generateUserpicImage(
+							_userpicView,
+							size * ratio,
+							size * ratio * Ui::ForumUserpicRadiusMultiplier());
+						p.drawImage(QRect(0, 0, size, size), empty);
+					}
+				} else {
+					_peer->paintUserpic(p, _userpicView, 0, 0, size);
+				}
 			} else if (_nonPersonalView) {
 				using Size = Data::PhotoSize;
 				if (const auto full = _nonPersonalView->image(Size::Large)) {
@@ -1023,8 +1051,7 @@ void UserpicButton::prepareUserpicPixmap() {
 			} else {
 				const auto user = _peer->asUser();
 				auto empty = Ui::EmptyUserpic(
-					Ui::EmptyUserpic::UserpicColor(
-						Data::PeerColorIndex(_peer->id)),
+					Ui::EmptyUserpic::UserpicColor(_peer->colorIndex()),
 					((user && user->isInaccessible())
 						? Ui::EmptyUserpic::InaccessibleName()
 						: _peer->name()));

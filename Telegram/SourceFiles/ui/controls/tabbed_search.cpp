@@ -7,8 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/controls/tabbed_search.h"
 
+#include "base/qt_signal_producer.h"
 #include "lang/lang_keys.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/widgets/buttons.h"
 #include "ui/painter.h"
@@ -180,8 +181,9 @@ void GroupsStrip::paintEvent(QPaintEvent *e) {
 		const auto top = 0;
 		const auto size = SearchWithGroups::IconSizeOverride();
 		if (_chosen == index) {
+			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::windowBgRipple);
+			p.setBrush(_st.bgActive);
 			p.drawEllipse(
 				left + skip,
 				top + (height - single) / 2 + skip,
@@ -305,7 +307,8 @@ anim::type SearchWithGroups::animated() const {
 }
 
 void SearchWithGroups::initField() {
-	connect(_field, &InputField::changed, [=] {
+	_field->changes(
+	) | rpl::start_with_next([=] {
 		const auto last = FieldQuery(_field);
 		_query = last;
 		const auto empty = last.empty();
@@ -318,7 +321,7 @@ void SearchWithGroups::initField() {
 			_chosenGroup = QString();
 			scrollGroupsToStart();
 		}
-	});
+	}, _field->lifetime());
 
 	_fieldPlaceholderWidth = tr::lng_dlg_filter(
 	) | rpl::map([=](const QString &value) {
@@ -491,9 +494,10 @@ void SearchWithGroups::initButtons() {
 		_field->setFocus();
 		scrollGroupsToStart();
 	});
-	QObject::connect(_field, &InputField::focused, [=] {
+	_field->focusedChanges(
+	) | rpl::filter(rpl::mappers::_1) | rpl::start_with_next([=] {
 		scrollGroupsToStart();
-	});
+	}, _field->lifetime());
 	_field->raise();
 	_fade->raise();
 	_search->raise();
@@ -515,6 +519,10 @@ void SearchWithGroups::ensureRounding(int size, float64 ratio) {
 		p.drawRoundedRect(QRect(QPoint(), full), rounded / 2., rounded / 2.);
 	}
 	_rounding.setDevicePixelRatio(ratio);
+}
+
+rpl::producer<> SearchWithGroups::escapes() const {
+	return _field->cancelled();
 }
 
 rpl::producer<std::vector<QString>> SearchWithGroups::queryValue() const {
@@ -657,6 +665,10 @@ void TabbedSearch::stealFocus() {
 
 void TabbedSearch::returnFocus() {
 	_search.returnFocus();
+}
+
+rpl::producer<> TabbedSearch::escapes() const {
+	return _search.escapes();
 }
 
 rpl::producer<std::vector<QString>> TabbedSearch::queryValue() const {

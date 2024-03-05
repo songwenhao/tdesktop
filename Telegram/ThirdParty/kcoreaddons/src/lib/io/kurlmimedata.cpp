@@ -2,7 +2,7 @@
     This file is part of the KDE libraries
 
     SPDX-FileCopyrightText: 2005-2012 David Faure <faure@kde.org>
-    SPDX-FileCopyrightText: 2022 Harald Sitter <sitter@kde.org>
+    SPDX-FileCopyrightText: 2022-2023 Harald Sitter <sitter@kde.org>
 
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
@@ -190,9 +190,23 @@ QList<QUrl> KUrlMimeData::urlsFromMimeData(const QMimeData *mimeData, DecodeOpti
 }
 
 #if HAVE_QTDBUS
-static std::optional<QStringList> fuseRedirect(QList<QUrl> urls)
+static QStringList urlListToStringList(const QList<QUrl> urls)
+{
+    QStringList list;
+    for (const auto &url : urls) {
+        list << url.toLocalFile();
+    }
+    return list;
+}
+
+static std::optional<QStringList> fuseRedirect(QList<QUrl> urls, bool onlyLocalFiles)
 {
     qCDebug(KCOREADDONS_DEBUG) << "mounting urls with fuse" << urls;
+
+    // Fuse redirection only applies if the list contains non-local files.
+    if (onlyLocalFiles) {
+        return urlListToStringList(urls);
+    }
 
     OrgKdeKIOFuseVFSInterface kiofuse_iface(kioFuseServiceName(), QStringLiteral("/org/kde/KIOFuse"), QDBusConnection::sessionBus());
     struct MountRequest {
@@ -228,28 +242,51 @@ static std::optional<QStringList> fuseRedirect(QList<QUrl> urls)
 
     qCDebug(KCOREADDONS_DEBUG) << "mounted urls with fuse, maybe" << urls;
 
-    QStringList list;
-    for (const auto &url : urls) {
-        list << url.toLocalFile();
-    }
-    return list;
+    return urlListToStringList(urls);
 }
 #endif
 
 bool KUrlMimeData::exportUrlsToPortal(QMimeData *mimeData)
 {
 #if HAVE_QTDBUS
-    if (!isDocumentsPortalAvailable() || !isKIOFuseAvailable()) {
+    if (!isDocumentsPortalAvailable()) {
         return false;
     }
     QList<QUrl> urls = mimeData->urls();
 
-    // XDG Document Portal doesn't support directories and silently drops them.
-    bool hasDirs = std::any_of(urls.begin(), urls.end(), [](const QUrl url) {
-        return url.isLocalFile() && QFileInfo(url.toLocalFile()).isDir();
-    });
-    if (hasDirs) {
-        return false;
+    bool onlyLocalFiles = true;
+    for (const auto &url : urls) {
+        const auto isLocal = url.isLocalFile();
+        if (!isLocal) {
+            onlyLocalFiles = false;
+
+            // For the time being the fuse redirection is opt-in because we later need to open() the files
+            // and this is an insanely expensive operation involving a stat() for remote URLs that we can't
+            // really get rid of. We'll need a way to avoid the open().
+            // https://bugs.kde.org/show_bug.cgi?id=457529
+            // https://github.com/flatpak/xdg-desktop-portal/issues/961
+            static const auto fuseRedirect = qEnvironmentVariableIntValue("KCOREADDONS_FUSE_REDIRECT");
+            if (!fuseRedirect) {
+                return false;
+            }
+
+            // some remotes, fusing is enabled, but kio-fuse is unavailable -> cannot run this url list through the portal
+            if (!isKIOFuseAvailable()) {
+                qWarning() << "kio-fuse is missing";
+                return false;
+            }
+        } else {
+            const QFileInfo info(url.toLocalFile());
+            if (info.isDir()) {
+                // XDG Document Portal doesn't support directories and silently drops them.
+                return false;
+            }
+            if (info.isSymbolicLink()) {
+                // XDG Document Portal also doesn't support symlinks since it doesn't let us open the fd O_NOFOLLOW.
+                // https://github.com/flatpak/xdg-desktop-portal/issues/961#issuecomment-1573646299
+                return false;
+            }
+        }
     }
 
     auto iface =
@@ -261,11 +298,34 @@ bool KUrlMimeData::exportUrlsToPortal(QMimeData *mimeData)
     const QString transferId = iface->StartTransfer({{QStringLiteral("autostop"), QVariant::fromValue(false)}});
     mimeData->setData(QStringLiteral("application/vnd.portal.filetransfer"), QFile::encodeName(transferId));
 
-    auto optionalPaths = fuseRedirect(urls);
+    auto optionalPaths = fuseRedirect(urls, onlyLocalFiles);
     if (!optionalPaths.has_value()) {
         qCWarning(KCOREADDONS_DEBUG) << "Failed to mount with fuse!";
         return false;
     }
+
+    // Prevent running into "too many open files" errors.
+    // Because submission of calls happens on the qdbus thread we may be feeding
+    // it QDBusUnixFileDescriptors faster than it can submit them over the wire, this would eventually
+    // lead to running into the open file cap since the QDBusUnixFileDescriptor hold
+    // an open FD until their call has been made.
+    // To prevent this from happening we collect a submission batch, make the call and **wait** for
+    // the call to succeed.
+    FDList pendingFds;
+    static constexpr decltype(pendingFds.size()) maximumBatchSize = 16;
+    pendingFds.reserve(maximumBatchSize);
+
+    const auto addFilesAndClear = [transferId, &iface, &pendingFds]() {
+        if (pendingFds.isEmpty()) {
+            return;
+        }
+        auto reply = iface->AddFiles(transferId, pendingFds, {});
+        reply.waitForFinished();
+        if (reply.isError()) {
+            qCWarning(KCOREADDONS_DEBUG) << "Some files could not be exported. " << reply.error();
+        }
+        pendingFds.clear();
+    };
 
     for (const auto &path : optionalPaths.value()) {
         const int fd = open(QFile::encodeName(path).constData(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
@@ -273,9 +333,15 @@ bool KUrlMimeData::exportUrlsToPortal(QMimeData *mimeData)
             const int error = errno;
             qCWarning(KCOREADDONS_DEBUG) << "Failed to open" << path << strerror(error);
         }
-        iface->AddFiles(transferId, {QDBusUnixFileDescriptor(fd)}, {});
+        pendingFds << QDBusUnixFileDescriptor(fd);
         close(fd);
+
+        if (pendingFds.size() >= maximumBatchSize) {
+            addFilesAndClear();
+        }
     }
+    addFilesAndClear();
+
     QObject::connect(mimeData, &QObject::destroyed, iface, [transferId, iface] {
         iface->StopTransfer(transferId);
         iface->deleteLater();

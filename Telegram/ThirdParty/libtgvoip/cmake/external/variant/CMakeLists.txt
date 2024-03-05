@@ -8,17 +8,12 @@ add_library(external_variant INTERFACE IMPORTED GLOBAL)
 add_library(desktop-app::external_variant ALIAS external_variant)
 
 if (DESKTOP_APP_USE_PACKAGED)
-    find_path(DESKTOP_APP_VARIANT_INCLUDE_DIRS mapbox/variant.hpp)
-    if (DESKTOP_APP_VARIANT_INCLUDE_DIRS)
-        target_include_directories(external_variant SYSTEM
-        INTERFACE
-            ${DESKTOP_APP_VARIANT_INCLUDE_DIRS}
-        )
-        return()
-    endif()
+    find_path(VARIANT_INCLUDE_DIRS mapbox/variant.hpp)
 endif()
 
-target_include_directories(external_variant SYSTEM
-INTERFACE
-    ${third_party_loc}/variant/include
-)
+if (NOT VARIANT_INCLUDE_DIRS)
+    target_include_directories(external_variant SYSTEM
+    INTERFACE
+        ${third_party_loc}/variant/include
+    )
+endif()

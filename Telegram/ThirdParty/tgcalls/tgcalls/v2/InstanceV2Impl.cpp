@@ -4,6 +4,7 @@
 #include "VideoCaptureInterfaceImpl.h"
 #include "VideoCapturerInterface.h"
 #include "v2/NativeNetworkingImpl.h"
+#include "v2/DirectNetworkingImpl.h"
 #include "v2/Signaling.h"
 #include "v2/ContentNegotiation.h"
 
@@ -77,7 +78,7 @@ SignalingProtocolVersion signalingProtocolVersion(std::string const &version) {
     } else if (version == "8.0.0") {
         return SignalingProtocolVersion::V2;
     } else if (version == "9.0.0") {
-        return SignalingProtocolVersion::V3;
+        return SignalingProtocolVersion::V2;
     } else {
         RTC_LOG(LS_ERROR) << "signalingProtocolVersion: unknown version " << version;
 
@@ -252,6 +253,54 @@ private:
     bool _isMuted = true;
 };
 
+namespace {
+class AudioSinkImpl: public webrtc::AudioSinkInterface {
+public:
+    AudioSinkImpl(std::function<void(float)> update) :
+    _update(update) {
+    }
+
+    virtual ~AudioSinkImpl() {
+    }
+
+    virtual void OnData(const Data& audio) override {
+        if (_update && audio.channels == 1) {
+            const int16_t *samples = (const int16_t *)audio.data;
+            int numberOfSamplesInFrame = (int)audio.samples_per_channel;
+
+            int16_t currentPeak = 0;
+            for (int i = 0; i < numberOfSamplesInFrame; i++) {
+                int16_t sample = samples[i];
+                if (sample < 0) {
+                    sample = -sample;
+                }
+                if (_peak < sample) {
+                    _peak = sample;
+                }
+                if (currentPeak < sample) {
+                    currentPeak = sample;
+                }
+                _peakCount += 1;
+            }
+
+            if (_peakCount >= 4400) {
+                float level = ((float)(_peak)) / 8000.0f;
+                _peak = 0;
+                _peakCount = 0;
+                _update(level);
+            }
+        }
+    }
+
+private:
+    std::function<void(float)> _update;
+
+    int _peakCount = 0;
+    uint16_t _peak = 0;
+};
+
+}
+
 class IncomingV2AudioChannel : public sigslot::has_slots<> {
 public:
     IncomingV2AudioChannel(
@@ -260,6 +309,7 @@ public:
         webrtc::RtpTransport *rtpTransport,
         rtc::UniqueRandomIdGenerator *randomIdGenerator,
         signaling::MediaContent const &mediaContent,
+        std::function<void(float)> onAudioLevelUpdated,
         std::shared_ptr<Threads> threads) :
     _threads(threads),
     _ssrc(mediaContent.ssrc),
@@ -277,8 +327,6 @@ public:
         _threads->getNetworkThread()->BlockingCall([&]() {
             _audioChannel->SetRtpTransport(rtpTransport);
         });
-
-
 
         std::vector<cricket::AudioCodec> codecs;
         for (const auto &payloadType : mediaContent.payloadTypes) {
@@ -316,11 +364,14 @@ public:
         streamParams.set_stream_ids({ streamId });
         incomingAudioDescription->AddStream(streamParams);
 
-        threads->getWorkerThread()->BlockingCall([&]() {
+        threads->getWorkerThread()->BlockingCall([this, &outgoingAudioDescription, &incomingAudioDescription, onAudioLevelUpdated = std::move(onAudioLevelUpdated), ssrc = mediaContent.ssrc]() {
             _audioChannel->SetPayloadTypeDemuxingEnabled(false);
             std::string errorDesc;
             _audioChannel->SetLocalContent(outgoingAudioDescription.get(), webrtc::SdpType::kOffer, errorDesc);
             _audioChannel->SetRemoteContent(incomingAudioDescription.get(), webrtc::SdpType::kAnswer, errorDesc);
+
+            std::unique_ptr<AudioSinkImpl> audioLevelSink(new AudioSinkImpl(std::move(onAudioLevelUpdated)));
+            _audioChannel->media_channel()->SetRawAudioSink(ssrc, std::move(audioLevelSink));
         });
 
         outgoingAudioDescription.reset();
@@ -816,8 +867,8 @@ struct StateLogRecord {
 struct NetworkStateLogRecord {
     bool isConnected = false;
     bool isFailed = false;
-    absl::optional<NativeNetworkingImpl::RouteDescription> route;
-    absl::optional<NativeNetworkingImpl::ConnectionDescription> connection;
+    absl::optional<InstanceNetworking::RouteDescription> route;
+    absl::optional<InstanceNetworking::ConnectionDescription> connection;
 
     bool operator==(NetworkStateLogRecord const &rhs) const {
         if (isConnected != rhs.isConnected) {
@@ -850,6 +901,7 @@ public:
     _threads(threads),
     _rtcServers(descriptor.rtcServers),
     _proxy(std::move(descriptor.proxy)),
+    _directConnectionChannel(descriptor.directConnectionChannel),
     _enableP2P(descriptor.config.enableP2P),
     _encryptionKey(std::move(descriptor.encryptionKey)),
     _stateUpdated(descriptor.stateUpdated),
@@ -860,6 +912,7 @@ public:
     _remotePrefferedAspectRatioUpdated(descriptor.remotePrefferedAspectRatioUpdated),
     _signalingDataEmitted(descriptor.signalingDataEmitted),
     _createAudioDeviceModule(descriptor.createAudioDeviceModule),
+    _devicesConfig(descriptor.mediaDevicesConfig),
     _statsLogPath(descriptor.config.statsLogPath),
     _eventLog(std::make_unique<webrtc::RtcEventLogNull>()),
     _taskQueueFactory(webrtc::CreateDefaultTaskQueueFactory()),
@@ -892,7 +945,7 @@ public:
 
         _contentNegotiationContext.reset();
 
-        _networking->perform([](NativeNetworkingImpl *networking) {
+        _networking->perform([](InstanceNetworking *networking) {
             networking->stop();
         });
 
@@ -948,68 +1001,136 @@ public:
             proxy = *(_proxy.get());
         }
 
-        _networking.reset(new ThreadLocalObject<NativeNetworkingImpl>(_threads->getNetworkThread(), [weak, threads = _threads, isOutgoing = _encryptionKey.isOutgoing, rtcServers = _rtcServers, proxy, enableP2P = _enableP2P]() {
-            return new NativeNetworkingImpl(NativeNetworkingImpl::Configuration{
-                .isOutgoing = isOutgoing,
-                .enableStunMarking = false,
-                .enableTCP = false,
-                .enableP2P = enableP2P,
-                .rtcServers = rtcServers,
-                .proxy = proxy,
-                .stateUpdated = [threads, weak](const NativeNetworkingImpl::State &state) {
-                    threads->getMediaThread()->PostTask([=] {
-                        const auto strong = weak.lock();
-                        if (!strong) {
-                            return;
-                        }
-                        strong->onNetworkStateUpdated(state);
-                    });
-                },
-                .candidateGathered = [threads, weak](const cricket::Candidate &candidate) {
-                    threads->getMediaThread()->PostTask([=] {
-                        const auto strong = weak.lock();
-                        if (!strong) {
-                            return;
-                        }
+        _networking.reset(new ThreadLocalObject<InstanceNetworking>(_threads->getNetworkThread(), [weak, threads = _threads, encryptionKey = _encryptionKey, isOutgoing = _encryptionKey.isOutgoing, rtcServers = _rtcServers, proxy, enableP2P = _enableP2P, directConnectionChannel = _directConnectionChannel]() {
+            if (directConnectionChannel) {
+                return std::static_pointer_cast<InstanceNetworking>(std::make_shared<DirectNetworkingImpl>(InstanceNetworking::Configuration {
+                    .encryptionKey = encryptionKey,
+                    .isOutgoing = isOutgoing,
+                    .enableStunMarking = false,
+                    .enableTCP = false,
+                    .enableP2P = enableP2P,
+                    .rtcServers = rtcServers,
+                    .proxy = proxy,
+                    .stateUpdated = [threads, weak](const InstanceNetworking::State &state) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                            strong->onNetworkStateUpdated(state);
+                        });
+                    },
+                        .candidateGathered = [threads, weak](const cricket::Candidate &candidate) {
+                            threads->getMediaThread()->PostTask([=] {
+                                const auto strong = weak.lock();
+                                if (!strong) {
+                                    return;
+                                }
 
-                        strong->sendCandidate(candidate);
-                    });
-                },
-                .transportMessageReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, bool isMissing) {
-                    threads->getMediaThread()->PostTask([=] {
+                                strong->sendCandidate(candidate);
+                            });
+                        },
+                        .transportMessageReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, bool isMissing) {
+                            threads->getMediaThread()->PostTask([=] {
+                                const auto strong = weak.lock();
+                                if (!strong) {
+                                    return;
+                                }
+                            });
+                        },
+                        .rtcpPacketReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, int64_t timestamp) {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                            strong->_call->Receiver()->DeliverPacket(webrtc::MediaType::ANY, packet, timestamp);
+                        },
+                        .dataChannelStateUpdated = [threads, weak](bool isDataChannelOpen) {
+                            threads->getMediaThread()->PostTask([=] {
+                                const auto strong = weak.lock();
+                                if (!strong) {
+                                    return;
+                                }
+                                strong->onDataChannelStateUpdated(isDataChannelOpen);
+                            });
+                        },
+                        .dataChannelMessageReceived = [threads, weak](std::string const &message) {
+                            threads->getMediaThread()->PostTask([=] {
+                                const auto strong = weak.lock();
+                                if (!strong) {
+                                    return;
+                                }
+                                strong->onDataChannelMessage(message);
+                            });
+                        },
+                        .threads = threads,
+                        .directConnectionChannel = directConnectionChannel,
+                }));
+            } else {
+                return std::static_pointer_cast<InstanceNetworking>(std::make_shared<NativeNetworkingImpl>(InstanceNetworking::Configuration{
+                    .encryptionKey = encryptionKey,
+                    .isOutgoing = isOutgoing,
+                    .enableStunMarking = false,
+                    .enableTCP = false,
+                    .enableP2P = enableP2P,
+                    .rtcServers = rtcServers,
+                    .proxy = proxy,
+                    .stateUpdated = [threads, weak](const InstanceNetworking::State &state) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                            strong->onNetworkStateUpdated(state);
+                        });
+                    },
+                    .candidateGathered = [threads, weak](const cricket::Candidate &candidate) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+
+                            strong->sendCandidate(candidate);
+                        });
+                    },
+                    .transportMessageReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, bool isMissing) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                        });
+                    },
+                    .rtcpPacketReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, int64_t timestamp) {
                         const auto strong = weak.lock();
                         if (!strong) {
                             return;
                         }
-                    });
-                },
-                .rtcpPacketReceived = [threads, weak](rtc::CopyOnWriteBuffer const &packet, int64_t timestamp) {
-                    const auto strong = weak.lock();
-                    if (!strong) {
-                        return;
-                    }
-                    strong->_call->Receiver()->DeliverPacket(webrtc::MediaType::ANY, packet, timestamp);
-                },
-                .dataChannelStateUpdated = [threads, weak](bool isDataChannelOpen) {
-                    threads->getMediaThread()->PostTask([=] {
-                        const auto strong = weak.lock();
-                        if (!strong) {
-                            return;
-                        }
-                        strong->onDataChannelStateUpdated(isDataChannelOpen);
-                    });
-                },
-                .dataChannelMessageReceived = [threads, weak](std::string const &message) {
-                    threads->getMediaThread()->PostTask([=] {
-                        const auto strong = weak.lock();
-                        if (!strong) {
-                            return;
-                        }
-                        strong->onDataChannelMessage(message);
-                    });
-                },
-                .threads = threads
-            });
+                        strong->_call->Receiver()->DeliverPacket(webrtc::MediaType::ANY, packet, timestamp);
+                    },
+                    .dataChannelStateUpdated = [threads, weak](bool isDataChannelOpen) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                            strong->onDataChannelStateUpdated(isDataChannelOpen);
+                        });
+                    },
+                    .dataChannelMessageReceived = [threads, weak](std::string const &message) {
+                        threads->getMediaThread()->PostTask([=] {
+                            const auto strong = weak.lock();
+                            if (!strong) {
+                                return;
+                            }
+                            strong->onDataChannelMessage(message);
+                        });
+                    },
+                    .threads = threads,
+                    .directConnectionChannel = directConnectionChannel,
+                }));
+            }
         }));
 
         PlatformInterface::SharedInstance()->configurePlatformAudio();
@@ -1029,7 +1150,7 @@ public:
 
         mediaDeps.adm = _audioDeviceModule;
 
-        webrtc:: AudioProcessingBuilder builder;
+        webrtc::AudioProcessingBuilder builder;
         mediaDeps.audio_processing = builder.Create();
 
         _availableVideoFormats = mediaDeps.video_encoder_factory->GetSupportedFormats();
@@ -1053,6 +1174,9 @@ public:
         _threads->getWorkerThread()->BlockingCall([&]() {
             callConfig.audio_state = _channelManager->media_engine()->voice().GetAudioState();
             _call.reset(webrtc::Call::Create(callConfig));
+
+            SetAudioInputDeviceById(_audioDeviceModule.get(), _devicesConfig.audioInputId);
+            SetAudioOutputDeviceById(_audioDeviceModule.get(), _devicesConfig.audioOutputId);
         });
 
         _uniqueRandomIdGenerator.reset(new rtc::UniqueRandomIdGenerator());
@@ -1064,7 +1188,7 @@ public:
 
         _videoBitrateAllocatorFactory = webrtc::CreateBuiltinVideoBitrateAllocatorFactory();
 
-        _networking->perform([](NativeNetworkingImpl *networking) {
+        _networking->perform([](InstanceNetworking *networking) {
             networking->start();
         });
 
@@ -1079,7 +1203,7 @@ public:
         beginQualityTimer(0);
         beginLogTimer(0);
 
-        NativeNetworkingImpl::State initialNetworkState;
+        InstanceNetworking::State initialNetworkState;
         initialNetworkState.isReadyToSendData = false;
         onNetworkStateUpdated(initialNetworkState);
     }
@@ -1279,6 +1403,7 @@ public:
                             outgoingAudioContent.value(),
                             _threads
                         ));
+                        _outgoingAudioChannel->setIsMuted(_isMicrophoneMuted);
                     }
                 }
             }
@@ -1392,6 +1517,7 @@ public:
                             _rtpTransport,
                             _uniqueRandomIdGenerator.get(),
                             content,
+                            _audioLevelUpdated,
                             _threads
                         ));
                     }
@@ -1473,10 +1599,16 @@ public:
     void sendInitialSetup() {
         const auto weak = std::weak_ptr<InstanceV2ImplInternal>(shared_from_this());
 
-        _networking->perform([weak, threads = _threads, isOutgoing = _encryptionKey.isOutgoing](NativeNetworkingImpl *networking) {
+        _networking->perform([weak, threads = _threads, isOutgoing = _encryptionKey.isOutgoing](InstanceNetworking *networking) {
             auto localFingerprint = networking->getLocalFingerprint();
-            std::string hash = localFingerprint->algorithm;
-            std::string fingerprint = localFingerprint->GetRfc4572Fingerprint();
+            std::string hash;
+            std::string fingerprint;
+
+            if (localFingerprint) {
+                hash = localFingerprint->algorithm;
+                fingerprint = localFingerprint->GetRfc4572Fingerprint();
+            }
+
             std::string setup;
             if (isOutgoing) {
                 setup = "actpass";
@@ -1489,7 +1621,7 @@ public:
             std::string pwd = localIceParams.pwd;
             bool supportsRenomination = localIceParams.supportsRenomination;
 
-            threads->getMediaThread()->PostTask([weak, ufrag, pwd, supportsRenomination, hash, fingerprint, setup, localIceParams]() {
+            threads->getMediaThread()->PostTask([weak, ufrag, pwd, supportsRenomination, hash, fingerprint, setup]() {
                 const auto strong = weak.lock();
                 if (!strong) {
                     return;
@@ -1606,7 +1738,7 @@ public:
                 sslSetup = initialSetup->fingerprints[0].setup;
             }
 
-            _networking->perform([threads = _threads, remoteIceParameters = std::move(remoteIceParameters), fingerprint = std::move(fingerprint), sslSetup = std::move(sslSetup)](NativeNetworkingImpl *networking) {
+            _networking->perform([threads = _threads, remoteIceParameters = std::move(remoteIceParameters), fingerprint = std::move(fingerprint), sslSetup = std::move(sslSetup)](InstanceNetworking *networking) {
                 networking->setRemoteParams(remoteIceParameters, fingerprint.get(), sslSetup);
             });
 
@@ -1718,13 +1850,13 @@ public:
         if (_pendingIceCandidates.size() == 0) {
             return;
         }
-        _networking->perform([threads = _threads, parsedCandidates = _pendingIceCandidates](NativeNetworkingImpl *networking) {
+        _networking->perform([threads = _threads, parsedCandidates = _pendingIceCandidates](InstanceNetworking *networking) {
             networking->addCandidates(parsedCandidates);
         });
         _pendingIceCandidates.clear();
     }
 
-    void onNetworkStateUpdated(NativeNetworkingImpl::State const &state) {
+    void onNetworkStateUpdated(InstanceNetworking::State const &state) {
         State mappedState;
         if (state.isFailed) {
             mappedState = State::Failed;
@@ -1767,7 +1899,7 @@ public:
         auto data = message.serialize();
         std::string stringData(data.begin(), data.end());
         RTC_LOG(LS_INFO) << "sendDataChannelMessage: " << stringData;
-        _networking->perform([stringData = std::move(stringData)](NativeNetworkingImpl *networking) {
+        _networking->perform([stringData = std::move(stringData)](InstanceNetworking *networking) {
             networking->sendDataChannelMessage(stringData);
         });
     }
@@ -1982,7 +2114,7 @@ public:
             if (record.record.connection) {
                 json11::Json::object jsonConnection;
 
-                auto serializeCandidate = [](NativeNetworkingImpl::ConnectionDescription::CandidateDescription const &candidate) -> json11::Json::object {
+                auto serializeCandidate = [](InstanceNetworking::ConnectionDescription::CandidateDescription const &candidate) -> json11::Json::object {
                     json11::Json::object jsonCandidate;
 
                     jsonCandidate.insert(std::make_pair("type", json11::Json(candidate.type)));
@@ -2065,6 +2197,7 @@ private:
     std::shared_ptr<Threads> _threads;
     std::vector<RtcServer> _rtcServers;
     std::unique_ptr<Proxy> _proxy;
+    std::shared_ptr<DirectConnectionChannel> _directConnectionChannel;
     bool _enableP2P = false;
     EncryptionKey _encryptionKey;
     std::function<void(State)> _stateUpdated;
@@ -2075,6 +2208,7 @@ private:
     std::function<void(float)> _remotePrefferedAspectRatioUpdated;
     std::function<void(const std::vector<uint8_t> &)> _signalingDataEmitted;
     std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)> _createAudioDeviceModule;
+    MediaDevicesConfig _devicesConfig;
     FilePath _statsLogPath;
 
     std::unique_ptr<SignalingConnection> _signalingConnection;
@@ -2086,7 +2220,7 @@ private:
     std::vector<StateLogRecord<NetworkStateLogRecord>> _networkStateLogRecords;
     std::vector<StateLogRecord<NetworkBitrateLogRecord>> _networkBitrateLogRecords;
 
-    absl::optional<NativeNetworkingImpl::State> _networkState;
+    absl::optional<InstanceNetworking::State> _networkState;
 
     bool _handshakeCompleted = false;
     std::vector<cricket::Candidate> _pendingIceCandidates;
@@ -2107,7 +2241,7 @@ private:
 
     std::unique_ptr<ContentNegotiationContext> _contentNegotiationContext;
 
-    std::shared_ptr<ThreadLocalObject<NativeNetworkingImpl>> _networking;
+    std::shared_ptr<ThreadLocalObject<InstanceNetworking>> _networking;
 
     absl::optional<std::string> _outgoingAudioChannelId;
     std::unique_ptr<OutgoingAudioChannel> _outgoingAudioChannel;
@@ -2148,7 +2282,7 @@ InstanceV2Impl::InstanceV2Impl(Descriptor &&descriptor) {
 
     _threads = StaticThreads::getThreads();
     _internal.reset(new ThreadLocalObject<InstanceV2ImplInternal>(_threads->getMediaThread(), [descriptor = std::move(descriptor), threads = _threads]() mutable {
-        return new InstanceV2ImplInternal(std::move(descriptor), threads);
+        return std::make_shared<InstanceV2ImplInternal>(std::move(descriptor), threads);
     }));
     _internal->perform([](InstanceV2ImplInternal *internal) {
         internal->start();

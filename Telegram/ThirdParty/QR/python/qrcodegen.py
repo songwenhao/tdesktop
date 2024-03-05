@@ -93,10 +93,9 @@ class QrCode:
 			if version >= maxversion:  # All versions in the range could not fit the given data
 				msg: str = "Segment too long"
 				if datausedbits is not None:
-					msg = "Data length = {} bits, Max capacity = {} bits".format(datausedbits, datacapacitybits)
+					msg = f"Data length = {datausedbits} bits, Max capacity = {datacapacitybits} bits"
 				raise DataTooLongError(msg)
-		if datausedbits is None:
-			raise AssertionError()
+		assert datausedbits is not None
 		
 		# Increase the error correction level while the data still fits in the current version number
 		for newecl in (QrCode.Ecc.MEDIUM, QrCode.Ecc.QUARTILE, QrCode.Ecc.HIGH):  # From low to high
@@ -161,7 +160,7 @@ class QrCode:
 	
 	# ---- Constructor (low level) ----
 	
-	def __init__(self, version: int, errcorlvl: QrCode.Ecc, datacodewords: Union[bytes,Sequence[int]], mask: int) -> None:
+	def __init__(self, version: int, errcorlvl: QrCode.Ecc, datacodewords: Union[bytes,Sequence[int]], msk: int) -> None:
 		"""Creates a new QR Code with the given version number,
 		error correction level, data codeword bytes, and mask number.
 		This is a low-level API that most users should not use directly.
@@ -170,10 +169,8 @@ class QrCode:
 		# Check scalar arguments and set fields
 		if not (QrCode.MIN_VERSION <= version <= QrCode.MAX_VERSION):
 			raise ValueError("Version value out of range")
-		if not (-1 <= mask <= 7):
+		if not (-1 <= msk <= 7):
 			raise ValueError("Mask value out of range")
-		if not isinstance(errcorlvl, QrCode.Ecc):
-			raise TypeError("QrCode.Ecc expected")
 		
 		self._version = version
 		self._size = version * 4 + 17
@@ -189,20 +186,20 @@ class QrCode:
 		self._draw_codewords(allcodewords)
 		
 		# Do masking
-		if mask == -1:  # Automatically choose best mask
+		if msk == -1:  # Automatically choose best mask
 			minpenalty: int = 1 << 32
 			for i in range(8):
 				self._apply_mask(i)
 				self._draw_format_bits(i)
 				penalty = self._get_penalty_score()
 				if penalty < minpenalty:
-					mask = i
+					msk = i
 					minpenalty = penalty
 				self._apply_mask(i)  # Undoes the mask due to XOR
-		assert 0 <= mask <= 7
-		self._apply_mask(mask)  # Apply the final choice of mask
-		self._draw_format_bits(mask)  # Overwrite old format bits
-		self._mask = mask
+		assert 0 <= msk <= 7
+		self._mask = msk
+		self._apply_mask(msk)  # Apply the final choice of mask
+		self._draw_format_bits(msk)  # Overwrite old format bits
 		
 		del self._isfunction
 	
@@ -470,7 +467,9 @@ class QrCode:
 		total: int = size**2  # Note that size is odd, so dark/total != 1/2
 		# Compute the smallest integer k >= 0 such that (45-5k)% <= dark/total <= (55+5k)%
 		k: int = (abs(dark * 20 - total * 10) + total - 1) // total - 1
+		assert 0 <= k <= 9
 		result += k * QrCode._PENALTY_N4
+		assert 0 <= result <= 2568888  # Non-tight upper bound based on default values of PENALTY_N1, ..., N4
 		return result
 	
 	
@@ -721,8 +720,6 @@ class QrSegment:
 	def make_segments(text: str) -> List[QrSegment]:
 		"""Returns a new mutable list of zero or more segments to represent the given Unicode text string.
 		The result may use various segment modes and switch modes to optimize the length of the bit stream."""
-		if not isinstance(text, str):
-			raise TypeError("Text string expected")
 		
 		# Select the most efficient segment encoding automatically
 		if text == "":
@@ -745,10 +742,10 @@ class QrSegment:
 		elif assignval < (1 << 7):
 			bb.append_bits(assignval, 8)
 		elif assignval < (1 << 14):
-			bb.append_bits(2, 2)
+			bb.append_bits(0b10, 2)
 			bb.append_bits(assignval, 14)
 		elif assignval < 1000000:
-			bb.append_bits(6, 3)
+			bb.append_bits(0b110, 3)
 			bb.append_bits(assignval, 21)
 		else:
 			raise ValueError("ECI assignment value out of range")
@@ -791,8 +788,6 @@ class QrSegment:
 		"""Creates a new QR Code segment with the given attributes and data.
 		The character count (numch) must agree with the mode and the bit buffer length,
 		but the constraint isn't checked. The given bit buffer is cloned and stored."""
-		if not isinstance(mode, QrSegment.Mode):
-			raise TypeError("QrSegment.Mode expected")
 		if numch < 0:
 			raise ValueError()
 		self._mode = mode
@@ -817,7 +812,7 @@ class QrSegment:
 	
 	# Package-private function
 	@staticmethod
-	def get_total_bits(segs, version: int) -> Optional[int]:
+	def get_total_bits(segs: Sequence[QrSegment], version: int) -> Optional[int]:
 		"""Calculates the number of bits needed to encode the given segments at
 		the given version. Returns a non-negative number if successful. Otherwise
 		returns None if a segment has too many characters to fit its length field."""

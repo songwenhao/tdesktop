@@ -286,19 +286,45 @@ void GroupedMedia::drawHighlight(
 		Painter &p,
 		const PaintContext &context,
 		int top) const {
-	if (_mode != Mode::Column) {
+	if (context.highlight.opacity == 0.) {
 		return;
 	}
+	auto selection = context.highlight.range;
+	if (_mode != Mode::Column) {
+		if (!selection.empty() && !IsSubGroupSelection(selection)) {
+			_parent->paintCustomHighlight(
+				p,
+				context,
+				top,
+				height(),
+				_parent->data().get());
+		}
+		return;
+	}
+	const auto empty = selection.empty();
+	const auto subpart = IsSubGroupSelection(selection);
 	const auto skip = top + groupedPadding().top();
 	for (auto i = 0, count = int(_parts.size()); i != count; ++i) {
 		const auto &part = _parts[i];
 		const auto rect = part.geometry.translated(0, skip);
-		_parent->paintCustomHighlight(
-			p,
-			context,
-			rect.y(),
-			rect.height(),
-			part.item);
+		const auto full = (!i && empty)
+			|| (subpart && IsGroupItemSelection(selection, i))
+			|| (!subpart
+				&& !selection.empty()
+				&& (selection.from < part.content->fullSelectionLength()));
+		if (!subpart) {
+			selection = part.content->skipSelection(selection);
+		}
+		if (full) {
+			auto copy = context;
+			copy.highlight.range = {};
+			_parent->paintCustomHighlight(
+				p,
+				copy,
+				rect.y(),
+				rect.height(),
+				part.item);
+		}
 	}
 }
 
@@ -316,21 +342,31 @@ void GroupedMedia::draw(Painter &p, const PaintContext &context) const {
 	const auto rounding = inWebPage
 		? Ui::BubbleRounding{ kSmall, kSmall, kSmall, kSmall }
 		: adjustedBubbleRoundingWithCaption(_caption);
+	auto highlight = context.highlight.range;
+	const auto subpartHighlight = IsSubGroupSelection(highlight);
 	for (auto i = 0, count = int(_parts.size()); i != count; ++i) {
 		const auto &part = _parts[i];
-		const auto partContext = context.withSelection(fullSelection
+		auto partContext = context.withSelection(fullSelection
 			? FullSelection
 			: textSelection
 			? selection
 			: IsGroupItemSelection(selection, i)
 			? FullSelection
 			: TextSelection());
+		const auto highlighted = (highlight.empty() && !i)
+			|| IsGroupItemSelection(highlight, i);
+		const auto highlightOpacity = highlighted
+			? context.highlight.opacity
+			: 0.;
+		partContext.highlight.range = highlighted
+			? TextSelection()
+			: highlight;
 		if (textSelection) {
 			selection = part.content->skipSelection(selection);
 		}
-		const auto highlightOpacity = (_mode == Mode::Grid)
-			? _parent->delegate()->elementHighlightOpacity(part.item)
-			: 0.;
+		if (!subpartHighlight) {
+			highlight = part.content->skipSelection(highlight);
+		}
 		if (!part.cache.isNull()) {
 			wasCache = true;
 		}
@@ -361,17 +397,22 @@ void GroupedMedia::draw(Painter &p, const PaintContext &context) const {
 		const auto stm = context.messageStyle();
 		p.setPen(stm->historyTextFg);
 		_parent->prepareCustomEmojiPaint(p, context, _caption);
+		auto highlightRequest = context.computeHighlightCache();
 		_caption.draw(p, {
 			.position = QPoint(
 				st::msgPadding.left(),
 				captiony),
 			.availableWidth = captionw,
 			.palette = &stm->textPalette,
+			.pre = stm->preCache.get(),
+			.blockquote = context.quoteCache(parent()->contentColorIndex()),
+			.colors = context.st->highlightColors(),
 			.spoiler = Ui::Text::DefaultSpoilerCache(),
 			.now = context.now,
 			.pausedEmoji = context.paused || On(PowerSaving::kEmojiChat),
 			.pausedSpoiler = context.paused || On(PowerSaving::kChatSpoiler),
 			.selection = context.selection,
+			.highlight = highlightRequest ? &*highlightRequest : nullptr,
 		});
 	} else if (_parent->media() == this) {
 		auto fullRight = width();
@@ -386,7 +427,9 @@ void GroupedMedia::draw(Painter &p, const PaintContext &context) const {
 				InfoDisplayType::Image);
 		}
 		if (const auto size = _parent->hasBubble() ? std::nullopt : _parent->rightActionSize()) {
-			auto fastShareLeft = (fullRight + st::historyFastShareLeft);
+			auto fastShareLeft = _parent->hasRightLayout()
+				? (-size->width() - st::historyFastShareLeft)
+				: (fullRight + st::historyFastShareLeft);
 			auto fastShareTop = (fullBottom - st::historyFastShareBottom - size->height());
 			_parent->drawRightAction(p, context, fastShareLeft, fastShareTop, width());
 		}
@@ -418,7 +461,7 @@ PointState GroupedMedia::pointState(QPoint point) const {
 		return PointState::Outside;
 	}
 	const auto groupPadding = groupedPadding();
-	point -=  QPoint(0, groupPadding.top());
+	point -= QPoint(0, groupPadding.top());
 	for (const auto &part : _parts) {
 		if (part.geometry.contains(point)) {
 			return PointState::GroupPart;
@@ -460,7 +503,9 @@ TextState GroupedMedia::textState(QPoint point, StateRequest request) const {
 			return bottomInfoResult;
 		}
 		if (const auto size = _parent->hasBubble() ? std::nullopt : _parent->rightActionSize()) {
-			auto fastShareLeft = (fullRight + st::historyFastShareLeft);
+			auto fastShareLeft = _parent->hasRightLayout()
+				? (-size->width() - st::historyFastShareLeft)
+				: (fullRight + st::historyFastShareLeft);
 			auto fastShareTop = (fullBottom - st::historyFastShareBottom - size->height());
 			if (QRect(fastShareLeft, fastShareTop, size->width(), size->height()).contains(point)) {
 				result.link = _parent->rightActionLink(point
@@ -511,6 +556,7 @@ TextSelection GroupedMedia::adjustSelection(
 			selection.to = modified.to;
 			return selection;
 		}
+		checked = till;
 	}
 	return selection;
 }
@@ -554,6 +600,51 @@ TextForMimeData GroupedMedia::selectedText(
 			}
 		}
 		selection = part.content->skipSelection(selection);
+	}
+	return result;
+}
+
+SelectedQuote GroupedMedia::selectedQuote(TextSelection selection) const {
+	if (_mode != Mode::Column) {
+		return _captionItem
+			? Element::FindSelectedQuote(_caption, selection, _captionItem)
+			: SelectedQuote();
+	}
+	for (const auto &part : _parts) {
+		const auto next = part.content->skipSelection(selection);
+		if (next.to - next.from != selection.to - selection.from) {
+			if (!next.empty()) {
+				return SelectedQuote();
+			}
+			auto result = part.content->selectedQuote(selection);
+			result.item = part.item;
+			return result;
+		}
+		selection = next;
+	}
+	return {};
+}
+
+TextSelection GroupedMedia::selectionFromQuote(
+		const SelectedQuote &quote) const {
+	Expects(quote.item != nullptr);
+
+	if (_mode != Mode::Column) {
+		return (_captionItem == quote.item)
+			? Element::FindSelectionFromQuote(_caption, quote)
+			: TextSelection();
+	}
+	const auto i = ranges::find(_parts, not_null(quote.item), &Part::item);
+	if (i == end(_parts)) {
+		return {};
+	}
+	const auto index = int(i - begin(_parts));
+	auto result = i->content->selectionFromQuote(quote);
+	if (result.empty()) {
+		return AddGroupItemSelection({}, index);
+	}
+	for (auto j = i; j != begin(_parts);) {
+		result = (--j)->content->unskipSelection(result);
 	}
 	return result;
 }
@@ -660,16 +751,15 @@ bool GroupedMedia::validateGroupParts(
 }
 
 void GroupedMedia::refreshCaption() {
-	using PartPtrOpt = std::optional<const Part*>;
-	const auto captionPart = [&]() -> PartPtrOpt {
+	const auto part = [&]() -> const Part* {
 		if (_mode == Mode::Column) {
-			return std::nullopt;
+			return nullptr;
 		}
-		auto result = PartPtrOpt();
+		auto result = (const Part*)nullptr;
 		for (const auto &part : _parts) {
 			if (!part.item->emptyText()) {
 				if (result) {
-					return std::nullopt;
+					return nullptr;
 				} else {
 					result = &part;
 				}
@@ -677,8 +767,7 @@ void GroupedMedia::refreshCaption() {
 		}
 		return result;
 	}();
-	if (captionPart) {
-		const auto &part = (*captionPart);
+	if (part) {
 		_caption = createCaption(part->item);
 		_captionItem = part->item;
 	} else {
@@ -785,7 +874,7 @@ bool GroupedMedia::computeNeedBubble() const {
 		if (item->repliesAreComments()
 			|| item->externalReply()
 			|| item->viaBot()
-			|| _parent->displayedReply()
+			|| _parent->displayReply()
 			|| _parent->displayForwardedFrom()
 			|| _parent->displayFromName()
 			|| _parent->displayedTopicButton()

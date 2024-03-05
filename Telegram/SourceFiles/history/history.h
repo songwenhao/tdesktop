@@ -99,6 +99,8 @@ public:
 	not_null<History*> migrateToOrMe() const;
 	History *migrateFrom() const;
 	MsgRange rangeForDifferenceRequest() const;
+
+	HistoryItem *joinedMessageInstance() const;
 	void checkLocalMessages();
 	void removeJoinedMessage();
 
@@ -148,7 +150,7 @@ public:
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -168,7 +170,7 @@ public:
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -179,7 +181,7 @@ public:
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -190,7 +192,7 @@ public:
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -329,17 +331,17 @@ public:
 	}
 	void setLocalDraft(std::unique_ptr<Data::Draft> &&draft) {
 		setDraft(
-			Data::DraftKey::Local(draft->topicRootId),
+			Data::DraftKey::Local(draft->reply.topicRootId),
 			std::move(draft));
 	}
 	void setLocalEditDraft(std::unique_ptr<Data::Draft> &&draft) {
 		setDraft(
-			Data::DraftKey::LocalEdit(draft->topicRootId),
+			Data::DraftKey::LocalEdit(draft->reply.topicRootId),
 			std::move(draft));
 	}
 	void setCloudDraft(std::unique_ptr<Data::Draft> &&draft) {
 		setDraft(
-			Data::DraftKey::Cloud(draft->topicRootId),
+			Data::DraftKey::Cloud(draft->reply.topicRootId),
 			std::move(draft));
 	}
 	void clearLocalDraft(MsgId topicRootId) {
@@ -363,6 +365,7 @@ public:
 	void takeLocalDraft(not_null<History*> from);
 	void applyCloudDraft(MsgId topicRootId);
 	void draftSavedToCloud(MsgId topicRootId);
+	void requestChatListMessage();
 
 	[[nodiscard]] const Data::ForwardDraft &forwardDraft(
 		MsgId topicRootId) const;
@@ -381,9 +384,9 @@ public:
 	Dialogs::BadgesState chatListBadgesState() const override;
 	HistoryItem *chatListMessage() const override;
 	bool chatListMessageKnown() const override;
-	void requestChatListMessage() override;
 	const QString &chatListName() const override;
 	const QString &chatListNameSortKey() const override;
+	int chatListNameVersion() const override;
 	const base::flat_set<QString> &chatListNameWords() const override;
 	const base::flat_set<QChar> &chatListFirstLetters() const override;
 	void chatListPreloadData() override;
@@ -586,8 +589,6 @@ private:
 		Dialogs::BadgesState state) const;
 	[[nodiscard]] Dialogs::UnreadState computeUnreadState() const;
 	void setFolderPointer(Data::Folder *folder);
-
-	int chatListNameVersion() const override;
 
 	void hasUnreadMentionChanged(bool has) override;
 	void hasUnreadReactionChanged(bool has) override;

@@ -35,7 +35,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
-#include "styles/style_settings.h"
 
 namespace {
 
@@ -202,9 +201,7 @@ void InviteForbiddenController::send(
 				int(list.size()),
 				Ui::Text::RichLangValue);
 		close();
-		Ui::Toast::Show(
-			show->toastParent(),
-			{ .text = std::move(text), .st = &st::defaultToast });
+		show->showToast(std::move(text));
 		return true;
 	};
 	const auto sendForFull = [=] {
@@ -270,6 +267,10 @@ void AddParticipantsBoxController::subscribeToMigration() {
 }
 
 void AddParticipantsBoxController::rowClicked(not_null<PeerListRow*> row) {
+	const auto premiumRequiredError = WritePremiumRequiredError;
+	if (RecipientRow::ShowLockedError(this, row, premiumRequiredError)) {
+		return;
+	}
 	const auto &serverConfig = session().serverConfig();
 	auto count = fullCount();
 	auto limit = _peer && (_peer->isChat() || _peer->isMegagroup())
@@ -295,6 +296,8 @@ void AddParticipantsBoxController::itemDeselectedHook(
 
 void AddParticipantsBoxController::prepareViewHook() {
 	updateTitle();
+
+	TrackPremiumRequiredChanges(this, lifetime());
 }
 
 int AddParticipantsBoxController::alreadyInCount() const {
@@ -335,8 +338,10 @@ std::unique_ptr<PeerListRow> AddParticipantsBoxController::createRow(
 	if (user->isSelf()) {
 		return nullptr;
 	}
-	auto result = std::make_unique<PeerListRow>(user);
-	if (isAlreadyIn(user)) {
+	const auto already = isAlreadyIn(user);
+	const auto maybeLockedSt = already ? nullptr : &computeListSt().item;
+	auto result = std::make_unique<RecipientRow>(user, maybeLockedSt);
+	if (already) {
 		result->setDisabledState(PeerListRow::State::DisabledChecked);
 	}
 	return result;
@@ -368,7 +373,7 @@ bool AddParticipantsBoxController::needsInviteLinkButton() {
 QPointer<Ui::BoxContent> AddParticipantsBoxController::showBox(
 		object_ptr<Ui::BoxContent> box) const {
 	const auto weak = Ui::MakeWeak(box.data());
-	delegate()->peerListShowBox(std::move(box), Ui::LayerOption::KeepOther);
+	delegate()->peerListUiShow()->showBox(std::move(box));
 	return weak;
 }
 
@@ -425,7 +430,7 @@ void AddParticipantsBoxController::inviteSelectedUsers(
 	if (users.empty()) {
 		return;
 	}
-	const auto show = std::make_shared<Ui::BoxShow>(box);
+	const auto show = box->uiShow();
 	const auto request = [=](bool checked) {
 		_peer->session().api().chatParticipants().add(
 			_peer,
@@ -493,9 +498,8 @@ void AddParticipantsBoxController::Start(
 		});
 		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	};
-	Window::Show(navigation).showBox(
-		Box<PeerListBox>(std::move(controller), std::move(initBox)),
-		Ui::LayerOption::KeepOther);
+	parent->show(
+		Box<PeerListBox>(std::move(controller), std::move(initBox)));
 }
 
 void AddParticipantsBoxController::Start(
@@ -538,9 +542,8 @@ void AddParticipantsBoxController::Start(
 			}, box->lifetime());
 		}
 	};
-	Window::Show(navigation).showBox(
-		Box<PeerListBox>(std::move(controller), std::move(initBox)),
-		Ui::LayerOption::KeepOther);
+	parent->show(
+		Box<PeerListBox>(std::move(controller), std::move(initBox)));
 }
 
 void AddParticipantsBoxController::Start(
@@ -616,7 +619,7 @@ bool ChatInviteForbidden(
 				box->addButton(tr::lng_via_link_send(), [=] {
 					weak->send(
 						box->collectSelectedRows(),
-						std::make_shared<Ui::BoxShow>(box),
+						box->uiShow(),
 						crl::guard(box, [=] { box->closeBox(); }));
 				});
 			}
@@ -626,8 +629,7 @@ bool ChatInviteForbidden(
 		}, box->lifetime());
 	};
 	show->showBox(
-		Box<PeerListBox>(std::move(controller), std::move(initBox)),
-		Ui::LayerOption::KeepOther);
+		Box<PeerListBox>(std::move(controller), std::move(initBox)));
 	return true;
 }
 
@@ -673,7 +675,7 @@ void AddSpecialBoxController::migrate(
 QPointer<Ui::BoxContent> AddSpecialBoxController::showBox(
 		object_ptr<Ui::BoxContent> box) const {
 	const auto weak = Ui::MakeWeak(box.data());
-	delegate()->peerListShowBox(std::move(box), Ui::LayerOption::KeepOther);
+	delegate()->peerListUiShow()->showBox(std::move(box));
 	return weak;
 }
 

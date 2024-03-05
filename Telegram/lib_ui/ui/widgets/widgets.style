@@ -255,6 +255,7 @@ PopupMenu {
 
 	menu: Menu;
 
+	radius: pixels;
 	duration: int;
 	showDuration: int;
 }
@@ -284,6 +285,7 @@ InputField {
 	border: pixels;
 	borderActive: pixels;
 	borderRadius: pixels;
+	borderDenominator: int;
 
 	font: font;
 	menu: PopupMenu;
@@ -369,6 +371,7 @@ RoundCheckbox {
 }
 
 RoundImageCheckbox {
+	selectExtendTwice: pixels;
 	imageRadius: pixels;
 	imageSmallRadius: pixels;
 	selectWidth: pixels;
@@ -555,6 +558,8 @@ WindowTitle {
 	bgActive: color;
 	fg: color;
 	fgActive: color;
+	shadow: bool;
+	style: TextStyle;
 	minimize: IconButton;
 	minimizeIconActive: icon;
 	minimizeIconActiveOver: icon;
@@ -608,6 +613,16 @@ Toast {
 	durationSlide: int;
 }
 
+Table {
+	bg: color;
+	headerBg: color;
+	borderFg: color;
+	border: pixels;
+	radius: pixels;
+	labelMinWidth: pixels;
+	labelMaxWidth: double;
+}
+
 defaultLabelSimple: LabelSimple {
 	font: normalFont;
 	maxWidth: 0px;
@@ -627,13 +642,22 @@ defaultLinkButton: LinkButton {
 	color: windowActiveTextFg;
 	overColor: windowActiveTextFg;
 	font: linkFont;
-	overFont: linkOverFont;
+	overFont: linkFontOver;
 }
 
 defaultRippleAnimation: RippleAnimation {
 	color: windowBgRipple;
 	showDuration: 650;
 	hideDuration: 200;
+}
+
+defaultTable: Table {
+	bg: windowBg;
+	headerBg: windowBgOver;
+	borderFg: inputBorderFg;
+	border: 1px;
+	radius: 6px;
+	labelMaxWidth: 0.5;
 }
 
 emptyRippleAnimation: RippleAnimation {
@@ -700,6 +724,7 @@ defaultScrollArea: ScrollArea {
 	duration: 150;
 	hiding: 1000;
 }
+scrollBarMin: 40px;
 
 defaultSolidScroll: ScrollArea(defaultScrollArea) {
 	deltax: 5px;
@@ -848,6 +873,7 @@ defaultPopupMenu: PopupMenu {
 
 	menu: defaultMenu;
 
+	radius: 3px;
 	duration: 150;
 	showDuration: 200;
 }
@@ -876,6 +902,7 @@ defaultInputField: InputField {
 	border: 1px;
 	borderActive: 2px;
 	borderRadius: 0px;
+	borderDenominator: 1;
 
 	font: boxTextFont;
 	menu: defaultPopupMenu;
@@ -984,6 +1011,7 @@ SettingsSlider {
 	barRadius: pixels;
 	barFg: color;
 	barFgActive: color;
+	barSnapToLabel: bool;
 	labelTop: pixels;
 	labelStyle: TextStyle;
 	labelFg: color;
@@ -1011,11 +1039,14 @@ defaultSettingsSlider: SettingsSlider {
 }
 
 defaultTabsSlider: SettingsSlider(defaultSettingsSlider) {
-	height: 53px;
-	barTop: 50px;
+	height: 43px;
+	barTop: 40px;
 	barSkip: 0px;
+	barStroke: 6px;
+	barRadius: 2px;
 	barFg: transparent;
-	labelTop: 19px;
+	barSnapToLabel: true;
+	labelTop: 12px;
 	labelStyle: semiboldTextStyle;
 	labelFg: windowSubTextFg;
 	labelFgActive: lightButtonFg;
@@ -1059,6 +1090,7 @@ defaultPeerListCheck: RoundCheckbox(defaultRoundCheckbox) {
 	check: defaultPeerListCheckIcon;
 }
 defaultPeerListCheckbox: RoundImageCheckbox {
+	selectExtendTwice: 0px;
 	imageRadius: 21px;
 	imageSmallRadius: 18px;
 	selectWidth: 2px;
@@ -1102,9 +1134,9 @@ defaultTooltip: Tooltip {
 defaultImportantTooltip: ImportantTooltip {
 	bg: importantTooltipBg;
 	margin: margins(4px, 4px, 4px, 4px);
-	padding: margins(13px, 9px, 13px, 10px);
-	radius: 6px;
-	arrow: 9px;
+	padding: margins(10px, 3px, 10px, 5px);
+	radius: 4px;
+	arrow: 4px;
 	arrowSkipMin: 24px;
 	arrowSkip: 66px;
 	shift: 12px;
@@ -1113,15 +1145,14 @@ defaultImportantTooltip: ImportantTooltip {
 
 defaultImportantTooltipLabel: FlatLabel(defaultFlatLabel) {
 	style: TextStyle(defaultTextStyle) {
-		font: font(14px);
-		linkFont: font(14px);
-		linkFontOver: font(14px underline);
+		font: font(11px);
 	}
 	textFg: importantTooltipFg;
 	palette: TextPalette(defaultTextPalette) {
 		linkFg: importantTooltipFgLink;
 		selectLinkFg: importantTooltipFgLink;
 	}
+	minWidth: 36px;
 }
 
 BotKeyboardButton {
@@ -1220,11 +1251,7 @@ defaultPeerListItem: PeerListItem {
 	height: 58px;
 	photoPosition: point(12px, 6px);
 	namePosition: point(68px, 11px);
-	nameStyle: TextStyle(defaultTextStyle) {
-		font: semiboldFont;
-		linkFont: semiboldFont;
-		linkFontOver: semiboldFont;
-	}
+	nameStyle: semiboldTextStyle;
 	nameFg: contactsNameFg;
 	nameFgChecked: windowActiveTextFg;
 	statusPosition: point(68px, 31px);
@@ -1239,8 +1266,6 @@ defaultPeerListItem: PeerListItem {
 
 boxTextStyle: TextStyle(defaultTextStyle) {
 	font: font(boxFontSize);
-	linkFont: font(boxFontSize);
-	linkFontOver: font(boxFontSize underline);
 }
 
 defaultPeerListAbout: FlatLabel(defaultFlatLabel) {
@@ -1267,23 +1292,6 @@ SearchFieldRow {
 	fieldIconSkip: pixels;
 	fieldCancel: CrossButton;
 	fieldCancelSkip: pixels;
-}
-
-InfoTopBar {
-	height: pixels;
-	back: IconButton;
-	title: FlatLabel;
-	titlePosition: point;
-	bg: color;
-	mediaCancel: IconButton;
-	mediaActionsSkip: pixels;
-	mediaForward: IconButton;
-	mediaDelete: IconButton;
-	search: IconButton;
-	searchRow: SearchFieldRow;
-	highlightBg: color;
-	highlightDuration: int;
-	radius: pixels;
 }
 
 LevelMeter {
@@ -1398,8 +1406,6 @@ defaultMultilineToast: Toast(defaultToast) {
 	minWidth: 160px;
 }
 
-shakeShift: 4px;
-
 // Windows specific title
 
 windowTitleButtonWidth: 36px;
@@ -1420,6 +1426,10 @@ defaultWindowTitle: WindowTitle {
 	bgActive: titleBgActive;
 	fg: titleFg;
 	fgActive: titleFgActive;
+	style: TextStyle(defaultTextStyle) {
+		font: font(semibold 12px);
+	}
+	shadow: true;
 	minimize: IconButton(windowTitleButton) {
 		icon: icon {
 			{ windowTitleButtonSize, titleButtonBg },

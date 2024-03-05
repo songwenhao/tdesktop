@@ -17,22 +17,28 @@ void GenericBox::prepare() {
 	_init(this);
 
 	const auto currentWidth = width();
-	const auto pinned = _pinnedToTopContent.data();
-	if (pinned) {
-		pinned->resizeToWidth(currentWidth);
+	const auto pinnedToTop = _pinnedToTopContent.data();
+	const auto pinnedToBottom = _pinnedToBottomContent.data();
+	if (pinnedToTop) {
+		pinnedToTop->resizeToWidth(currentWidth);
+	}
+	if (pinnedToBottom) {
+		pinnedToBottom->resizeToWidth(currentWidth);
 	}
 
 	auto wrap = object_ptr<Ui::OverrideMargins>(this, std::move(_owned));
 	wrap->resizeToWidth(currentWidth);
 	rpl::combine(
-		pinned ? pinned->heightValue() : rpl::single(0),
-		wrap->heightValue()
-	) | rpl::start_with_next([=](int top, int height) {
+		pinnedToTop ? pinnedToTop->heightValue() : rpl::single(0),
+		wrap->heightValue(),
+		pinnedToBottom ? pinnedToBottom->heightValue() : rpl::single(0)
+	) | rpl::start_with_next([=](int top, int height, int bottom) {
 		Expects(_minHeight >= 0);
 		Expects(!_maxHeight || _minHeight <= _maxHeight);
 
 		setInnerTopSkip(top);
-		const auto desired = top + height;
+		setInnerBottomSkip(bottom);
+		const auto desired = top + height + bottom;
 		setDimensions(
 			currentWidth,
 			std::clamp(
@@ -45,7 +51,17 @@ void GenericBox::prepare() {
 	setInnerWidget(
 		std::move(wrap),
 		_scrollSt ? *_scrollSt : st::boxScroll,
-		pinned ? pinned->height() : 0);
+		pinnedToTop ? pinnedToTop->height() : 0,
+		pinnedToBottom ? pinnedToBottom->height() : 0);
+
+	if (pinnedToBottom) {
+		rpl::combine(
+			heightValue(),
+			pinnedToBottom->heightValue()
+		) | rpl::start_with_next([=](int outer, int height) {
+			pinnedToBottom->move(0, outer - height);
+		}, pinnedToBottom->lifetime());
+	}
 }
 
 void GenericBox::addSkip(int height) {
@@ -58,6 +74,12 @@ not_null<Ui::RpWidget*> GenericBox::doSetPinnedToTopContent(
 	return _pinnedToTopContent.data();
 }
 
+not_null<Ui::RpWidget*> GenericBox::doSetPinnedToBottomContent(
+		object_ptr<Ui::RpWidget> content) {
+	_pinnedToBottomContent = std::move(content);
+	return _pinnedToBottomContent.data();
+}
+
 int GenericBox::rowsCount() const {
 	return _content->count();
 }
@@ -68,6 +90,19 @@ int GenericBox::width() const {
 
 not_null<Ui::VerticalLayout*> GenericBox::verticalLayout() {
 	return _content;
+}
+
+rpl::producer<> BoxShowFinishes(not_null<GenericBox*> box) {
+	const auto singleShot = box->lifetime().make_state<rpl::lifetime>();
+	const auto showFinishes = singleShot->make_state<rpl::event_stream<>>();
+
+	box->setShowFinishedCallback([=] {
+		showFinishes->fire({});
+		singleShot->destroy();
+		box->setShowFinishedCallback(nullptr);
+	});
+
+	return showFinishes->events();
 }
 
 } // namespace Ui

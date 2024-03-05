@@ -10,7 +10,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/attach/attach_abstract_single_preview.h"
 #include "ui/chat/attach/attach_controls.h"
 #include "ui/chat/attach/attach_send_files_way.h"
+#include "ui/effects/spoiler_mess.h"
 #include "ui/abstract_button.h"
+
+namespace style {
+struct ComposeControls;
+} // namespace style
 
 namespace Ui {
 
@@ -18,7 +23,10 @@ class PopupMenu;
 
 class AbstractSingleMediaPreview : public AbstractSinglePreview {
 public:
-	AbstractSingleMediaPreview(QWidget *parent, AttachControls::Type type);
+	AbstractSingleMediaPreview(
+		QWidget *parent,
+		const style::ComposeControls &st,
+		AttachControls::Type type);
 	~AbstractSingleMediaPreview();
 
 	void setSendWay(SendFilesWay way);
@@ -60,6 +68,7 @@ private:
 	void applyCursor(style::cursor cursor);
 	void showContextMenu(QPoint position);
 
+	const style::ComposeControls &_st;
 	SendFilesWay _sendWay;
 	bool _animated = false;
 	QPixmap _preview;

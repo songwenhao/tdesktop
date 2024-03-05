@@ -6,6 +6,7 @@
 //
 #include "webrtc/webrtc_audio_input_tester.h"
 
+#include "webrtc/webrtc_device_common.h"
 #include "webrtc/webrtc_create_adm.h"
 #include "crl/crl_object_on_thread.h"
 #include "crl/crl_async.h"
@@ -17,16 +18,14 @@ namespace Webrtc {
 
 class AudioInputTester::Impl : public webrtc::AudioTransport {
 public:
-	Impl(
-		const Backend &backend,
-		const QString &deviceId,
-		const std::shared_ptr<std::atomic<int>> &maxSample);
+	explicit Impl(const std::shared_ptr<std::atomic<int>> &maxSample);
 	~Impl();
 
-	void setDeviceId(const QString &deviceId);
+	void setDeviceId(const DeviceResolvedId &deviceId);
 
 private:
 	void init();
+	void restart();
 
 	int32_t RecordedDataIsAvailable(
 		const void* audioSamples,
@@ -65,18 +64,28 @@ private:
 	std::shared_ptr<std::atomic<int>> _maxSample;
 	std::unique_ptr<webrtc::TaskQueueFactory> _taskQueueFactory;
 	rtc::scoped_refptr<webrtc::AudioDeviceModule> _adm;
+	Fn<void(DeviceResolvedId)> _setDeviceIdCallback;
+	DeviceResolvedId _deviceId;
 
 };
 
 AudioInputTester::Impl::Impl(
-	const Backend &backend,
-	const QString &deviceId,
 	const std::shared_ptr<std::atomic<int>> &maxSample)
 : _maxSample(std::move(maxSample))
 , _taskQueueFactory(webrtc::CreateDefaultTaskQueueFactory())
-, _adm(CreateAudioDeviceModule(_taskQueueFactory.get(), backend)) {
+, _deviceId{ .type = DeviceType::Capture } {
+	const auto saveSetDeviceIdCallback = [=](
+			Fn<void(DeviceResolvedId)> setDeviceIdCallback) {
+		_setDeviceIdCallback = std::move(setDeviceIdCallback);
+		if (!_deviceId.isDefault()) {
+			_setDeviceIdCallback(_deviceId);
+			restart();
+		}
+	};
+	_adm = CreateAudioDeviceModule(
+		_taskQueueFactory.get(),
+		saveSetDeviceIdCallback);
 	init();
-	setDeviceId(deviceId);
 }
 
 AudioInputTester::Impl::~Impl() {
@@ -95,40 +104,22 @@ void AudioInputTester::Impl::init() {
 	_adm->RegisterAudioCallback(this);
 }
 
-void AudioInputTester::Impl::setDeviceId(const QString &deviceId) {
+void AudioInputTester::Impl::setDeviceId(const DeviceResolvedId &deviceId) {
+	_deviceId = deviceId;
+	if (_setDeviceIdCallback) {
+		_setDeviceIdCallback(_deviceId);
+		restart();
+	}
+}
+
+void AudioInputTester::Impl::restart() {
 	if (!_adm) {
 		return;
 	}
-	auto specific = false;
 	_adm->StopRecording();
-	const auto guard = gsl::finally([&] {
-		if (!specific) {
-			_adm->SetRecordingDevice(
-				webrtc::AudioDeviceModule::kDefaultCommunicationDevice);
-		}
-		if (_adm->InitRecording() == 0) {
-			_adm->StartRecording();
-		}
-	});
-	if (deviceId == u"default"_q || deviceId.isEmpty()) {
-		return;
-	}
-	const auto count = _adm
-		? _adm->RecordingDevices()
-		: int16_t(-666);
-	if (count <= 0) {
-		return;
-	}
-	for (auto i = 0; i != count; ++i) {
-		char name[webrtc::kAdmMaxDeviceNameSize + 1] = { 0 };
-		char guid[webrtc::kAdmMaxGuidSize + 1] = { 0 };
-		_adm->RecordingDeviceName(i, name, guid);
-		if (deviceId == guid) {
-			if (_adm->SetRecordingDevice(i) == 0) {
-				specific = true;
-			}
-			return;
-		}
+	_adm->SetRecordingDevice(0);
+	if (_adm->InitRecording() == 0) {
+		_adm->StartRecording();
 	}
 }
 
@@ -182,20 +173,19 @@ void AudioInputTester::Impl::PullRenderData(int bits_per_sample,
 		int64_t* ntp_time_ms) {
 }
 
-AudioInputTester::AudioInputTester(
-	const Backend &backend,
-	const QString &deviceId)
+AudioInputTester::AudioInputTester(rpl::producer<DeviceResolvedId> deviceId)
 : _maxSample(std::make_shared<std::atomic<int>>(0))
-, _impl(backend, deviceId, std::as_const(_maxSample)) {
+, _impl(std::as_const(_maxSample)) {
+	std::move(
+		deviceId
+	) | rpl::start_with_next([=](const DeviceResolvedId &id) {
+		_impl.with([=](Impl &impl) {
+			impl.setDeviceId(id);
+		});
+	}, _lifetime);
 }
 
 AudioInputTester::~AudioInputTester() = default;
-
-void AudioInputTester::setDeviceId(const QString &deviceId) {
-	_impl.with([=](Impl &impl) {
-		impl.setDeviceId(deviceId);
-	});
-}
 
 float AudioInputTester::getAndResetLevel() {
 	return _maxSample->exchange(0) / float(INT16_MAX);

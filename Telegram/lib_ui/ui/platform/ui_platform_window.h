@@ -12,6 +12,7 @@
 
 namespace style {
 struct WindowTitle;
+struct TextStyle;
 } // namespace style
 
 namespace Ui {
@@ -48,6 +49,8 @@ public:
 		-> rpl::producer<HitTestResult>;
 	[[nodiscard]] virtual auto systemButtonDown() const
 		-> rpl::producer<HitTestResult>;
+	virtual void overrideSystemButtonOver(HitTestResult button);
+	virtual void overrideSystemButtonDown(HitTestResult button);
 	virtual void setTitle(const QString &title);
 	virtual void setTitleStyle(const style::WindowTitle &st);
 	virtual void setNativeFrame(bool enabled);
@@ -61,6 +64,8 @@ public:
 
 	virtual int manualRoundingRadius() const;
 	void setBodyTitleArea(Fn<WindowTitleHitTestFlags(QPoint)> testMethod);
+
+	[[nodiscard]] virtual const style::TextStyle &titleTextStyle() const;
 
 protected:
 	[[nodiscard]] WindowTitleHitTestFlags bodyTitleAreaHit(
@@ -104,7 +109,7 @@ private:
 	[[nodiscard]] QMargins resizeArea() const;
 	[[nodiscard]] Qt::Edges edgesFromPos(const QPoint &pos) const;
 	void paintBorders(QPainter &p);
-	void updateWindowExtents();
+	void updateWindowMargins();
 	void updateCursor(Qt::Edges edges);
 	[[nodiscard]] int titleHeight() const;
 	[[nodiscard]] QMargins bodyPadding() const;
@@ -115,7 +120,7 @@ private:
 	std::array<QImage, 4> _sides;
 	std::array<QImage, 4> _corners;
 	object_ptr<RpWidget> _roundingOverlay = { nullptr };
-	bool _extentsSet = false;
+	bool _marginsSet = false;
 	rpl::variable<Qt::WindowStates> _windowState = Qt::WindowNoState;
 
 };

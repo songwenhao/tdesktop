@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_text.h"
 #include "history/admin_log/history_admin_log_section.h"
 #include "history/admin_log/history_admin_log_filter.h"
+#include "history/view/history_view_context_menu.h"
 #include "history/view/history_view_message.h"
 #include "history/view/history_view_service_message.h"
 #include "history/view/history_view_cursor_state.h"
@@ -442,7 +443,6 @@ void InnerWidget::applyFilter(FilterValue &&value) {
 }
 
 void InnerWidget::applySearch(const QString &query) {
-	auto clearQuery = query.trimmed();
 	if (_searchQuery != query) {
 		_searchQuery = query;
 		clearAndRequestLog();
@@ -579,11 +579,6 @@ bool InnerWidget::elementUnderCursor(
 	return (Element::Hovered() == view);
 }
 
-float64 InnerWidget::elementHighlightOpacity(
-		not_null<const HistoryItem*> item) const {
-	return 0.;
-}
-
 bool InnerWidget::elementInSelectionMode() {
 	return false;
 }
@@ -610,14 +605,14 @@ void InnerWidget::elementShowPollResults(
 void InnerWidget::elementOpenPhoto(
 		not_null<PhotoData*> photo,
 		FullMsgId context) {
-	_controller->openPhoto(photo, context, MsgId(0));
+	_controller->openPhoto(photo, { context });
 }
 
 void InnerWidget::elementOpenDocument(
 		not_null<DocumentData*> document,
 		FullMsgId context,
 		bool showInMediaView) {
-	_controller->openDocument(document, context, MsgId(0), showInMediaView);
+	_controller->openDocument(document, showInMediaView, { context });
 }
 
 void InnerWidget::elementCancelUpload(const FullMsgId &context) {
@@ -648,6 +643,12 @@ void InnerWidget::elementSendBotCommand(
 	const FullMsgId &context) {
 }
 
+void InnerWidget::elementSearchInList(
+	const QString &query,
+	const FullMsgId &context) {
+
+}
+
 void InnerWidget::elementHandleViaClick(not_null<UserData*> bot) {
 }
 
@@ -659,7 +660,7 @@ not_null<Ui::PathShiftGradient*> InnerWidget::elementPathShiftGradient() {
 	return _pathGradient.get();
 }
 
-void InnerWidget::elementReplyTo(const FullMsgId &to) {
+void InnerWidget::elementReplyTo(const FullReplyTo &to) {
 }
 
 void InnerWidget::elementStartInteraction(not_null<const Element*> view) {
@@ -949,10 +950,10 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 	auto clip = e->rect();
 	auto context = _controller->preparePaintContext({
 		.theme = _theme.get(),
-		.visibleAreaTop = _visibleTop,
-		.visibleAreaTopGlobal = mapToGlobal(QPoint(0, _visibleTop)).y(),
-		.visibleAreaWidth = width(),
 		.clip = clip,
+		.visibleAreaPositionGlobal = mapToGlobal(QPoint(0, _visibleTop)),
+		.visibleAreaTop = _visibleTop,
+		.visibleAreaWidth = width(),
 	});
 	if (_items.empty() && _upLoaded && _downLoaded) {
 		paintEmpty(p, context.st);
@@ -1248,9 +1249,15 @@ void InnerWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						showContextInFolder(lnkDocument);
 					}, &st::menuIconShowInFolder);
 				}
-				_menu->addAction(lnkIsVideo ? tr::lng_context_save_video(tr::now) : (lnkIsVoice ?  tr::lng_context_save_audio(tr::now) : (lnkIsAudio ?  tr::lng_context_save_audio_file(tr::now) :  tr::lng_context_save_file(tr::now))), base::fn_delayed(st::defaultDropdownMenu.menu.ripple.hideDuration, this, [this, lnkDocument] {
+				_menu->addAction(lnkIsVideo ? tr::lng_context_save_video(tr::now) : (lnkIsVoice ? tr::lng_context_save_audio(tr::now) : (lnkIsAudio ?  tr::lng_context_save_audio_file(tr::now) :  tr::lng_context_save_file(tr::now))), base::fn_delayed(st::defaultDropdownMenu.menu.ripple.hideDuration, this, [this, lnkDocument] {
 					saveDocumentToFile(lnkDocument);
 				}), &st::menuIconDownload);
+
+				HistoryView::AddCopyFilename(
+					_menu,
+					lnkDocument,
+					[] { return false; });
+
 				if (lnkDocument->hasAttachedStickers()) {
 					const auto controller = _controller;
 					auto callback = [=] {
@@ -1362,7 +1369,7 @@ void InnerWidget::copySelectedText() {
 }
 
 void InnerWidget::showStickerPackInfo(not_null<DocumentData*> document) {
-	StickerSetBox::Show(_controller, document);
+	StickerSetBox::Show(_controller->uiShow(), document);
 }
 
 void InnerWidget::cancelContextDownload(not_null<DocumentData*> document) {
@@ -1380,7 +1387,7 @@ void InnerWidget::openContextGif(FullMsgId itemId) {
 	if (const auto item = session().data().message(itemId)) {
 		if (const auto media = item->media()) {
 			if (const auto document = media->document()) {
-				_controller->openDocument(document, itemId, MsgId(), true);
+				_controller->openDocument(document, true, { itemId });
 			}
 		}
 	}
@@ -1468,7 +1475,7 @@ void InnerWidget::suggestRestrictParticipant(
 				editRestrictions(false, ChatRestrictionsInfo());
 			}).send();
 		}
-	}, &st::menuIconRestrict);
+	}, &st::menuIconPermissions);
 }
 
 void InnerWidget::restrictParticipant(
@@ -1892,8 +1899,7 @@ void InnerWidget::performDrag() {
 	//	auto pressedMedia = static_cast<HistoryView::Media*>(nullptr);
 	//	if (auto pressedItem = Element::Pressed()) {
 	//		pressedMedia = pressedItem->media();
-	//		if (_mouseCursorState == CursorState::Date
-	//			|| (pressedMedia && pressedMedia->dragItem())) {
+	//		if (_mouseCursorState == CursorState::Date) {
 	//			forwardMimeType = u"application/x-td-forward"_q;
 	//			session().data().setMimeForwardIds(
 	//				session().data().itemOrItsGroup(pressedItem->data()));

@@ -15,30 +15,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/controls/userpic_button.h"
 #include "ui/effects/snowflakes.h"
 #include "ui/effects/toggle_arrow.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/shadow.h"
+#include "ui/widgets/tooltip.h"
 #include "ui/wrap/slide_wrap.h"
-#include "ui/wrap/vertical_layout.h"
-#include "ui/wrap/vertical_layout_reorder.h"
-#include "ui/text/format_values.h" // Ui::FormatPhone
 #include "ui/text/text_utilities.h"
 #include "ui/text/text_options.h"
+#include "ui/new_badges.h"
 #include "ui/painter.h"
-#include "ui/empty_userpic.h"
+#include "ui/vertical_list.h"
 #include "ui/unread_badge_paint.h"
-#include "base/call_delayed.h"
-#include "mainwindow.h"
+#include "inline_bots/bot_attach_web_view.h"
 #include "storage/localstorage.h"
 #include "storage/storage_account.h"
 #include "support/support_templates.h"
-#include "settings/settings_common.h"
+#include "settings/settings_advanced.h"
 #include "settings/settings_calls.h"
 #include "settings/settings_information.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
+#include "info/stories/info_stories_widget.h"
+#include "info/info_memento.h"
+#include "base/platform/base_platform_info.h"
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
 #include "ui/boxes/confirm_box.h"
@@ -47,24 +46,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_box_controller.h"
 #include "lang/lang_keys.h"
 #include "core/click_handler_types.h"
-#include "core/core_settings.h"
 #include "core/application.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
-#include "mtproto/mtp_instance.h"
 #include "mtproto/mtproto_config.h"
+#include "data/data_document_media.h"
 #include "data/data_folder.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/data_changes.h"
+#include "data/data_stories.h"
 #include "mainwidget.h"
+#include "styles/style_chat.h" // popupMenuExpandedSeparator
 #include "styles/style_window.h"
-#include "styles/style_widgets.h"
-#include "styles/style_dialogs.h"
 #include "styles/style_settings.h"
-#include "styles/style_boxes.h"
 #include "styles/style_info.h" // infoTopBarMenu
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
@@ -79,6 +76,37 @@ namespace Window {
 namespace {
 
 constexpr auto kPlayStatusLimit = 2;
+
+class VersionLabel final
+	: public Ui::FlatLabel
+	, public Ui::AbstractTooltipShower {
+public:
+	using Ui::FlatLabel::FlatLabel;
+
+	void clickHandlerActiveChanged(
+			const ClickHandlerPtr &action,
+			bool active) override {
+		update();
+		if (active && action && !action->dragText().isEmpty()) {
+			Ui::Tooltip::Show(1000, this);
+		} else {
+			Ui::Tooltip::Hide();
+		}
+	}
+
+	QString tooltipText() const override {
+		return u"Build date: %1."_q.arg(__DATE__);
+	}
+
+	QPoint tooltipPos() const override {
+		return QCursor::pos();
+	}
+
+	bool tooltipWindowActive() const override {
+		return Ui::AppInFocus() && Ui::InFocusChain(window());
+	}
+
+};
 
 [[nodiscard]] bool CanCheckSpecialEvent() {
 	static const auto result = [] {
@@ -120,16 +148,16 @@ void ShowCallsBox(not_null<Window::SessionController*> window) {
 		groupCalls->hide(anim::type::instant);
 		groupCalls->toggleOn(state->groupCallsController.shownValue());
 
-		Settings::AddSubsectionTitle(
+		Ui::AddSubsectionTitle(
 			groupCalls->entity(),
 			tr::lng_call_box_groupcalls_subtitle());
 		state->groupCallsDelegate.setContent(groupCalls->entity()->add(
 			object_ptr<PeerListContent>(box, &state->groupCallsController),
 			{}));
 		state->groupCallsController.setDelegate(&state->groupCallsDelegate);
-		Settings::AddSkip(groupCalls->entity());
-		Settings::AddDivider(groupCalls->entity());
-		Settings::AddSkip(groupCalls->entity());
+		Ui::AddSkip(groupCalls->entity());
+		Ui::AddDivider(groupCalls->entity());
+		Ui::AddSkip(groupCalls->entity());
 
 		const auto content = box->addRow(
 			object_ptr<PeerListContent>(box, &state->callsController),
@@ -157,7 +185,7 @@ void ShowCallsBox(not_null<Window::SessionController*> window) {
 					Window::SectionShow(anim::type::instant));
 			};
 			const auto clearAll = crl::guard(box, [=] {
-				Ui::BoxShow(box).showBox(Box(Calls::ClearCallsBox, window));
+				box->uiShow()->showBox(Box(Calls::ClearCallsBox, window));
 			});
 			state->menu->addAction(
 				tr::lng_settings_section_call_settings(tr::now),
@@ -191,6 +219,88 @@ void ShowCallsBox(not_null<Window::SessionController*> window) {
 			? tr::lng_menu_change_status
 			: tr::lng_menu_set_status)(makeLink);
 	}) | rpl::flatten_latest();
+}
+
+void SetupMenuBots(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller) {
+	const auto wrap = container->add(
+		object_ptr<Ui::VerticalLayout>(container));
+	const auto bots = &controller->session().attachWebView();
+	const auto iconLoadLifetime = wrap->lifetime().make_state<
+		rpl::lifetime
+	>();
+
+	rpl::single(
+		rpl::empty
+	) | rpl::then(
+		bots->attachBotsUpdates()
+	) | rpl::start_with_next([=] {
+		const auto width = container->widthNoMargins();
+		wrap->clear();
+		for (const auto &bot : bots->attachBots()) {
+			const auto user = bot.user;
+			if (!bot.inMainMenu || !bot.media) {
+				continue;
+			} else if (const auto media = bot.media; !media->loaded()) {
+				if (!*iconLoadLifetime) {
+					auto &session = user->session();
+					*iconLoadLifetime = session.downloaderTaskFinished(
+					) | rpl::start_with_next([=] {
+						if (media->loaded()) {
+							iconLoadLifetime->destroy();
+							bots->notifyBotIconLoaded();
+						}
+					});
+				}
+				continue;
+			}
+			const auto button = wrap->add(object_ptr<Ui::SettingsButton>(
+				wrap,
+				rpl::single(bot.name),
+				st::mainMenuButton));
+			const auto menu = button->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>
+			>();
+			const auto icon = Ui::CreateChild<InlineBots::MenuBotIcon>(
+				button,
+				bot.media);
+			button->heightValue(
+			) | rpl::start_with_next([=](int height) {
+				icon->move(
+					st::mainMenuButton.iconLeft,
+					(height - icon->height()) / 2);
+			}, button->lifetime());
+			const auto weak = Ui::MakeWeak(container);
+			button->setAcceptBoth(true);
+			button->clicks(
+			) | rpl::start_with_next([=](Qt::MouseButton which) {
+				if (which == Qt::LeftButton) {
+					bots->requestSimple(controller, user, {
+						.fromMainMenu = true,
+					});
+					if (weak) {
+						controller->window().hideSettingsAndLayer();
+					}
+				} else {
+					(*menu) = nullptr;
+					(*menu) = base::make_unique_q<Ui::PopupMenu>(
+						button,
+						st::popupMenuWithIcons);
+					(*menu)->addAction(
+						tr::lng_bot_remove_from_menu(tr::now),
+						[=] { bots->removeFromMenu(user); },
+						&st::menuIconDelete);
+					(*menu)->popup(QCursor::pos());
+				}
+			}, button->lifetime());
+
+			if (bots->showMainMenuNewBadge(bot)) {
+				Ui::NewBadge::AddToRight(button);
+			}
+		}
+		wrap->resizeToWidth(width);
+	}, wrap->lifetime());
 }
 
 } // namespace
@@ -412,8 +522,11 @@ MainMenu::MainMenu(
 , _footer(_inner->add(object_ptr<Ui::RpWidget>(_inner.get())))
 , _telegram(
 	Ui::CreateChild<Ui::FlatLabel>(_footer.get(), st::mainMenuTelegramLabel))
-, _version(
-	Ui::CreateChild<Ui::FlatLabel>(
+, _version((Platform::IsMacStoreBuild() || Platform::IsWindowsStoreBuild())
+	? Ui::CreateChild<Ui::FlatLabel>(
+		_footer.get(),
+		st::mainMenuVersionLabel)
+	: Ui::CreateChild<VersionLabel>(
 		_footer.get(),
 		st::mainMenuVersionLabel)) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
@@ -569,7 +682,7 @@ void MainMenu::setupArchive() {
 	const auto checkArchive = [=] {
 		const auto f = folder();
 		return f
-			&& !f->chatsList()->empty()
+			&& (!f->chatsList()->empty() || f->storiesCount() > 0)
 			&& controller->session().settings().archiveInMainMenu();
 	};
 
@@ -580,11 +693,11 @@ void MainMenu::setupArchive() {
 	const auto inner = wrap->entity();
 	wrap->toggle(checkArchive(), anim::type::instant);
 
-	const auto button = AddButton(
+	const auto button = AddButtonWithIcon(
 		inner,
 		tr::lng_archived_name(),
 		st::mainMenuButton,
-		{ &st::settingsIconArchive, kIconGray });
+		{ &st::menuIconArchiveOpen });
 	inner->add(
 		object_ptr<Ui::PlainShadow>(inner),
 		{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
@@ -599,7 +712,7 @@ void MainMenu::setupArchive() {
 		}
 		_contextMenu = base::make_unique_q<Ui::PopupMenu>(
 			this,
-			st::popupMenuWithIcons);
+			st::popupMenuExpandedSeparator);
 		const auto addAction = PeerMenuCallback([&](
 				PeerMenuCallback::Args a) {
 			return _contextMenu->addAction(
@@ -622,6 +735,12 @@ void MainMenu::setupArchive() {
 			controller,
 			[f = folder()] { return f->chatsList(); },
 			addAction);
+
+		_contextMenu->addSeparator();
+		Settings::PreloadArchiveSettings(&controller->session());
+		addAction(tr::lng_context_archive_settings(tr::now), [=] {
+			controller->show(Box(Settings::ArchiveSettingsBox, controller));
+		}, &st::menuIconManage);
 
 		_contextMenu->popup(QCursor::pos());
 	}, button->lifetime());
@@ -647,10 +766,15 @@ void MainMenu::setupArchive() {
 		return Badge::UnreadBadge{ state.unreadCounter, true };
 	}));
 
-	controller->session().data().chatsListChanges(
-	) | rpl::filter([](Data::Folder *folder) {
-		return folder && (folder->id() == Data::Folder::kId);
-	}) | rpl::start_with_next([=] {
+	rpl::merge(
+		controller->session().data().chatsListChanges(
+		) | rpl::filter([](Data::Folder *folder) {
+			return folder && (folder->id() == Data::Folder::kId);
+		}) | rpl::to_empty,
+		controller->session().data().stories().sourcesChanged(
+			Data::StorySourcesList::Hidden
+		)
+	) | rpl::start_with_next([=] {
 		const auto isArchiveVisible = checkArchive();
 		wrap->toggle(isArchiveVisible, anim::type::normal);
 		if (!isArchiveVisible) {
@@ -680,7 +804,7 @@ void MainMenu::setupAccounts() {
 	inner->add(object_ptr<Ui::FixedHeightWidget>(inner, st::mainMenuSkip));
 
 	std::move(
-		events.currentAccountActivations
+		events.closeRequests
 	) | rpl::start_with_next([=] {
 		closeLayer();
 	}, inner->lifetime());
@@ -722,7 +846,7 @@ void MainMenu::setupMenu() {
 	const auto addAction = [&](
 			rpl::producer<QString> text,
 			IconDescriptor &&descriptor) {
-		return AddButton(
+		return AddButtonWithIcon(
 			_menu,
 			std::move(text),
 			st::mainMenuButton,
@@ -731,44 +855,76 @@ void MainMenu::setupMenu() {
 	if (!_controller->session().supportMode()) {
 		addAction(
 			tr::lng_create_group_title(),
-			{ &st::settingsIconGroup, kIconLightBlue }
+			{ &st::menuIconGroups }
 		)->setClickedCallback([=] {
 			controller->showNewGroup();
 		});
 		addAction(
 			tr::lng_create_channel_title(),
-			{ &st::settingsIconChannel, kIconLightOrange }
+			{ &st::menuIconChannel }
 		)->setClickedCallback([=] {
 			controller->showNewChannel();
 		});
+
+		const auto wrap = _menu->add(
+			object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
+				_menu,
+				CreateButtonWithIcon(
+					_menu,
+					tr::lng_menu_my_stories(),
+					st::mainMenuButton,
+					IconDescriptor{ &st::menuIconStoriesSavedSection })));
+		const auto selfId = controller->session().userPeerId();
+		const auto stories = &controller->session().data().stories();
+		if (stories->archiveCount(selfId) > 0) {
+			wrap->toggle(true, anim::type::instant);
+		} else {
+			wrap->toggle(false, anim::type::instant);
+			if (!stories->archiveCountKnown(selfId)) {
+				stories->archiveLoadMore(selfId);
+				wrap->toggleOn(stories->archiveChanged(
+				) | rpl::filter(
+					rpl::mappers::_1 == selfId
+				) | rpl::map([=] {
+					return stories->archiveCount(selfId) > 0;
+				}) | rpl::filter(rpl::mappers::_1) | rpl::take(1));
+			}
+		}
+		wrap->entity()->setClickedCallback([=] {
+			controller->showSection(
+				Info::Stories::Make(controller->session().user()));
+		});
+
+		SetupMenuBots(_menu, controller);
+
 		addAction(
 			tr::lng_menu_contacts(),
-			{ &st::settingsIconUser, kIconRed }
+			{ &st::menuIconProfile }
 		)->setClickedCallback([=] {
 			controller->show(PrepareContactsBox(controller));
 		});
 		addAction(
 			tr::lng_menu_calls(),
-			{ &st::settingsIconCalls, kIconGreen }
+			{ &st::menuIconPhone }
 		)->setClickedCallback([=] {
 			ShowCallsBox(controller);
 		});
 		addAction(
 			tr::lng_saved_messages(),
-			{ &st::settingsIconSavedMessages, kIconLightBlue }
+			{ &st::menuIconSavedMessages }
 		)->setClickedCallback([=] {
 			controller->showPeerHistory(controller->session().user());
 		});
 	} else {
 		addAction(
 			tr::lng_profile_add_contact(),
-			{ &st::settingsIconUser, kIconRed }
+			{ &st::menuIconProfile }
 		)->setClickedCallback([=] {
 			controller->showAddContact();
 		});
 		addAction(
 			rpl::single(u"Fix chats order"_q),
-			{ &st::settingsIconPin, kIconGreen }
+			{ &st::menuIconPin }
 		)->toggleOn(rpl::single(
 			_controller->session().settings().supportFixChatsOrder()
 		))->toggledChanges(
@@ -778,21 +934,21 @@ void MainMenu::setupMenu() {
 		}, _menu->lifetime());
 		addAction(
 			rpl::single(u"Reload templates"_q),
-			{ &st::settingsIconReload, kIconLightBlue }
+			{ &st::menuIconRestore }
 		)->setClickedCallback([=] {
 			_controller->session().supportTemplates().reload();
 		});
 	}
 	addAction(
 		tr::lng_menu_settings(),
-		{ &st::settingsIconSettings, kIconPurple }
+		{ &st::menuIconSettings }
 	)->setClickedCallback([=] {
 		controller->showSettings();
 	});
 
 	_nightThemeToggle = addAction(
 		tr::lng_menu_night_mode(),
-		{ &st::settingsIconNight, kIconDarkBlue }
+		{ &st::menuIconNightMode }
 	)->toggleOn(_nightThemeSwitches.events_starting_with(
 		Window::Theme::IsNightMode()
 	));

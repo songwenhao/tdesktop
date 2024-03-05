@@ -4,16 +4,7 @@
 # For license and copyright information please follow this link:
 # https://github.com/desktop-app/legal/blob/master/LEGAL
 
-include(CMakeDependentOption)
-
 set(DESKTOP_APP_SPECIAL_TARGET "" CACHE STRING "Use special platform target, like 'macstore' for Mac App Store.")
-
-get_filename_component(libs_loc "../Libraries" REALPATH)
-set(libs_loc_exists 0)
-if (EXISTS ${libs_loc})
-    set(libs_loc_exists 1)
-endif()
-cmake_dependent_option(DESKTOP_APP_USE_PACKAGED "Find libraries using CMake instead of exact paths." OFF libs_loc_exists ON)
 
 function(report_bad_special_target)
     if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "")
@@ -21,11 +12,10 @@ function(report_bad_special_target)
     endif()
 endfunction()
 
-if (NOT DESKTOP_APP_USE_PACKAGED)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.12 CACHE STRING "Minimum macOS deployment version" FORCE)
-    if (NOT DEFINED CMAKE_OSX_ARCHITECTURES)
-        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Target macOS architectures" FORCE)
-    endif()
+if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "osx")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.12 CACHE STRING "Minimum OS X deployment version" FORCE)
+else()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.10 CACHE STRING "Minimum OS X deployment version" FORCE)
 endif()
 
 if (WIN32)
@@ -36,13 +26,15 @@ if (WIN32)
         report_bad_special_target()
     endif()
 elseif (APPLE)
-    if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "macstore"
+    if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "osx"
+        AND NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "macstore"
         AND NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "mac")
         report_bad_special_target()
     endif()
 else()
     set(LINUX 1)
-    if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "linux")
+    if (NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "linux"
+        AND NOT DESKTOP_APP_SPECIAL_TARGET STREQUAL "linux32")
         report_bad_special_target()
     endif()
 endif()

@@ -16,6 +16,10 @@
 #include <crl/crl_on_main.h>
 #include <rlottie.h>
 
+#if __has_include(<glib.h>)
+#include <glib.h>
+#endif
+
 namespace Lottie {
 namespace {
 
@@ -23,7 +27,7 @@ namespace {
 		const QByteArray &content,
 		QColor replacement) {
 	auto string = ReadUtf8(Images::UnpackGzip(content));
-#ifndef DESKTOP_APP_USE_PACKAGED_RLOTTIE
+#ifndef LOTTIE_USE_PACKAGED_RLOTTIE
 	auto list = std::vector<std::pair<std::uint32_t, std::uint32_t>>();
 	if (replacement != Qt::white) {
 		const auto value = (uint32_t(replacement.red()) << 16)
@@ -38,6 +42,13 @@ namespace {
 		false,
 		std::move(list));
 #else
+#if __has_include(<glib.h>)
+	[[maybe_unused]] static auto logged = [&] { 
+		g_warning(
+			"rlottie is incompatible, expect animations with color issues.");
+		return true;
+	}();
+#endif
 	auto result = rlottie::Animation::loadFromData(
 		std::move(string),
 		std::string(),
@@ -48,7 +59,7 @@ namespace {
 }
 
 [[nodiscard]] QColor RealRenderedColor(QColor color) {
-#ifndef DESKTOP_APP_USE_PACKAGED_RLOTTIE
+#ifndef LOTTIE_USE_PACKAGED_RLOTTIE
 	return QColor(color.red(), color.green(), color.blue(), 255);
 #else
 	return Qt::white;

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/unique_qptr.h"
+#include "history/view/history_view_element.h"
 
 namespace Data {
 struct ReactionId;
@@ -15,6 +16,7 @@ struct ReactionId;
 
 namespace Main {
 class Session;
+class SessionShow;
 } // namespace Main
 
 namespace Ui {
@@ -46,6 +48,7 @@ struct ContextMenuRequest {
 	HistoryItem *item = nullptr;
 	SelectedItems selectedItems;
 	TextForMimeData selectedText;
+	SelectedQuote quote;
 	bool overSelection = false;
 	PointState pointState = PointState();
 };
@@ -58,6 +61,9 @@ void CopyPostLink(
 	not_null<Window::SessionController*> controller,
 	FullMsgId itemId,
 	Context context);
+void CopyStoryLink(
+	std::shared_ptr<Main::SessionShow> show,
+	FullStoryId storyId);
 void AddPollActions(
 	not_null<Ui::PopupMenu*> menu,
 	not_null<PollData*> poll,
@@ -82,11 +88,22 @@ void ShowWhoReactedMenu(
 	const Data::ReactionId &id,
 	not_null<Window::SessionController*> controller,
 	rpl::lifetime &lifetime);
+void ShowTagInListMenu(
+	not_null<base::unique_qptr<Ui::PopupMenu>*> menu,
+	QPoint position,
+	not_null<QWidget*> context,
+	const Data::ReactionId &id,
+	not_null<Window::SessionController*> controller);
+void AddCopyFilename(
+	not_null<Ui::PopupMenu*> menu,
+	not_null<DocumentData*> document,
+	Fn<bool()> showCopyRestrictionForSelected);
 
 enum class EmojiPacksSource {
 	Message,
 	Reaction,
 	Reactions,
+	Tag,
 };
 [[nodiscard]] std::vector<StickerSetIdentifier> CollectEmojiPacks(
 	not_null<HistoryItem*> item,
@@ -103,5 +120,7 @@ void AddEmojiPacksAction(
 	not_null<Window::SessionController*> controller);
 
 [[nodiscard]] TextWithEntities TransribedText(not_null<HistoryItem*> item);
+
+[[nodiscard]] bool ItemHasTtl(HistoryItem *item);
 
 } // namespace HistoryView

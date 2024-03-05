@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/notifications_utilities.h"
 #include "window/window_session_controller.h"
 #include "base/platform/win/base_windows_co_task_mem.h"
+#include "base/platform/win/base_windows_rpcndr_h.h"
 #include "base/platform/win/base_windows_winrt.h"
 #include "base/platform/base_platform_info.h"
 #include "base/platform/win/wrl/wrl_module_h.h"
@@ -23,10 +24,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
 #include "windows_quiethours_h.h"
 #include "styles/style_chat.h"
+#include "styles/style_chat_helpers.h"
 
 #include <QtCore/QOperatingSystemVersion>
 
@@ -106,11 +109,7 @@ crl::time LastSettingsQueryMs/* = 0*/;
 }
 
 bool init() {
-	if (!IsWindows8OrGreater()) {
-		return false;
-	}
-	if ((Dlls::SetCurrentProcessExplicitAppUserModelID == nullptr)
-		|| !base::WinRT::Supported()) {
+	if (!IsWindows8OrGreater() || !base::WinRT::Supported()) {
 		return false;
 	}
 
@@ -121,13 +120,21 @@ bool init() {
 			LOG(("App Error: Object registration failed."));
 		}
 	}
-	if (!AppUserModelId::validateShortcut()) {
+	if (!AppUserModelId::ValidateShortcut()) {
 		LOG(("App Error: Shortcut validation failed."));
 		return false;
 	}
 
-	auto appUserModelId = AppUserModelId::getId();
-	if (!SUCCEEDED(Dlls::SetCurrentProcessExplicitAppUserModelID(appUserModelId))) {
+	PWSTR appUserModelId = {};
+	if (!SUCCEEDED(GetCurrentProcessExplicitAppUserModelID(&appUserModelId))) {
+		return false;
+	}
+
+	const auto appUserModelIdGuard = gsl::finally([&] {
+		CoTaskMemFree(appUserModelId);
+	});
+
+	if (AppUserModelId::Id() != appUserModelId) {
 		return false;
 	}
 	return true;
@@ -303,7 +310,7 @@ void QueryFocusAssist() {
 		}
 		return;
 	}
-	const auto appUserModelId = std::wstring(AppUserModelId::getId());
+	const auto appUserModelId = AppUserModelId::Id();
 	auto blocked = true;
 	const auto guard = gsl::finally([&] {
 		if (FocusAssistBlocks != blocked) {
@@ -495,7 +502,7 @@ Manager::Private::Private(Manager *instance)
 bool Manager::Private::init() {
 	return base::WinRT::Try([&] {
 		_notifier = ToastNotificationManager::CreateToastNotifier(
-			AppUserModelId::getId());
+			AppUserModelId::Id());
 	});
 }
 

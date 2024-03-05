@@ -49,13 +49,14 @@ namespace Profile {
 
 InnerWidget::InnerWidget(
 	QWidget *parent,
-	not_null<Controller*> controller)
+	not_null<Controller*> controller,
+	Origin origin)
 : RpWidget(parent)
 , _controller(controller)
 , _peer(_controller->key().peer())
 , _migrated(_controller->migrated())
 , _topic(_controller->key().topic())
-, _content(setupContent(this)) {
+, _content(setupContent(this, origin)) {
 	_content->heightValue(
 	) | rpl::start_with_next([this](int height) {
 		if (!_inResize) {
@@ -66,7 +67,8 @@ InnerWidget::InnerWidget(
 }
 
 object_ptr<Ui::RpWidget> InnerWidget::setupContent(
-		not_null<RpWidget*> parent) {
+		not_null<RpWidget*> parent,
+		Origin origin) {
 	auto result = object_ptr<Ui::VerticalLayout>(parent);
 	if (const auto user = _peer->asUser()) {
 		user->session().changes().peerFlagsValue(
@@ -104,7 +106,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		}
 		result->add(SetupDetails(_controller, parent, _topic));
 	} else {
-		result->add(SetupDetails(_controller, parent, _peer));
+		result->add(SetupDetails(_controller, parent, _peer, origin));
 	}
 	result->add(setupSharedMedia(result.data()));
 	if (_topic) {
@@ -186,7 +188,53 @@ object_ptr<Ui::RpWidget> InnerWidget::setupSharedMedia(
 			icon,
 			st::infoSharedMediaButtonIconPosition);
 	};
+	const auto addSimilarChannelsButton = [&](
+			not_null<ChannelData*> channel,
+			const style::icon &icon) {
+		auto result = Media::AddSimilarChannelsButton(
+			content,
+			_controller,
+			channel,
+			tracker);
+		object_ptr<Profile::FloatingIcon>(
+			result,
+			icon,
+			st::infoSharedMediaButtonIconPosition);
+	};
+	auto addStoriesButton = [&](
+			not_null<PeerData*> peer,
+			const style::icon &icon) {
+		if (peer->isChat()) {
+			return;
+		}
+		auto result = Media::AddStoriesButton(
+			content,
+			_controller,
+			peer,
+			tracker);
+		object_ptr<Profile::FloatingIcon>(
+			result,
+			icon,
+			st::infoSharedMediaButtonIconPosition);
+	};
+	auto addSavedSublistButton = [&](
+			not_null<PeerData*> peer,
+			const style::icon &icon) {
+		auto result = Media::AddSavedSublistButton(
+			content,
+			_controller,
+			peer,
+			tracker);
+		object_ptr<Profile::FloatingIcon>(
+			result,
+			icon,
+			st::infoSharedMediaButtonIconPosition);
+	};
 
+	if (!_topic) {
+		addStoriesButton(_peer, st::infoIconMediaStories);
+		addSavedSublistButton(_peer, st::infoIconMediaSaved);
+	}
 	addMediaButton(MediaType::Photo, st::infoIconMediaPhoto);
 	addMediaButton(MediaType::Video, st::infoIconMediaVideo);
 	addMediaButton(MediaType::File, st::infoIconMediaFile);
@@ -194,8 +242,10 @@ object_ptr<Ui::RpWidget> InnerWidget::setupSharedMedia(
 	addMediaButton(MediaType::Link, st::infoIconMediaLink);
 	addMediaButton(MediaType::RoundVoiceFile, st::infoIconMediaVoice);
 	addMediaButton(MediaType::GIF, st::infoIconMediaGif);
-	if (auto user = _peer->asUser()) {
+	if (const auto user = _peer->asUser()) {
 		addCommonGroupsButton(user, st::infoIconMediaGroup);
+	} else if (const auto channel = _peer->asChannel()) {
+		addSimilarChannelsButton(channel, st::infoIconMediaChannel);
 	}
 
 	auto result = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(

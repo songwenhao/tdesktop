@@ -33,6 +33,7 @@ PRIVATE
     ui/colors.palette
     emoji_suggestions/emoji_autocomplete.json
 
+    fonts/fonts.qrc
     qt_conf/win.qrc
 
     ui/dpr/dpr_icon.cpp
@@ -97,6 +98,7 @@ PRIVATE
     ui/layers/layer_manager.h
     ui/layers/layer_widget.cpp
     ui/layers/layer_widget.h
+    ui/layers/show.cpp
     ui/layers/show.h
     ui/paint/arcs.cpp
     ui/paint/arcs.h
@@ -106,11 +108,10 @@ PRIVATE
     ui/paint/blobs.h
     ui/paint/blobs_linear.cpp
     ui/paint/blobs_linear.h
-    ui/platform/linux/ui_linux_wayland_integration.cpp
-    ui/platform/linux/ui_linux_wayland_integration_dummy.cpp
-    ui/platform/linux/ui_linux_wayland_integration.h
     ui/platform/linux/ui_window_linux.cpp
     ui/platform/linux/ui_window_linux.h
+    ui/platform/linux/ui_window_title_linux.cpp
+    ui/platform/linux/ui_window_title_linux.h
     ui/platform/linux/ui_utility_linux.cpp
     ui/platform/linux/ui_utility_linux.h
     ui/platform/mac/ui_window_mac.h
@@ -125,13 +126,14 @@ PRIVATE
     ui/platform/win/ui_window_title_win.h
     ui/platform/win/ui_window_win.cpp
     ui/platform/win/ui_window_win.h
+    ui/platform/win/ui_windows_direct_manipulation.cpp
+    ui/platform/win/ui_windows_direct_manipulation.h
     ui/platform/win/ui_utility_win.cpp
     ui/platform/win/ui_utility_win.h
     ui/platform/ui_platform_window_title.cpp
     ui/platform/ui_platform_window_title.h
     ui/platform/ui_platform_window.cpp
     ui/platform/ui_platform_window.h
-    ui/platform/ui_platform_utility.cpp
     ui/platform/ui_platform_utility.h
     ui/style/style_core.cpp
     ui/style/style_core.h
@@ -163,13 +165,13 @@ PRIVATE
     ui/text/text_custom_emoji.h
     ui/text/text_entity.cpp
     ui/text/text_entity.h
+    ui/text/text_extended_data.cpp
+    ui/text/text_extended_data.h
     ui/text/text_isolated_emoji.h
     ui/text/text_parser.cpp
     ui/text/text_parser.h
     ui/text/text_renderer.cpp
     ui/text/text_renderer.h
-    ui/text/text_spoiler_data.cpp
-    ui/text/text_spoiler_data.h
     ui/text/text_utilities.cpp
     ui/text/text_utilities.h
     ui/text/text_variant.cpp
@@ -180,8 +182,6 @@ PRIVATE
     ui/toast/toast_manager.h
     ui/toast/toast_widget.cpp
     ui/toast/toast_widget.h
-    ui/toasts/common_toasts.cpp
-    ui/toasts/common_toasts.h
     ui/widgets/box_content_divider.cpp
     ui/widgets/box_content_divider.h
     ui/widgets/buttons.cpp
@@ -196,12 +196,18 @@ PRIVATE
     ui/widgets/icon_button_with_text.h
     ui/widgets/inner_dropdown.cpp
     ui/widgets/inner_dropdown.h
-    ui/widgets/input_fields.cpp
-    ui/widgets/input_fields.h
-    ui/widgets/labels.cpp
-    ui/widgets/labels.h
+    ui/widgets/fields/input_field.cpp
+    ui/widgets/fields/input_field.h
+    ui/widgets/fields/masked_input_field.cpp
+    ui/widgets/fields/masked_input_field.h
+    ui/widgets/fields/number_input.cpp
+    ui/widgets/fields/number_input.h
+    ui/widgets/fields/password_input.cpp
+    ui/widgets/fields/password_input.h
     ui/widgets/fields/time_part_input.cpp
     ui/widgets/fields/time_part_input.h
+    ui/widgets/labels.cpp
+    ui/widgets/labels.h
     ui/widgets/menu/menu.cpp
     ui/widgets/menu/menu.h
     ui/widgets/menu/menu_action.cpp
@@ -220,6 +226,8 @@ PRIVATE
     ui/widgets/menu/menu_separator.h
     ui/widgets/menu/menu_toggle.cpp
     ui/widgets/menu/menu_toggle.h
+    ui/widgets/elastic_scroll.cpp
+    ui/widgets/elastic_scroll.h
     ui/widgets/popup_menu.cpp
     ui/widgets/popup_menu.h
     ui/widgets/rp_window.cpp
@@ -244,6 +252,8 @@ PRIVATE
     ui/wrap/padding_wrap.h
     ui/wrap/slide_wrap.cpp
     ui/wrap/slide_wrap.h
+    ui/wrap/table_layout.cpp
+    ui/wrap/table_layout.h
     ui/wrap/vertical_layout.cpp
     ui/wrap/vertical_layout.h
     ui/wrap/vertical_layout_reorder.cpp
@@ -263,6 +273,7 @@ PRIVATE
     ui/delayed_activation.h
     ui/dragging_scroll_manager.cpp
     ui/dragging_scroll_manager.h
+    ui/dynamic_image.h
     ui/emoji_config.cpp
     ui/emoji_config.h
     ui/focus_persister.h
@@ -291,24 +302,13 @@ PRIVATE
     emoji_suggestions/emoji_suggestions_helper.h
 )
 
-if (NOT DESKTOP_APP_USE_PACKAGED_FONTS)
-    nice_target_sources(lib_ui ${src_loc} PRIVATE fonts/fonts.qrc)
+if (DESKTOP_APP_USE_PACKAGED_FONTS)
+    target_compile_definitions(lib_ui PRIVATE LIB_UI_USE_PACKAGED_FONTS)
+    remove_target_sources(lib_ui ${src_loc} fonts/fonts.qrc)
 endif()
 
-if (DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-    remove_target_sources(lib_ui ${src_loc} ui/platform/linux/ui_linux_wayland_integration.cpp)
-elseif(LINUX)
-    remove_target_sources(lib_ui ${src_loc} ui/platform/linux/ui_linux_wayland_integration_dummy.cpp)
-
-    qt_generate_wayland_protocol_client_sources(lib_ui
-    FILES
-        ${third_party_loc}/wayland-protocols/stable/xdg-shell/xdg-shell.xml
-    )
-
-    target_link_libraries(lib_ui
-    PUBLIC
-        desktop-app::external_wayland_client
-    )
+if (WIN32)
+    nuget_add_winrt(lib_ui)
 endif()
 
 target_include_directories(lib_ui

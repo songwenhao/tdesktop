@@ -18,7 +18,6 @@ target_precompile_headers(lib_base PRIVATE $<$<COMPILE_LANGUAGE:CXX,OBJCXX>:${sr
 nice_target_sources(lib_base ${src_loc}
 PRIVATE
     base/platform/linux/base_battery_saving_linux.cpp
-    base/platform/linux/base_battery_saving_linux_dummy.cpp
     base/platform/linux/base_battery_saving_linux.h
     base/platform/linux/base_file_utilities_linux.cpp
     base/platform/linux/base_file_utilities_linux.h
@@ -32,18 +31,18 @@ PRIVATE
     base/platform/linux/base_layout_switch_linux.h
     base/platform/linux/base_linux_allocation_tracer.cpp
     base/platform/linux/base_linux_allocation_tracer.h
-    base/platform/linux/base_linux_app_launch_context.cpp
-    base/platform/linux/base_linux_app_launch_context.h
     base/platform/linux/base_linux_dbus_utilities.cpp
     base/platform/linux/base_linux_dbus_utilities.h
-    base/platform/linux/base_linux_glibmm_helper.h
     base/platform/linux/base_linux_library.cpp
     base/platform/linux/base_linux_library.h
     base/platform/linux/base_linux_wayland_integration.cpp
     base/platform/linux/base_linux_wayland_integration_dummy.cpp
     base/platform/linux/base_linux_wayland_integration.h
+    base/platform/linux/base_linux_wayland_utilities.h
     base/platform/linux/base_linux_xcb_utilities.cpp
     base/platform/linux/base_linux_xcb_utilities.h
+    base/platform/linux/base_linux_xdg_activation_token.cpp
+    base/platform/linux/base_linux_xdg_activation_token.h
     base/platform/linux/base_linux_xdp_utilities.cpp
     base/platform/linux/base_linux_xdp_utilities.h
     base/platform/linux/base_linux_xsettings.cpp
@@ -53,7 +52,6 @@ PRIVATE
     base/platform/linux/base_power_save_blocker_linux.h
     base/platform/linux/base_process_linux.cpp
     base/platform/linux/base_process_linux.h
-    base/platform/linux/base_system_media_controls_linux_dummy.cpp
     base/platform/linux/base_system_media_controls_linux.cpp
     base/platform/linux/base_url_scheme_linux.cpp
     base/platform/linux/base_url_scheme_linux.h
@@ -84,7 +82,6 @@ PRIVATE
     base/platform/mac/base_utilities_mac.h
     base/platform/mac/base_utilities_mac.mm
     base/platform/win/base_battery_saving_win.cpp
-    base/platform/win/base_battery_saving_win.cpp
     base/platform/win/base_battery_saving_win.h
     base/platform/win/base_file_utilities_win.cpp
     base/platform/win/base_file_utilities_win.h
@@ -105,9 +102,11 @@ PRIVATE
     base/platform/win/base_url_scheme_win.cpp
     base/platform/win/base_url_scheme_win.h
     base/platform/win/base_windows_co_task_mem.h
-    base/platform/win/base_windows_h.h
+    base/platform/win/base_windows_gdiplus_h.h
+    base/platform/win/base_windows_rpcndr_h.h
     base/platform/win/base_windows_safe_library.cpp
     base/platform/win/base_windows_safe_library.h
+    base/platform/win/base_windows_shlobj_h.h
     base/platform/win/base_windows_winrt.cpp
     base/platform/win/base_windows_winrt.h
     base/platform/win/base_windows_wrl.cpp
@@ -122,7 +121,6 @@ PRIVATE
     base/platform/base_platform_info.h
     base/platform/base_platform_last_input.h
     base/platform/base_platform_layout_switch.h
-    base/platform/base_platform_network_reachability.cpp
     base/platform/base_platform_network_reachability.h
     base/platform/base_platform_file_utilities.h
     base/platform/base_platform_power_save_blocker.h
@@ -133,6 +131,7 @@ PRIVATE
     base/algorithm.h
     base/assertion.cpp
     base/assertion.h
+    base/atomic.h
     base/base_file_utilities.cpp
     base/base_file_utilities.h
     base/basic_types.h
@@ -150,6 +149,7 @@ PRIVATE
     base/concurrent_timer.h
     base/const_string.h
     base/custom_app_icon.h
+    base/custom_delete.h
     base/debug_log.cpp
     base/debug_log.h
     base/enum_mask.h
@@ -218,28 +218,11 @@ PRIVATE
     base/qt/qt_compare.h
     base/qt/qt_key_modifiers.h
     base/qt/qt_string_view.h
+    base/qt/qt_tab_key.cpp
+    base/qt/qt_tab_key.h
 
     base/base_pch.h
 )
-
-if (DESKTOP_APP_DISABLE_DBUS_INTEGRATION)
-    remove_target_sources(lib_base ${src_loc}
-        base/platform/linux/base_linux_app_launch_context.cpp
-        base/platform/linux/base_linux_app_launch_context.h
-        base/platform/linux/base_battery_saving_linux.cpp
-        base/platform/linux/base_linux_dbus_utilities.cpp
-        base/platform/linux/base_linux_dbus_utilities.h
-        base/platform/linux/base_linux_glibmm_helper.h
-        base/platform/linux/base_linux_xdp_utilities.cpp
-        base/platform/linux/base_linux_xdp_utilities.h
-        base/platform/linux/base_system_media_controls_linux.cpp
-    )
-else()
-    remove_target_sources(lib_base ${src_loc}
-        base/platform/linux/base_battery_saving_linux_dummy.cpp
-        base/platform/linux/base_system_media_controls_linux_dummy.cpp
-    )
-endif()
 
 if (DESKTOP_APP_DISABLE_X11_INTEGRATION)
     remove_target_sources(lib_base ${src_loc}
@@ -253,6 +236,7 @@ endif()
 if (DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
     remove_target_sources(lib_base ${src_loc}
         base/platform/linux/base_linux_wayland_integration.cpp
+        base/platform/linux/base_linux_wayland_utilities.h
     )
 else()
     remove_target_sources(lib_base ${src_loc}
@@ -284,15 +268,12 @@ if (WIN32)
 elseif (LINUX)
     target_link_libraries(lib_base
     PUBLIC
+        desktop-app::external_glibmm
         desktop-app::external_kcoreaddons
     )
 
-    if (NOT DESKTOP_APP_DISABLE_DBUS_INTEGRATION)
-        target_link_libraries(lib_base
-        PUBLIC
-            desktop-app::external_glibmm
-        )
-    endif()
+    include(${cmake_helpers_loc}/external/glib/generate_dbus.cmake)
+    generate_dbus(lib_base org.mpris. Mpris ${src_loc}/base/platform/linux/mpris.xml)
 
     if (NOT DESKTOP_APP_DISABLE_X11_INTEGRATION)
         target_link_libraries(lib_base
@@ -307,8 +288,7 @@ elseif (LINUX)
     if (NOT DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
         qt_generate_wayland_protocol_client_sources(lib_base
         FILES
-            ${third_party_loc}/wayland-protocols/staging/xdg-activation/xdg-activation-v1.xml
-            ${third_party_loc}/wayland-protocols/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml
+            ${third_party_loc}/wayland/protocol/wayland.xml
             ${third_party_loc}/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml
         )
 
@@ -335,5 +315,12 @@ PRIVATE
     base/crash_report_writer.cpp
     base/crash_report_writer.h
 )
+
+if (DESKTOP_APP_DISABLE_CRASH_REPORTS)
+    remove_target_sources(lib_base_crash_report_writer ${src_loc}
+        base/crash_report_writer.cpp
+        base/crash_report_writer.h
+    )
+endif()
 
 target_link_libraries(lib_base_crash_report_writer PUBLIC desktop-app::lib_base)

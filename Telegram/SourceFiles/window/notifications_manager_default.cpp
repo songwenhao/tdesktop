@@ -14,7 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "lang/lang_keys.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/platform/ui_platform_utility.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
@@ -582,13 +582,12 @@ void Widget::addToHeight(int add) {
 	auto newHeight = height() + add;
 	auto newPosition = computePosition(newHeight);
 	updateGeometry(newPosition.x(), newPosition.y(), width(), newHeight);
-	Ui::Platform::UpdateOverlayed(this);
+	Ui::ForceFullRepaintSync(this);
 }
 
 void Widget::updateGeometry(int x, int y, int width, int height) {
-	setGeometry(x, y, width, height);
-	setMinimumSize(QSize(width, height));
-	setMaximumSize(QSize(width, height));
+	move(x, y);
+	setFixedSize(width, height);
 	update();
 }
 
@@ -842,7 +841,7 @@ void Notification::paintText(Painter &p) {
 		.spoiler = Ui::Text::DefaultSpoilerCache(),
 		.pausedEmoji = On(PowerSaving::kEmojiChat),
 		.pausedSpoiler = On(PowerSaving::kChatSpoiler),
-		.elisionLines = _textRect.height() / st::dialogsTextFont->height,
+		.elisionHeight = _textRect.height(),
 	});
 }
 
@@ -922,7 +921,7 @@ void Notification::updateNotifyDisplay() {
 				2 * st::dialogsTextFont->height);
 			const auto text = !_reaction.empty()
 				? (!_author.isEmpty()
-					? Ui::Text::PlainLink(_author).append(' ')
+					? Ui::Text::Colorized(_author).append(' ')
 					: TextWithEntities()
 				).append(Manager::ComposeReactionNotification(
 					_item,
@@ -932,9 +931,10 @@ void Notification::updateNotifyDisplay() {
 				? _item->toPreview({
 					.hideSender = reminder,
 					.generateImages = false,
+					.spoilerLoginCode = options.spoilerLoginCode,
 				}).text
 				: ((!_author.isEmpty()
-						? Ui::Text::PlainLink(_author)
+						? Ui::Text::Colorized(_author)
 						: TextWithEntities()
 					).append(_forwardedCount > 1
 						? ('\n' + tr::lng_forward_messages(
@@ -943,7 +943,7 @@ void Notification::updateNotifyDisplay() {
 							_forwardedCount))
 						: QString()));
 			const auto options = TextParseOptions{
-				(TextParsePlainLinks
+				(TextParseColorized
 					| TextParseMarkdown
 					| (_forwardedCount > 1 ? TextParseMultiline : 0)),
 				0,
@@ -1104,9 +1104,16 @@ void Notification::showReplyField() {
 
 	// Catch mouse press event to activate the window.
 	QCoreApplication::instance()->installEventFilter(this);
-	connect(_replyArea, &Ui::InputField::resized, [=] { replyResized(); });
-	connect(_replyArea, &Ui::InputField::submitted, [=] { sendReply(); });
-	connect(_replyArea, &Ui::InputField::cancelled, [=] { replyCancel(); });
+	_replyArea->heightChanges(
+	) | rpl::start_with_next([=] {
+		replyResized();
+	}, _replyArea->lifetime());
+	_replyArea->submits(
+	) | rpl::start_with_next([=] { sendReply(); }, _replyArea->lifetime());
+	_replyArea->cancelled(
+	) | rpl::start_with_next([=] {
+		replyCancel();
+	}, _replyArea->lifetime());
 
 	_replySend.create(this, st::notifySendReply);
 	_replySend->moveToRight(st::notifyBorderWidth, st::notifyMinHeight);

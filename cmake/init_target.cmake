@@ -13,10 +13,8 @@ function(init_target_folder target_name folder_name)
 endfunction()
 
 function(init_target target_name) # init_target(my_target [cxx_std_..] folder_name)
-    set(argslist ${ARGV})
-    list(REMOVE_AT argslist 0)
     set(standard ${MAXIMUM_CXX_STANDARD})
-    foreach (entry ${argslist})
+    foreach (entry ${ARGN})
         if (${entry} STREQUAL cxx_std_14 OR ${entry} STREQUAL cxx_std_11 OR ${entry} STREQUAL cxx_std_17)
             set(standard ${entry})
         else()
@@ -27,6 +25,14 @@ function(init_target target_name) # init_target(my_target [cxx_std_..] folder_na
 
     if (WIN32 AND DESKTOP_APP_SPECIAL_TARGET)
         set_property(TARGET ${target_name} APPEND_STRING PROPERTY STATIC_LIBRARY_OPTIONS "$<IF:$<CONFIG:Debug>,,/LTCG>")
+    endif()
+
+    if (LINUX AND NOT DESKTOP_APP_DISABLE_SCUDO AND NOT target_name STREQUAL external_scudo)
+        add_dependencies(${target_name} desktop-app::external_scudo)
+        target_link_options(${target_name}
+        PRIVATE
+            -Wl,--push-state,--whole-archive,$<TARGET_FILE:desktop-app::external_scudo>,--pop-state
+        )
     endif()
 
     target_link_libraries(${target_name} PRIVATE desktop-app::common_options)

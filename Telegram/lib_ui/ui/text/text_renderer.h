@@ -7,13 +7,19 @@
 #pragma once
 
 #include "ui/text/text.h"
+#include "ui/text/text_block.h"
+#include "ui/text/text_custom_emoji.h"
 
 #include <private/qtextengine_p.h>
 
+class QTextItemInt;
 struct QScriptAnalysis;
 struct QScriptLine;
+struct QScriptItem;
 
 namespace Ui::Text {
+
+class AbstractBlock;
 
 struct FixedRange {
 	QFixed from;
@@ -37,12 +43,8 @@ public:
 	void draw(QPainter &p, const PaintContext &context);
 	[[nodiscard]] StateResult getState(
 		QPoint point,
-		int w,
+		GeometryDescriptor geometry,
 		StateRequest request);
-	[[nodiscard]] StateResult getStateElided(
-		QPoint point,
-		int w,
-		StateRequestElided request);
 
 private:
 	static constexpr int kSpoilersRectsSize = 512;
@@ -52,19 +54,39 @@ private:
 	void enumerate();
 
 	[[nodiscard]] crl::time now() const;
-	void initNextParagraph(String::TextBlocks::const_iterator i);
+	void initNextParagraph(
+		String::TextBlocks::const_iterator i,
+		int16 paragraphIndex,
+		Qt::LayoutDirection direction);
+	void initNextLine();
 	void initParagraphBidi();
 	bool drawLine(
 		uint16 _lineEnd,
 		const String::TextBlocks::const_iterator &_endBlockIter,
 		const String::TextBlocks::const_iterator &_end);
+	[[nodiscard]] FixedRange findSelectEmojiRange(
+		const QScriptItem &si,
+		const Ui::Text::AbstractBlock *currentBlock,
+		const Ui::Text::AbstractBlock *nextBlock,
+		QFixed x,
+		QFixed glyphX,
+		TextSelection selection) const;
+	[[nodiscard]] FixedRange findSelectTextRange(
+		const QScriptItem &si,
+		int itemStart,
+		int itemEnd,
+		QFixed x,
+		QFixed itemWidth,
+		const QTextItemInt &gf,
+		TextSelection selection) const;
 	void fillSelectRange(FixedRange range);
+	void pushHighlightRange(FixedRange range);
 	void pushSpoilerRange(
 		FixedRange range,
 		FixedRange selected,
 		bool isElidedItem);
-	void fillSpoilerRects();
-	void fillSpoilerRects(
+	void fillRectsFromRanges();
+	void fillRectsFromRanges(
 		QVarLengthArray<QRect, kSpoilersRectsSize> &rects,
 		QVarLengthArray<FixedRange> &ranges);
 	void paintSpoilerRects();
@@ -72,6 +94,7 @@ private:
 		const QVarLengthArray<QRect, kSpoilersRectsSize> &rects,
 		const style::color &color,
 		int index);
+	void composeHighlightPath();
 	void elideSaveBlock(
 		int32 blockIndex,
 		const AbstractBlock *&_endBlock,
@@ -86,6 +109,8 @@ private:
 		int repeat = 0);
 	void restoreAfterElided();
 
+	void fillParagraphBg(int paddingBottom);
+
 	// COPIED FROM qtextengine.cpp AND MODIFIED
 	static void eAppendItems(
 		QScriptAnalysis *analysis,
@@ -94,7 +119,6 @@ private:
 		const BidiControl &control,
 		QChar::Direction dir);
 	void eShapeLine(const QScriptLine &line);
-	[[nodiscard]] style::font applyFlags(int32 flags, const style::font &f);
 	void eSetFont(const AbstractBlock *block);
 	void eItemize();
 	QChar::Direction eSkipBoundryNeutrals(
@@ -111,18 +135,18 @@ private:
 		const AbstractBlock *block) const;
 
 	const String *_t = nullptr;
+	GeometryDescriptor _geometry;
 	SpoilerData *_spoiler = nullptr;
 	SpoilerMessCache *_spoilerCache = nullptr;
 	QPainter *_p = nullptr;
 	const style::TextPalette *_palette = nullptr;
-	bool _elideLast = false;
-	bool _breakEverywhere = false;
-	int _elideRemoveFromEnd = 0;
+	std::span<SpecialColor> _colors;
 	bool _pausedEmoji = false;
 	bool _pausedSpoiler = false;
 	style::align _align = style::al_topleft;
 	QPen _originalPen;
 	QPen _originalPenSelected;
+	QPen _quoteLinkPenOverride;
 	const QPen *_currentPen = nullptr;
 	const QPen *_currentPenSelected = nullptr;
 	struct {
@@ -131,38 +155,58 @@ private:
 	} _background;
 	int _yFrom = 0;
 	int _yTo = 0;
-	int _yToElide = 0;
 	TextSelection _selection = { 0, 0 };
 	bool _fullWidthSelection = true;
+	HighlightInfoRequest *_highlight = nullptr;
 	const QChar *_str = nullptr;
 	mutable crl::time _cachedNow = 0;
 	float64 _spoilerOpacity = 0.;
 	QVarLengthArray<FixedRange> _spoilerRanges;
 	QVarLengthArray<FixedRange> _spoilerSelectedRanges;
+	QVarLengthArray<FixedRange> _highlightRanges;
 	QVarLengthArray<QRect, kSpoilersRectsSize> _spoilerRects;
 	QVarLengthArray<QRect, kSpoilersRectsSize> _spoilerSelectedRects;
+	QVarLengthArray<QRect, kSpoilersRectsSize> _highlightRects;
 
 	std::optional<CustomEmoji::Context> _customEmojiContext;
-	int _customEmojiSize = 0;
 	int _customEmojiSkip = 0;
 	int _indexOfElidedBlock = -1; // For spoilers.
 
 	// current paragraph data
-	String::TextBlocks::const_iterator _parStartBlock;
-	Qt::LayoutDirection _parDirection = Qt::LayoutDirectionAuto;
-	int _parStart = 0;
-	int _parLength = 0;
-	bool _parHasBidi = false;
-	QVarLengthArray<QScriptAnalysis, 4096> _parAnalysis;
+	String::TextBlocks::const_iterator _paragraphStartBlock;
+	Qt::LayoutDirection _paragraphDirection = Qt::LayoutDirectionAuto;
+	int _paragraphStart = 0;
+	int _paragraphLength = 0;
+	bool _paragraphHasBidi = false;
+	QVarLengthArray<QScriptAnalysis, 4096> _paragraphAnalysis;
+
+	// current quote data
+	QuoteDetails *_quote = nullptr;
+	Qt::LayoutDirection _quoteDirection = Qt::LayoutDirectionAuto;
+	int _quoteShift = 0;
+	int _quoteIndex = 0;
+	QMargins _quotePadding;
+	int _quoteTop = 0;
+	int _quoteLineTop = 0;
+	QuotePaintCache *_quotePreCache = nullptr;
+	QuotePaintCache *_quoteBlockquoteCache = nullptr;
+	bool _quotePreValid = false;
+	bool _quoteBlockquoteValid = false;
 
 	// current line data
 	QTextEngine *_e = nullptr;
 	style::font _f;
-	QFixed _x, _w, _wLeft, _last_rPadding;
+	int _startLeft = 0;
+	int _startTop = 0;
+	int _startLineWidth = 0;
+	QFixed _x, _wLeft, _last_rPadding;
 	int _y = 0;
 	int _yDelta = 0;
+	int _lineIndex = 0;
 	int _lineHeight = 0;
 	int _fontHeight = 0;
+	bool _breakEverywhere = false;
+	bool _elidedLine = false;
 
 	// elided hack support
 	int _blocksSize = 0;
@@ -172,6 +216,7 @@ private:
 	int _lineStart = 0;
 	int _localFrom = 0;
 	int _lineStartBlock = 0;
+	QFixed _lineWidth = 0;
 
 	// link and symbol resolve
 	QFixed _lookupX = 0;

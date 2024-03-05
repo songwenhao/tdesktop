@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/qt/qt_compare.h"
+
 namespace Data {
 
 struct ReactionId {
@@ -24,6 +26,17 @@ struct ReactionId {
 		const auto custom = std::get_if<DocumentId>(&data);
 		return custom ? *custom : DocumentId();
 	}
+
+	explicit operator bool() const {
+		return !empty();
+	}
+
+	friend inline auto operator<=>(
+		const ReactionId &,
+		const ReactionId &) = default;
+	friend inline bool operator==(
+		const ReactionId &a,
+		const ReactionId &b) = default;
 };
 
 struct MessageReaction {
@@ -32,12 +45,10 @@ struct MessageReaction {
 	bool my = false;
 };
 
-inline bool operator<(const ReactionId &a, const ReactionId &b) {
-	return a.data < b.data;
-}
-inline bool operator==(const ReactionId &a, const ReactionId &b) {
-	return a.data == b.data;
-}
+[[nodiscard]] QString SearchTagToQuery(const ReactionId &tagId);
+[[nodiscard]] ReactionId SearchTagFromQuery(const QString &query);
+[[nodiscard]] std::vector<ReactionId> SearchTagsFromQuery(
+	const QString &query);
 
 [[nodiscard]] QString ReactionEntityData(const ReactionId &id);
 

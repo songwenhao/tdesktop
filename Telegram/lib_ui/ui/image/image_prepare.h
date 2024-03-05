@@ -96,7 +96,7 @@ struct CornersMaskRef {
 	const style::color &color);
 
 [[nodiscard]] std::array<QImage, 4> CornersMask(int radius);
-[[nodiscard]] QImage EllipseMask(QSize size);
+[[nodiscard]] QImage EllipseMask(QSize size, double ratio = style::DevicePixelRatio());
 
 [[nodiscard]] std::array<QImage, 4> PrepareCorners(
 	int radius,
@@ -205,5 +205,9 @@ struct PrepareArgs {
 
 [[nodiscard]] bool IsProgressiveJpeg(const QByteArray &bytes);
 [[nodiscard]] QByteArray MakeProgressiveJpeg(const QByteArray &bytes);
+
+[[nodiscard]] QByteArray ExpandInlineBytes(const QByteArray &bytes);
+[[nodiscard]] QImage FromInlineBytes(const QByteArray &bytes);
+[[nodiscard]] QPainterPath PathFromInlineBytes(const QByteArray &bytes);
 
 } // namespace Images

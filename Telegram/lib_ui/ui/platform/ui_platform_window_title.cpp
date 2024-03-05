@@ -280,18 +280,21 @@ void TitleControls::raise() {
 }
 
 HitTestResult TitleControls::hitTest(QPoint point, int padding) const {
-	const auto test = [&](
-			const object_ptr<AbstractButton> &button,
-			bool close) {
+	const auto test = [&](const object_ptr<AbstractButton> &button) {
 		return button && button->geometry().marginsAdded(
-			{ close ? padding : 0, padding, close ? padding : 0, 0 }
+			{ 0, padding, 0, 0 }
 		).contains(point);
 	};
-	if (test(_minimize, false)) {
+	if (::Platform::IsWindows11OrGreater()
+		&& !_maximizedState
+		&& (point.y() < style::ConvertScale(
+			window()->windowHandle()->devicePixelRatio()))) {
+		return HitTestResult::Top;
+	} else if (test(_minimize)) {
 		return HitTestResult::Minimize;
-	} else if (test(_maximizeRestore, false)) {
+	} else if (test(_maximizeRestore)) {
 		return HitTestResult::MaximizeRestore;
-	} else if (test(_close, true)) {
+	} else if (test(_close)) {
 		return HitTestResult::Close;
 	}
 	return HitTestResult::None;
@@ -340,9 +343,9 @@ AbstractButton *TitleControls::controlWidget(Control control) const {
 }
 
 void TitleControls::updateControlsPosition() {
-	const auto controlsLayout = TitleControlsLayout();
-	auto controlsLeft = controlsLayout.left;
-	auto controlsRight = controlsLayout.right;
+	auto controlsLayout = TitleControlsLayout();
+	auto &controlsLeft = controlsLayout.left;
+	auto &controlsRight = controlsLayout.right;
 	const auto moveFromTo = [&](auto &from, auto &to) {
 		for (const auto control : from) {
 			if (!ranges::contains(to, control)) {
@@ -351,11 +354,7 @@ void TitleControls::updateControlsPosition() {
 		}
 		from.clear();
 	};
-	if (ranges::contains(controlsLeft, Control::Close)) {
-		moveFromTo(controlsRight, controlsLeft);
-	} else if (ranges::contains(controlsRight, Control::Close)) {
-		moveFromTo(controlsLeft, controlsRight);
-	} else if (controlsLeft.size() > controlsRight.size()) {
+	if (TitleControlsOnLeft(controlsLayout)) {
 		moveFromTo(controlsRight, controlsLeft);
 	} else {
 		moveFromTo(controlsLeft, controlsRight);
@@ -445,6 +444,36 @@ void TitleControls::updateButtonsState() {
 	_buttons->updateState(_activeState, _maximizedState, *_st);
 }
 
+namespace internal {
+namespace {
+
+auto &CachedTitleControlsLayout() {
+	using Layout = TitleControls::Layout;
+	static rpl::variable<Layout> Result = TitleControlsLayout();
+	return Result;
+};
+
+} // namespace
+
+void NotifyTitleControlsLayoutChanged(
+		const std::optional<TitleControls::Layout> &layout) {
+	CachedTitleControlsLayout() = layout ? *layout : TitleControlsLayout();
+}
+
+} // namespace internal
+
+TitleControls::Layout TitleControlsLayout() {
+	return internal::CachedTitleControlsLayout().current();
+}
+
+rpl::producer<TitleControls::Layout> TitleControlsLayoutValue() {
+	return internal::CachedTitleControlsLayout().value();
+}
+
+rpl::producer<TitleControls::Layout> TitleControlsLayoutChanged() {
+	return internal::CachedTitleControlsLayout().changes();
+}
+
 DefaultTitleWidget::DefaultTitleWidget(not_null<RpWidget*> parent)
 : RpWidget(parent)
 , _controls(this, st::defaultWindowTitle)
@@ -501,6 +530,10 @@ void DefaultTitleWidget::mouseReleaseEvent(QMouseEvent *e) {
 void DefaultTitleWidget::mouseMoveEvent(QMouseEvent *e) {
 	if (_mousePressed) {
 		window()->windowHandle()->startSystemMove();
+		SendSynteticMouseEvent(
+			this,
+			QEvent::MouseButtonRelease,
+			Qt::LeftButton);
 	}
 }
 
@@ -556,9 +589,9 @@ std::unique_ptr<SeparateTitleControls> SetupSeparateTitleControls(
 		controlsTop ? std::move(controlsTop) : rpl::single(0)
 	) | rpl::start_with_next([=](int width, int padding, int top) {
 		raw->wrap.setGeometry(
-			padding,
+			0,
 			top,
-			width - 2 * padding,
+			width,
 			raw->controls.geometry().height());
 	}, lifetime);
 

@@ -13,7 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/checkbox.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/text/text_utilities.h"
-#include "ui/toasts/common_toasts.h"
+#include "ui/vertical_list.h"
 #include "main/main_session.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
@@ -24,12 +24,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_channel.h"
 #include "data/data_forum.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_folder.h"
 #include "data/data_premium_limits.h"
 #include "lang/lang_keys.h"
-#include "settings/settings_common.h"
-#include "settings/settings_premium.h"
+#include "settings/settings_premium.h" // ShowPremium.
 #include "base/unixtime.h"
 #include "apiwrap.h"
 #include "styles/style_premium.h"
@@ -46,26 +46,14 @@ struct InfographicDescriptor {
 	float64 premiumLimit = 0;
 	const style::icon *icon;
 	std::optional<tr::phrase<lngtag_count>> phrase;
+	bool complexRatio = false;
 };
 
-[[nodiscard]] rpl::producer<> BoxShowFinishes(not_null<Ui::GenericBox*> box) {
-	const auto singleShot = box->lifetime().make_state<rpl::lifetime>();
-	const auto showFinishes = singleShot->make_state<rpl::event_stream<>>();
-
-	box->setShowFinishedCallback([=] {
-		showFinishes->fire({});
-		singleShot->destroy();
-		box->setShowFinishedCallback(nullptr);
-	});
-
-	return showFinishes->events();
-}
-
-void AddSubsectionTitle(
+void AddSubtitle(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> text) {
 	const auto &subtitlePadding = st::settingsButton.padding;
-	Settings::AddSubsectionTitle(
+	Ui::AddSubsectionTitle(
 		container,
 		std::move(text),
 		{ 0, subtitlePadding.top(), 0, -subtitlePadding.bottom() });
@@ -80,6 +68,8 @@ public:
 	void prepare() override;
 	void rowClicked(not_null<PeerListRow*> row) override;
 
+	[[nodiscard]] rpl::producer<int> countValue() const;
+
 private:
 	void appendRow(not_null<PeerData*> peer, TimeId date);
 	[[nodiscard]] std::unique_ptr<PeerListRow> createRow(
@@ -87,6 +77,7 @@ private:
 		TimeId date) const;
 
 	const not_null<Main::Session*> _session;
+	rpl::variable<int> _count;
 	mtpRequestId _requestId = 0;
 
 };
@@ -103,12 +94,15 @@ public:
 	void rowClicked(not_null<PeerListRow*> row) override;
 	void rowRightActionClicked(not_null<PeerListRow*> row) override;
 
+	[[nodiscard]] rpl::producer<int> countValue() const;
+
 private:
 	void appendRow(not_null<PeerData*> peer);
 	[[nodiscard]] std::unique_ptr<PeerListRow> createRow(
 		not_null<PeerData*> peer) const;
 
 	const not_null<Window::SessionNavigation*> _navigation;
+	rpl::variable<int> _count;
 	Fn<void()> _closeBox;
 	mtpRequestId _requestId = 0;
 
@@ -128,11 +122,7 @@ public:
 	void peerListFinishSelectedRowsBunch() override;
 	void peerListSetDescription(
 		object_ptr<Ui::FlatLabel> description) override;
-	void peerListShowBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options = Ui::LayerOption::KeepOther) override;
-	void peerListHideLayer() override;
-	not_null<QWidget*> peerListToastParent() override;
+	std::shared_ptr<Main::SessionShow> peerListUiShow() override;
 	void peerListSetRowChecked(
 		not_null<PeerListRow*> row,
 		bool checked) override;
@@ -196,16 +186,8 @@ void InactiveDelegate::peerListSetDescription(
 	description.destroy();
 }
 
-void InactiveDelegate::peerListShowBox(
-	object_ptr<Ui::BoxContent> content,
-	Ui::LayerOptions options) {
-}
-
-void InactiveDelegate::peerListHideLayer() {
-}
-
-not_null<QWidget*> InactiveDelegate::peerListToastParent() {
-	Unexpected("...InactiveDelegate::peerListToastParent");
+std::shared_ptr<Main::SessionShow> InactiveDelegate::peerListUiShow() {
+	Unexpected("...InactiveDelegate::peerListUiShow");
 }
 
 rpl::producer<int> InactiveDelegate::selectedCountChanges() const {
@@ -234,22 +216,26 @@ void InactiveController::prepare() {
 	_requestId = _session->api().request(MTPchannels_GetInactiveChannels(
 	)).done([=](const MTPmessages_InactiveChats &result) {
 		_requestId = 0;
-		result.match([&](const MTPDmessages_inactiveChats &data) {
-			_session->data().processUsers(data.vusers());
-			const auto &list = data.vchats().v;
-			const auto &dates = data.vdates().v;
-			for (auto i = 0, count = int(list.size()); i != count; ++i) {
-				const auto peer = _session->data().processChat(list[i]);
-				const auto date = (i < dates.size()) ? dates[i].v : TimeId();
-				appendRow(peer, date);
-			}
-			delegate()->peerListRefreshRows();
-		});
+		const auto &data = result.data();
+		_session->data().processUsers(data.vusers());
+		const auto &list = data.vchats().v;
+		const auto &dates = data.vdates().v;
+		for (auto i = 0, count = int(list.size()); i != count; ++i) {
+			const auto peer = _session->data().processChat(list[i]);
+			const auto date = (i < dates.size()) ? dates[i].v : TimeId();
+			appendRow(peer, date);
+		}
+		delegate()->peerListRefreshRows();
+		_count = delegate()->peerListFullRowsCount();
 	}).send();
 }
 
 void InactiveController::rowClicked(not_null<PeerListRow*> row) {
 	delegate()->peerListSetRowChecked(row, !row->checked());
+}
+
+rpl::producer<int> InactiveController::countValue() const {
+	return _count.value();
 }
 
 void InactiveController::appendRow(
@@ -320,6 +306,10 @@ Main::Session &PublicsController::session() const {
 	return _navigation->session();
 }
 
+rpl::producer<int> PublicsController::countValue() const {
+	return _count.value();
+}
+
 void PublicsController::prepare() {
 	_requestId = _navigation->session().api().request(
 		MTPchannels_GetAdminedPublicChannels(MTP_flags(0))
@@ -339,6 +329,7 @@ void PublicsController::prepare() {
 			}
 			delegate()->peerListRefreshRows();
 		}
+		_count = delegate()->peerListFullRowsCount();
 	}).send();
 }
 
@@ -384,8 +375,7 @@ void PublicsController::rowRightActionClicked(not_null<PeerListRow*> row) {
 			.text = text,
 			.confirmed = std::move(callback),
 			.confirmText = confirmText,
-		}),
-		Ui::LayerOption::KeepOther);
+		}));
 }
 
 void PublicsController::appendRow(not_null<PeerData*> participant) {
@@ -405,6 +395,7 @@ std::unique_ptr<PeerListRow> PublicsController::createRow(
 
 void SimpleLimitBox(
 		not_null<Ui::GenericBox*> box,
+		const style::PremiumLimits *stOverride,
 		not_null<Main::Session*> session,
 		bool premiumPossible,
 		rpl::producer<QString> title,
@@ -412,29 +403,37 @@ void SimpleLimitBox(
 		const QString &refAddition,
 		const InfographicDescriptor &descriptor,
 		bool fixed = false) {
+	const auto &st = stOverride ? *stOverride : st::defaultPremiumLimits;
+
 	box->setWidth(st::boxWideWidth);
 
 	const auto top = fixed
 		? box->setPinnedToTopContent(object_ptr<Ui::VerticalLayout>(box))
 		: box->verticalLayout();
 
-	Settings::AddSkip(top, st::premiumInfographicPadding.top());
+	Ui::AddSkip(top, st::premiumInfographicPadding.top());
 	Ui::Premium::AddBubbleRow(
 		top,
+		st::defaultPremiumBubble,
 		BoxShowFinishes(box),
-		descriptor.defaultLimit,
+		0,
 		descriptor.current,
 		descriptor.premiumLimit,
 		premiumPossible,
 		descriptor.phrase,
 		descriptor.icon);
-	Settings::AddSkip(top, st::premiumLineTextSkip);
+	Ui::AddSkip(top, st::premiumLineTextSkip);
 	if (premiumPossible) {
 		Ui::Premium::AddLimitRow(
 			top,
+			st,
 			descriptor.premiumLimit,
-			descriptor.phrase);
-		Settings::AddSkip(top, st::premiumInfographicPadding.bottom());
+			descriptor.phrase,
+			0,
+			(descriptor.complexRatio
+				? (float64(descriptor.current) / descriptor.premiumLimit)
+				: Ui::Premium::kLimitRowRatio));
+		Ui::AddSkip(top, st::premiumInfographicPadding.bottom());
 	}
 
 	box->setTitle(std::move(title));
@@ -463,13 +462,14 @@ void SimpleLimitBox(
 	}
 
 	if (fixed) {
-		Settings::AddSkip(top, st::settingsButton.padding.bottom());
-		Settings::AddDivider(top);
+		Ui::AddSkip(top, st::settingsButton.padding.bottom());
+		Ui::AddDivider(top);
 	}
 }
 
 void SimpleLimitBox(
 		not_null<Ui::GenericBox*> box,
+		const style::PremiumLimits *stOverride,
 		not_null<Main::Session*> session,
 		rpl::producer<QString> title,
 		rpl::producer<TextWithEntities> text,
@@ -478,6 +478,7 @@ void SimpleLimitBox(
 		bool fixed = false) {
 	SimpleLimitBox(
 		box,
+		stOverride,
 		session,
 		session->premiumPossible(),
 		std::move(title),
@@ -521,6 +522,7 @@ void SimplePinsLimitBox(
 	});
 	SimpleLimitBox(
 		box,
+		nullptr,
 		session,
 		tr::lng_filter_pin_limit_title(),
 		std::move(text),
@@ -558,6 +560,7 @@ void ChannelsLimitBox(
 
 	SimpleLimitBox(
 		box,
+		nullptr,
 		session,
 		tr::lng_channels_limit_title(),
 		std::move(text),
@@ -565,7 +568,7 @@ void ChannelsLimitBox(
 		{ defaultLimit, current, premiumLimit, &st::premiumIconGroups },
 		true);
 
-	AddSubsectionTitle(box->verticalLayout(), tr::lng_channels_leave_title());
+	AddSubtitle(box->verticalLayout(), tr::lng_channels_leave_title());
 
 	const auto delegate = box->lifetime().make_state<InactiveDelegate>();
 	const auto controller = box->lifetime().make_state<InactiveController>(
@@ -583,7 +586,7 @@ void ChannelsLimitBox(
 		{});
 
 	using namespace rpl::mappers;
-	content->heightValue(
+	controller->countValue(
 	) | rpl::filter(_1 > 0) | rpl::start_with_next([=] {
 		delete placeholder;
 	}, placeholder->lifetime());
@@ -597,10 +600,7 @@ void ChannelsLimitBox(
 					session->api().leaveChannel(channel);
 				}
 			}
-			Ui::ShowMultilineToast({
-				.parentOverride = Ui::BoxShow(box).toastParent(),
-				.text = { tr::lng_channels_leave_done(tr::now) },
-			});
+			box->showToast(tr::lng_channels_leave_done(tr::now));
 			box->closeBox();
 		};
 		box->clearButtons();
@@ -650,6 +650,7 @@ void PublicLinksLimitBox(
 
 	SimpleLimitBox(
 		box,
+		nullptr,
 		session,
 		tr::lng_links_limit_title(),
 		std::move(text),
@@ -657,7 +658,7 @@ void PublicLinksLimitBox(
 		{ defaultLimit, current, premiumLimit, &st::premiumIconLinks },
 		true);
 
-	AddSubsectionTitle(box->verticalLayout(), tr::lng_links_revoke_title());
+	AddSubtitle(box->verticalLayout(), tr::lng_links_revoke_title());
 
 	const auto delegate = box->lifetime().make_state<InactiveDelegate>();
 	const auto controller = box->lifetime().make_state<PublicsController>(
@@ -676,7 +677,7 @@ void PublicLinksLimitBox(
 		{});
 
 	using namespace rpl::mappers;
-	content->heightValue(
+	controller->countValue(
 	) | rpl::filter(_1 > 0) | rpl::start_with_next([=] {
 		delete placeholder;
 	}, placeholder->lifetime());
@@ -685,7 +686,8 @@ void PublicLinksLimitBox(
 void FilterChatsLimitBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Main::Session*> session,
-		int currentCount) {
+		int currentCount,
+		bool include) {
 	const auto premium = session->premium();
 	const auto premiumPossible = session->premiumPossible();
 
@@ -698,10 +700,12 @@ void FilterChatsLimitBox(
 		premiumLimit);
 
 	auto text = rpl::combine(
-		tr::lng_filter_chats_limit1(
-			lt_count,
-			rpl::single(premium ? premiumLimit : defaultLimit),
-			Ui::Text::RichLangValue),
+		(include
+			? tr::lng_filter_chats_limit1
+			: tr::lng_filter_chats_exlude_limit1)(
+				lt_count,
+				rpl::single(premium ? premiumLimit : defaultLimit),
+				Ui::Text::RichLangValue),
 		((premium || !premiumPossible)
 			? rpl::single(TextWithEntities())
 			: tr::lng_filter_chats_limit2(
@@ -716,6 +720,7 @@ void FilterChatsLimitBox(
 
 	SimpleLimitBox(
 		box,
+		nullptr,
 		session,
 		tr::lng_filter_chats_limit_title(),
 		std::move(text),
@@ -723,18 +728,65 @@ void FilterChatsLimitBox(
 		{ defaultLimit, current, premiumLimit, &st::premiumIconChats });
 }
 
-void FiltersLimitBox(
+void FilterLinksLimitBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Main::Session*> session) {
 	const auto premium = session->premium();
 	const auto premiumPossible = session->premiumPossible();
 
 	const auto limits = Data::PremiumLimits(session);
+	const auto defaultLimit = float64(limits.dialogFiltersLinksDefault());
+	const auto premiumLimit = float64(limits.dialogFiltersLinksPremium());
+	const auto current = (premium ? premiumLimit : defaultLimit);
+
+	auto text = rpl::combine(
+		tr::lng_filter_links_limit1(
+			lt_count,
+			rpl::single(premium ? premiumLimit : defaultLimit),
+			Ui::Text::RichLangValue),
+		((premium || !premiumPossible)
+			? rpl::single(TextWithEntities())
+			: tr::lng_filter_links_limit2(
+				lt_count,
+				rpl::single(premiumLimit),
+				Ui::Text::RichLangValue))
+	) | rpl::map([](TextWithEntities &&a, TextWithEntities &&b) {
+		return b.text.isEmpty()
+			? a
+			: a.append(QChar(' ')).append(std::move(b));
+	});
+
+	SimpleLimitBox(
+		box,
+		nullptr,
+		session,
+		tr::lng_filter_links_limit_title(),
+		std::move(text),
+		"chatlist_invites",
+		{
+			defaultLimit,
+			current,
+			premiumLimit,
+			&st::premiumIconChats,
+			std::nullopt,
+			true });
+}
+
+
+void FiltersLimitBox(
+		not_null<Ui::GenericBox*> box,
+		not_null<Main::Session*> session,
+		std::optional<int> filtersCountOverride) {
+	const auto premium = session->premium();
+	const auto premiumPossible = session->premiumPossible();
+
+	const auto limits = Data::PremiumLimits(session);
 	const auto defaultLimit = float64(limits.dialogFiltersDefault());
 	const auto premiumLimit = float64(limits.dialogFiltersPremium());
-	const auto current = float64(ranges::count_if(
+	const auto cloud = int(ranges::count_if(
 		session->data().chatsFilters().list(),
 		[](const Data::ChatFilter &f) { return f.id() != FilterId(); }));
+	const auto current = float64(filtersCountOverride.value_or(cloud));
 
 	auto text = rpl::combine(
 		tr::lng_filters_limit1(
@@ -754,11 +806,57 @@ void FiltersLimitBox(
 	});
 	SimpleLimitBox(
 		box,
+		nullptr,
 		session,
 		tr::lng_filters_limit_title(),
 		std::move(text),
 		"dialog_filters",
 		{ defaultLimit, current, premiumLimit, &st::premiumIconFolders });
+}
+
+void ShareableFiltersLimitBox(
+		not_null<Ui::GenericBox*> box,
+		not_null<Main::Session*> session) {
+	const auto premium = session->premium();
+	const auto premiumPossible = session->premiumPossible();
+
+	const auto limits = Data::PremiumLimits(session);
+	const auto defaultLimit = float64(limits.dialogShareableFiltersDefault());
+	const auto premiumLimit = float64(limits.dialogShareableFiltersPremium());
+	const auto current = float64(ranges::count_if(
+		session->data().chatsFilters().list(),
+		[](const Data::ChatFilter &f) { return f.chatlist(); }));
+
+	auto text = rpl::combine(
+		tr::lng_filter_shared_limit1(
+			lt_count,
+			rpl::single(premium ? premiumLimit : defaultLimit),
+			Ui::Text::RichLangValue),
+		((premium || !premiumPossible)
+			? rpl::single(TextWithEntities())
+			: tr::lng_filter_shared_limit2(
+				lt_count,
+				rpl::single(premiumLimit),
+				Ui::Text::RichLangValue))
+	) | rpl::map([](TextWithEntities &&a, TextWithEntities &&b) {
+		return b.text.isEmpty()
+			? a
+			: a.append(QChar(' ')).append(std::move(b));
+	});
+	SimpleLimitBox(
+		box,
+		nullptr,
+		session,
+		tr::lng_filter_shared_limit_title(),
+		std::move(text),
+		"chatlists_joined",
+		{
+			defaultLimit,
+			current,
+			premiumLimit,
+			&st::premiumIconFolders,
+			std::nullopt,
+			true });
 }
 
 void FilterPinsLimitBox(
@@ -800,6 +898,18 @@ void PinsLimitBox(
 		limits.dialogsPinnedPremium(),
 		PinsCount(session->data().chatsList()));
 }
+void SublistsPinsLimitBox(
+		not_null<Ui::GenericBox*> box,
+		not_null<Main::Session*> session) {
+	const auto limits = Data::PremiumLimits(session);
+	SimplePinsLimitBox(
+		box,
+		session,
+		"saved_dialog_pinned",
+		limits.savedSublistsPinnedDefault(),
+		limits.savedSublistsPinnedPremium(),
+		PinsCount(session->data().savedMessages().chatsList()));
+}
 
 void ForumPinsLimitBox(
 		not_null<Ui::GenericBox*> box,
@@ -812,6 +922,7 @@ void ForumPinsLimitBox(
 		Ui::Text::RichLangValue);
 	SimpleLimitBox(
 		box,
+		nullptr,
 		&forum->session(),
 		false,
 		tr::lng_filter_pin_limit_title(),
@@ -823,7 +934,8 @@ void ForumPinsLimitBox(
 void CaptionLimitBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Main::Session*> session,
-		int remove) {
+		int remove,
+		const style::PremiumLimits *stOverride) {
 	const auto premium = session->premium();
 	const auto premiumPossible = session->premiumPossible();
 
@@ -855,6 +967,7 @@ void CaptionLimitBox(
 
 	SimpleLimitBox(
 		box,
+		stOverride,
 		session,
 		tr::lng_caption_limit_title(),
 		std::move(text),
@@ -865,15 +978,17 @@ void CaptionLimitBox(
 void CaptionLimitReachedBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Main::Session*> session,
-		int remove) {
+		int remove,
+		const style::PremiumLimits *stOverride) {
 	Ui::ConfirmBox(box, Ui::ConfirmBoxArgs{
 		.text = tr::lng_caption_limit_reached(tr::now, lt_count, remove),
+		.labelStyle = stOverride ? &stOverride->boxLabel : nullptr,
 		.inform = true,
 	});
 	if (!session->premium()) {
 		box->addLeftButton(tr::lng_limits_increase(), [=] {
 			box->getDelegate()->showBox(
-				Box(CaptionLimitBox, session, remove),
+				Box(CaptionLimitBox, session, remove, stOverride),
 				Ui::LayerOption::KeepOther,
 				anim::type::normal);
 			box->closeBox();
@@ -884,7 +999,8 @@ void CaptionLimitReachedBox(
 void FileSizeLimitBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Main::Session*> session,
-		uint64 fileSizeBytes) {
+		uint64 fileSizeBytes,
+		const style::PremiumLimits *stOverride) {
 	const auto limits = Data::PremiumLimits(session);
 	const auto defaultLimit = float64(limits.uploadMaxDefault());
 	const auto premiumLimit = float64(limits.uploadMaxPremium());
@@ -923,6 +1039,7 @@ void FileSizeLimitBox(
 
 	SimpleLimitBox(
 		box,
+		stOverride,
 		session,
 		premiumPossible,
 		tr::lng_file_size_limit_title(),
@@ -978,9 +1095,10 @@ void AccountsLimitBox(
 	const auto top = box->verticalLayout();
 	const auto group = std::make_shared<Ui::RadiobuttonGroup>(0);
 
-	Settings::AddSkip(top, st::premiumInfographicPadding.top());
+	Ui::AddSkip(top, st::premiumInfographicPadding.top());
 	Ui::Premium::AddBubbleRow(
 		top,
+		st::defaultPremiumBubble,
 		BoxShowFinishes(box),
 		0,
 		current,
@@ -992,14 +1110,15 @@ void AccountsLimitBox(
 		premiumPossible,
 		std::nullopt,
 		&st::premiumIconAccounts);
-	Settings::AddSkip(top, st::premiumLineTextSkip);
+	Ui::AddSkip(top, st::premiumLineTextSkip);
 	if (premiumPossible) {
 		Ui::Premium::AddLimitRow(
 			top,
+			st::defaultPremiumLimits,
 			(QString::number(std::max(current, defaultLimit) + 1)
 				+ ((current + 1 == premiumLimit) ? "" : "+")),
 			QString::number(defaultLimit));
-		Settings::AddSkip(top, st::premiumInfographicPadding.bottom());
+		Ui::AddSkip(top, st::premiumInfographicPadding.bottom());
 	}
 	box->setTitle(tr::lng_accounts_limit_title());
 

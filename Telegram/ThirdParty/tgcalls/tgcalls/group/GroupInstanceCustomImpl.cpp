@@ -1499,7 +1499,7 @@ public:
         );
 
         _networkManager.reset(new ThreadLocalObject<GroupNetworkManager>(_threads->getNetworkThread(), [weak, threads = _threads] () mutable {
-            return new GroupNetworkManager(
+            return std::make_shared<GroupNetworkManager>(
                 fieldTrialsBasedConfig,
                 [=](const GroupNetworkManager::State &state) {
                     threads->getMediaThread()->PostTask([=] {
@@ -3350,14 +3350,14 @@ private:
                 return nullptr;
             }
         };
-        if (_videoContentType == VideoContentType::Screencast) {
-            FakeAudioDeviceModule::Options options;
-            options.num_channels = 1;
-            return check(FakeAudioDeviceModule::Creator(nullptr, _externalAudioRecorder, options)(_taskQueueFactory.get()));
-        } else if (_createAudioDeviceModule) {
+        if (_createAudioDeviceModule) {
             if (const auto result = check(_createAudioDeviceModule(_taskQueueFactory.get()))) {
                 return result;
             }
+        } else if (_videoContentType == VideoContentType::Screencast) {
+            FakeAudioDeviceModule::Options options;
+            options.num_channels = 1;
+            return check(FakeAudioDeviceModule::Creator(nullptr, _externalAudioRecorder, options)(_taskQueueFactory.get()));
         }
         return check(create(webrtc::AudioDeviceModule::kPlatformDefaultAudio));
     }
@@ -3477,7 +3477,7 @@ GroupInstanceCustomImpl::GroupInstanceCustomImpl(GroupInstanceDescriptor &&descr
 
     _threads = descriptor.threads;
     _internal.reset(new ThreadLocalObject<GroupInstanceCustomInternal>(_threads->getMediaThread(), [descriptor = std::move(descriptor), threads = _threads]() mutable {
-        return new GroupInstanceCustomInternal(std::move(descriptor), threads);
+        return std::make_shared<GroupInstanceCustomInternal>(std::move(descriptor), threads);
     }));
     _internal->perform([](GroupInstanceCustomInternal *internal) {
         internal->start();

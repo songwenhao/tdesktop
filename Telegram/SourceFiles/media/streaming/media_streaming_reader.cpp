@@ -807,23 +807,7 @@ void Reader::Slices::unloadSlice(Slice &slice) const {
 }
 
 QByteArray Reader::Slices::serializeComplexSlice(const Slice &slice) const {
-	auto result = QByteArray();
-	const auto count = slice.parts.size();
-	const auto intSize = sizeof(int32);
-	result.reserve(count * kPartSize + 2 * intSize * (count + 1));
-	const auto appendInt = [&](int value) {
-		auto serialized = int32(value);
-		result.append(
-			reinterpret_cast<const char*>(&serialized),
-			intSize);
-	};
-	appendInt(count);
-	for (const auto &[offset, part] : slice.parts) {
-		appendInt(offset);
-		appendInt(part.size());
-		result.append(part);
-	}
-	return result;
+	return SerializeComplexPartsMap(slice.parts);
 }
 
 QByteArray Reader::Slices::serializeAndUnloadFirstSliceNoHeader() {
@@ -919,6 +903,10 @@ void Reader::stopStreaming(bool stillActive) {
 
 	_stopStreamingAsync = false;
 	_waiting.store(nullptr, std::memory_order_release);
+	if (_cacheHelper && _cacheHelper->waiting != nullptr) {
+		QMutexLocker lock(&_cacheHelper->mutex);
+		_cacheHelper->waiting.store(nullptr, std::memory_order_release);
+	}
 	if (!stillActive) {
 		_streamingActive = false;
 		refreshLoaderPriority();
@@ -1395,10 +1383,6 @@ void Reader::finalizeCache() {
 		return;
 	}
 	Assert(_cache != nullptr);
-	if (_cacheHelper->waiting != nullptr) {
-		QMutexLocker lock(&_cacheHelper->mutex);
-		_cacheHelper->waiting.store(nullptr, std::memory_order_release);
-	}
 	auto toCache = _slices.unloadToCache();
 	while (toCache.number >= 0) {
 		putToCache(std::move(toCache));
@@ -1409,6 +1393,27 @@ void Reader::finalizeCache() {
 
 Reader::~Reader() {
 	finalizeCache();
+}
+
+QByteArray SerializeComplexPartsMap(
+		const base::flat_map<uint32, QByteArray> &parts) {
+	auto result = QByteArray();
+	const auto count = parts.size();
+	const auto intSize = sizeof(int32);
+	result.reserve(count * kPartSize + 2 * intSize * (count + 1));
+	const auto appendInt = [&](int value) {
+		auto serialized = int32(value);
+		result.append(
+			reinterpret_cast<const char*>(&serialized),
+			intSize);
+	};
+	appendInt(count);
+	for (const auto &[offset, part] : parts) {
+		appendInt(offset);
+		appendInt(part.size());
+		result.append(part);
+	}
+	return result;
 }
 
 } // namespace Streaming

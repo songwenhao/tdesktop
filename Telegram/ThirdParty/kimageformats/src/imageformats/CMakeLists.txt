@@ -104,9 +104,6 @@ endif()
 if (LibJXL_FOUND AND LibJXLThreads_FOUND)
     kimageformats_add_plugin(kimg_jxl SOURCES jxl.cpp)
     target_link_libraries(kimg_jxl PkgConfig::LibJXL PkgConfig::LibJXLThreads)
-    if (LibJXL_VERSION VERSION_GREATER_EQUAL "0.7.0")
-        target_compile_definitions(kimg_jxl PRIVATE KIMG_JXL_API_VERSION=70)
-    endif()
 
     if (QT_MAJOR_VERSION STREQUAL "5")
         install(FILES jxl.desktop DESTINATION ${KDE_INSTALL_KSERVICESDIR}/qimageioplugins/)
@@ -132,6 +129,13 @@ endif()
 kimageformats_add_plugin(kimg_psd SOURCES psd.cpp)
 if (QT_MAJOR_VERSION STREQUAL "5")
     install(FILES psd.desktop DESTINATION ${KDE_INSTALL_KSERVICESDIR}/qimageioplugins/)
+endif()
+
+##################################
+
+kimageformats_add_plugin(kimg_qoi SOURCES qoi.cpp scanlineconverter.cpp)
+if (QT_MAJOR_VERSION STREQUAL "5")
+    install(FILES qoi.desktop DESTINATION ${KDE_INSTALL_KSERVICESDIR}/qimageioplugins/)
 endif()
 
 ##################################

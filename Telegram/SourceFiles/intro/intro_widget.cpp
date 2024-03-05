@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
+#include "boxes/abstract_box.h"
 #include "core/update_checker.h"
 #include "core/application.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -160,10 +161,6 @@ Widget::Widget(
 
 rpl::producer<> Widget::showSettingsRequested() const {
 	return _settings->entity()->clicks() | rpl::to_empty;
-}
-
-std::vector<details::Step*>* Widget::getIntroStepHistory() {
-	return &_stepHistory;
 }
 
 not_null<Media::Player::FloatDelegate*> Widget::floatPlayerDelegate() {

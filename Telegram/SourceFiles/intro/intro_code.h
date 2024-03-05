@@ -9,104 +9,87 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "intro/intro_step.h"
 #include "intro/intro_widget.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/masked_input_field.h"
 #include "base/timer.h"
 
 namespace Ui {
-    class RoundButton;
-    class LinkButton;
-    class FlatLabel;
+class RoundButton;
+class LinkButton;
+class FlatLabel;
+class CodeInput;
 } // namespace Ui
 
 namespace Intro {
-    namespace details {
+namespace details {
 
-        enum class CallStatus;
+enum class CallStatus;
 
-        class CodeInput final : public Ui::MaskedInputField {
-        public:
-            CodeInput(
-                QWidget* parent,
-                const style::InputField& st,
-                rpl::producer<QString> placeholder);
+class CodeWidget final : public Step {
+public:
+	CodeWidget(
+		QWidget *parent,
+		not_null<Main::Account*> account,
+		not_null<Data*> data);
 
-            void setDigitsCountMax(int digitsCount);
+	bool hasBack() const override {
+		return true;
+	}
+	void setInnerFocus() override;
+	void activate() override;
+	void finished() override;
+	void cancelled() override;
+	void submit() override;
+	rpl::producer<QString> nextButtonText() const override;
+	rpl::producer<const style::RoundButton*> nextButtonStyle() const override;
 
-        protected:
-            void correctValue(const QString& was, int wasCursor, QString& now, int& nowCursor) override;
+	void updateDescText();
 
-        private:
-            int _digitsCountMax = 5;
+protected:
+	void resizeEvent(QResizeEvent *e) override;
 
-        };
+private:
+	void noTelegramCode();
+	void sendCall();
+	void checkRequest();
 
-        class CodeWidget final : public Step {
-        public:
-            CodeWidget(
-                QWidget* parent,
-                not_null<Main::Account*> account,
-                not_null<Data*> data);
+	int errorTop() const override;
 
-            bool hasBack() const override {
-                return true;
-            }
-            void setInnerFocus() override;
-            void activate() override;
-            void finished() override;
-            void cancelled() override;
-            void submit() override;
-            rpl::producer<QString> nextButtonText() const override;
-            rpl::producer<const style::RoundButton*> nextButtonStyle() const override;
+	void updateCallText();
+	void refreshLang();
+	void updateControlsGeometry();
 
-            void updateDescText();
+	void codeSubmitDone(const MTPauth_Authorization &result);
+	void codeSubmitFail(const MTP::Error &error);
 
-        protected:
-            void resizeEvent(QResizeEvent* e) override;
+	void showCodeError(rpl::producer<QString> text);
+	void callDone(const MTPauth_SentCode &result);
+	void gotPassword(const MTPaccount_Password &result);
 
-        private:
-            void noTelegramCode();
-            void codeChanged();
-            void sendCall();
-            void checkRequest();
+	void noTelegramCodeDone(const MTPauth_SentCode &result);
+	void noTelegramCodeFail(const MTP::Error &result);
 
-            int errorTop() const override;
+	void submitCode(const QString &text);
 
-            void updateCallText();
-            void refreshLang();
-            void updateControlsGeometry();
+	void stopCheck();
 
-            void codeSubmitDone(const MTPauth_Authorization& result);
-            void codeSubmitFail(const MTP::Error& error);
+	object_ptr<Ui::LinkButton> _noTelegramCode;
+	mtpRequestId _noTelegramCodeRequestId = 0;
 
-            void showCodeError(rpl::producer<QString> text);
-            void callDone(const MTPauth_SentCode& result);
-            void gotPassword(const MTPaccount_Password& result);
+	object_ptr<Ui::CodeInput> _code;
+	QString _sentCode;
+	mtpRequestId _sentRequest = 0;
 
-            void noTelegramCodeDone(const MTPauth_SentCode& result);
-            void noTelegramCodeFail(const MTP::Error& result);
+	rpl::variable<bool> _isFragment = false;
 
-            void submitCode();
+	base::Timer _callTimer;
+	CallStatus _callStatus = CallStatus();
+	int _callTimeout;
+	mtpRequestId _callRequestId = 0;
+	object_ptr<Ui::FlatLabel> _callLabel;
 
-            void stopCheck();
+	base::Timer _checkRequestTimer;
 
-            object_ptr<Ui::LinkButton> _noTelegramCode;
-            mtpRequestId _noTelegramCodeRequestId = 0;
+};
 
-            object_ptr<CodeInput> _code;
-            QString _sentCode;
-            mtpRequestId _sentRequest = 0;
-
-            rpl::variable<bool> _isFragment = false;
-
-            base::Timer _callTimer;
-            CallStatus _callStatus = CallStatus();
-            int _callTimeout;
-            mtpRequestId _callRequestId = 0;
-            object_ptr<Ui::FlatLabel> _callLabel;
-
-            base::Timer _checkRequestTimer;
-
-        };
-
-    } // namespace details
+} // namespace details
 } // namespace Intro

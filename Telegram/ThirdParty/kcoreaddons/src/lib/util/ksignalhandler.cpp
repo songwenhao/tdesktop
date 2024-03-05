@@ -7,9 +7,11 @@
 #include "ksignalhandler.h"
 #include "kcoreaddons_debug.h"
 #include <QSocketNotifier>
+#include <QTimer>
 
 #ifndef Q_OS_WIN
 #include <cerrno>
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -39,8 +41,14 @@ KSignalHandler::KSignalHandler()
         return;
     }
 
-    d->m_handler = new QSocketNotifier(KSignalHandlerPrivate::signalFd[1], QSocketNotifier::Read, this);
-    connect(d->m_handler, &QSocketNotifier::activated, d.get(), &KSignalHandlerPrivate::handleSignal);
+    // ensure the sockets are not leaked to child processes, SOCK_CLOEXEC not supported on macOS
+    fcntl(KSignalHandlerPrivate::signalFd[0], F_SETFD, FD_CLOEXEC);
+    fcntl(KSignalHandlerPrivate::signalFd[1], F_SETFD, FD_CLOEXEC);
+
+    QTimer::singleShot(0, [this] {
+        d->m_handler = new QSocketNotifier(KSignalHandlerPrivate::signalFd[1], QSocketNotifier::Read, this);
+        connect(d->m_handler, &QSocketNotifier::activated, d.get(), &KSignalHandlerPrivate::handleSignal);
+    });
 #endif
 }
 
@@ -94,3 +102,5 @@ KSignalHandler *KSignalHandler::self()
     static KSignalHandler s_self;
     return &s_self;
 }
+
+#include "moc_ksignalhandler.cpp"

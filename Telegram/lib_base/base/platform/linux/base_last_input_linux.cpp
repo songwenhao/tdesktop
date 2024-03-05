@@ -11,26 +11,20 @@
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 #include "base/platform/linux/base_linux_xcb_utilities.h"
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-#include "base/platform/linux/base_linux_glibmm_helper.h"
+#include <xcb/screensaver.h>
+#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
 #include <glibmm.h>
 #include <giomm.h>
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-
-#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-#include <xcb/screensaver.h>
-#endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
 namespace base::Platform {
 namespace {
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 std::optional<crl::time> XCBLastUserInputTime() {
-	const auto connection = XCB::GetConnectionFromQt();
-	if (!connection) {
+	const XCB::Connection connection;
+	if (!connection || xcb_connection_has_error(connection)) {
 		return std::nullopt;
 	}
 
@@ -61,7 +55,6 @@ std::optional<crl::time> XCBLastUserInputTime() {
 }
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 std::optional<crl::time> FreedesktopDBusLastUserInputTime() {
 	static auto NotSupported = false;
 
@@ -84,14 +77,14 @@ std::optional<crl::time> FreedesktopDBusLastUserInputTime() {
 			return std::nullopt;
 		}
 
-		auto reply = connection->call_sync(
+		const auto value = connection->call_sync(
 			"/org/freedesktop/ScreenSaver",
 			"org.freedesktop.ScreenSaver",
 			"GetSessionIdleTime",
 			{},
-			"org.freedesktop.ScreenSaver");
+			"org.freedesktop.ScreenSaver"
+		).get_child(0).get_dynamic<uint>();
 
-		const auto value = GlibVariantCast<uint>(reply.get_child(0));
 		return (crl::now() - static_cast<crl::time>(value));
 	} catch (const Glib::Error &e) {
 		static const auto NotSupportedErrors = {
@@ -115,11 +108,11 @@ std::optional<crl::time> FreedesktopDBusLastUserInputTime() {
 
 		LOG(("Unable to get last user input time "
 			"from org.freedesktop.ScreenSaver: %1")
-			.arg(QString::fromStdString(e.what())));
+			.arg(e.what()));
 	} catch (const std::exception &e) {
 		LOG(("Unable to get last user input time "
 			"from org.freedesktop.ScreenSaver: %1")
-			.arg(QString::fromStdString(e.what())));
+			.arg(e.what()));
 	}
 
 	return std::nullopt;
@@ -147,14 +140,14 @@ std::optional<crl::time> MutterDBusLastUserInputTime() {
 			return std::nullopt;
 		}
 
-		auto reply = connection->call_sync(
+		const auto value = connection->call_sync(
 			"/org/gnome/Mutter/IdleMonitor/Core",
 			"org.gnome.Mutter.IdleMonitor",
 			"GetIdletime",
 			{},
-			"org.gnome.Mutter.IdleMonitor");
+			"org.gnome.Mutter.IdleMonitor"
+		).get_child(0).get_dynamic<uint64>();
 
-		const auto value = GlibVariantCast<uint64>(reply.get_child(0));
 		return (crl::now() - static_cast<crl::time>(value));
 	} catch (const Glib::Error &e) {
 		static const auto NotSupportedErrors = {
@@ -177,16 +170,15 @@ std::optional<crl::time> MutterDBusLastUserInputTime() {
 
 		LOG(("Unable to get last user input time "
 			"from org.gnome.Mutter.IdleMonitor: %1")
-			.arg(QString::fromStdString(e.what())));
+			.arg(e.what()));
 	} catch (const std::exception &e) {
 		LOG(("Unable to get last user input time "
 			"from org.gnome.Mutter.IdleMonitor: %1")
-			.arg(QString::fromStdString(e.what())));
+			.arg(e.what()));
 	}
 
 	return std::nullopt;
 }
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 
 } // namespace
 
@@ -200,7 +192,6 @@ std::optional<crl::time> LastUserInputTime() {
 	}
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 	const auto freedesktopResult = FreedesktopDBusLastUserInputTime();
 	if (freedesktopResult.has_value()) {
 		return freedesktopResult;
@@ -210,7 +201,6 @@ std::optional<crl::time> LastUserInputTime() {
 	if (mutterResult.has_value()) {
 		return mutterResult;
 	}
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 
 	return std::nullopt;
 }

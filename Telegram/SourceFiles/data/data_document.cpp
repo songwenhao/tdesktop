@@ -19,7 +19,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
 #include "data/stickers/data_stickers.h"
-#include "data/stickers/data_stickers_set.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
 #include "media/streaming/media_streaming_loader_mtproto.h"
@@ -29,18 +28,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/streamed_file_downloader.h"
 #include "storage/file_download_mtproto.h"
 #include "storage/file_download_web.h"
-#include "platform/platform_specific.h"
-#include "platform/platform_file_utilities.h"
-#include "base/platform/base_platform_info.h"
 #include "base/options.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/view/media/history_view_gif.h"
 #include "window/window_session_controller.h"
-#include "storage/cache/storage_cache_database.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/image/image.h"
-#include "ui/text/text_utilities.h"
 #include "base/base_file_utilities.h"
 #include "mainwindow.h"
 #include "core/application.h"
@@ -54,6 +47,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 constexpr auto kDefaultCoverThumbnailSize = 100;
+constexpr auto kMaxAllowedPreloadPrefix = 6 * 1024 * 1024;
+constexpr auto kDefaultWebmEmojiSize = 100;
+constexpr auto kDefaultWebmStickerLargerSize = kStickerSideSize;
 
 const auto kLottieStickerDimensions = QSize(
 	kStickerSideSize,
@@ -326,14 +322,17 @@ Main::Session &DocumentData::session() const {
 
 void DocumentData::setattributes(
 		const QVector<MTPDocumentAttribute> &attributes) {
+	_duration = -1;
 	_flags &= ~(Flag::ImageType
 		| Flag::HasAttachedStickers
 		| Flag::UseTextColor
+		| Flag::SilentVideo
 		| kStreamingSupportedMask);
 	_flags |= kStreamingSupportedUnknown;
 
 	validateLottieSticker();
 
+	_videoPreloadPrefix = 0;
 	for (const auto &attribute : attributes) {
 		attribute.match([&](const MTPDdocumentAttributeImageSize &data) {
 			dimensions = QSize(data.vw().v, data.vh().v);
@@ -389,13 +388,20 @@ void DocumentData::setattributes(
 					: VideoDocument;
 				if (data.is_round_message()) {
 					_additional = std::make_unique<RoundData>();
-					round()->duration = data.vduration().v;
+				} else if (const auto size = data.vpreload_prefix_size()) {
+					if (size->v > 0 && size->v < kMaxAllowedPreloadPrefix) {
+						_videoPreloadPrefix = size->v;
+					}
 				}
 			} else if (const auto info = sticker()) {
 				info->type = StickerType::Webm;
 			}
-			_duration = data.vduration().v;
+			_duration = crl::time(
+				base::SafeRound(data.vduration().v * 1000));
 			setMaybeSupportsStreaming(data.is_supports_streaming());
+			if (data.is_nosound()) {
+				_flags |= Flag::SilentVideo;
+			}
 			dimensions = QSize(data.vw().v, data.vh().v);
 		}, [&](const MTPDdocumentAttributeAudio &data) {
 			if (type == FileDocument) {
@@ -408,14 +414,14 @@ void DocumentData::setattributes(
 				}
 			}
 			if (const auto voiceData = voice() ? voice() : round()) {
-				voiceData->duration = data.vduration().v;
+				_duration = data.vduration().v * crl::time(1000);
 				voiceData->waveform = documentWaveformDecode(
 					data.vwaveform().value_or_empty());
 				voiceData->wavemax = voiceData->waveform.empty()
 					? uchar(0)
 					: *ranges::max_element(voiceData->waveform);
 			} else if (const auto songData = song()) {
-				songData->duration = data.vduration().v;
+				_duration = data.vduration().v * crl::time(1000);
 				songData->title = qs(data.vtitle().value_or_empty());
 				songData->performer = qs(data.vperformer().value_or_empty());
 				refreshPossibleCoverThumbnail();
@@ -426,6 +432,42 @@ void DocumentData::setattributes(
 			_flags |= Flag::HasAttachedStickers;
 		});
 	}
+
+	// Any "video/webm" file is treated as a video-sticker.
+	if (hasMimeType(u"video/webm"_q)) {
+		if (type == FileDocument) {
+			type = StickerDocument;
+			_additional = std::make_unique<StickerData>();
+		}
+		if (type == StickerDocument) {
+			sticker()->type = StickerType::Webm;
+		}
+	}
+
+	// If "video/webm" sticker without dimensions we set them to default.
+	if (const auto info = sticker(); info
+		&& info->set
+		&& info->type == StickerType::Webm
+		&& dimensions.isEmpty()) {
+		if (info->setType == Data::StickersType::Emoji) {
+			// Always fixed.
+			dimensions = { kDefaultWebmEmojiSize, kDefaultWebmEmojiSize };
+		} else if (info->setType == Data::StickersType::Stickers) {
+			// May have aspect != 1, so we count it from the thumbnail.
+			const auto thumbnail = QSize(
+				_thumbnail.location.width(),
+				_thumbnail.location.height()
+			).scaled(
+				kDefaultWebmStickerLargerSize,
+				kDefaultWebmStickerLargerSize,
+				Qt::KeepAspectRatio);
+			if (!thumbnail.isEmpty()) {
+				dimensions = thumbnail;
+			}
+		}
+	}
+
+	// Check sticker size/dimensions properties (for sticker of any type).
 	if (type == StickerDocument
 		&& ((size > Storage::kMaxStickerBytesSize)
 			|| (!sticker()->isLottie()
@@ -434,15 +476,12 @@ void DocumentData::setattributes(
 					dimensions.height())))) {
 		type = FileDocument;
 		_additional = nullptr;
-	} else if (type == FileDocument
-		&& hasMimeType(u"video/webm"_q)
-		&& (size < Storage::kMaxStickerBytesSize)
-		&& GoodStickerDimensions(dimensions.width(), dimensions.height())) {
-		type = StickerDocument;
-		_additional = std::make_unique<StickerData>();
-		sticker()->type = StickerType::Webm;
 	}
-	if (isAudioFile() || isAnimation() || isVoiceMessage()) {
+
+	if (isAudioFile()
+		|| isAnimation()
+		|| isVoiceMessage()
+		|| storyMedia()) {
 		setMaybeSupportsStreaming(true);
 	}
 }
@@ -476,8 +515,7 @@ bool DocumentData::checkWallPaperProperties() {
 	}
 	if (type != FileDocument
 		|| !hasThumbnail()
-		|| !dimensions.width()
-		|| !dimensions.height()
+		|| dimensions.isEmpty()
 		|| dimensions.width() > Storage::kMaxWallPaperDimension
 		|| dimensions.height() > Storage::kMaxWallPaperDimension
 		|| size > Storage::kMaxWallPaperInMemory) {
@@ -794,7 +832,7 @@ QString DocumentData::loadingFilePath() const {
 
 bool DocumentData::displayLoading() const {
 	return loading()
-		? (!_loader->loadingLocal() || !_loader->autoLoading())
+		? !_loader->loadingLocal()
 		: (uploading() && !waitingForAlbum());
 }
 
@@ -1330,6 +1368,7 @@ bool DocumentData::canBeStreamed(HistoryItem *item) const {
 	return hasRemoteLocation()
 		&& supportsStreaming()
 		&& (!isVideoFile()
+			|| storyMedia()
 			|| !ExternalVideoPlayer.value()
 			|| (item && !item->allowsForward()));
 }
@@ -1340,6 +1379,23 @@ void DocumentData::setInappPlaybackFailed() {
 
 bool DocumentData::inappPlaybackFailed() const {
 	return (_flags & Flag::StreamingPlaybackFailed);
+}
+
+int DocumentData::videoPreloadPrefix() const {
+	return _videoPreloadPrefix;
+}
+
+StorageFileLocation DocumentData::videoPreloadLocation() const {
+	return hasRemoteLocation()
+		? StorageFileLocation(
+			_dc,
+			session().userId(),
+			MTP_inputDocumentFileLocation(
+				MTP_long(id),
+				MTP_long(_access),
+				MTP_bytes(_fileReference),
+				MTP_string()))
+		: StorageFileLocation();
 }
 
 auto DocumentData::createStreamingLoader(
@@ -1528,19 +1584,16 @@ bool DocumentData::isVideoFile() const {
 	return (type == VideoDocument);
 }
 
-TimeId DocumentData::getDuration() const {
-	if (const auto song = this->song()) {
-		return std::max(song->duration, 0);
-	} else if (const auto voice = this->voice()) {
-		return std::max(voice->duration, 0);
-	} else if (isAnimation() || isVideoFile()) {
-		return std::max(_duration, 0);
-	} else if (const auto sticker = this->sticker()) {
-		if (sticker->isWebm()) {
-			return std::max(_duration, 0);
-		}
-	}
-	return -1;
+bool DocumentData::isSilentVideo() const {
+	return _flags & Flag::SilentVideo;
+}
+
+crl::time DocumentData::duration() const {
+	return std::max(_duration, crl::time());
+}
+
+bool DocumentData::hasDuration() const {
+	return _duration >= 0;
 }
 
 bool DocumentData::isImage() const {
@@ -1604,6 +1657,19 @@ void DocumentData::setRemoteLocation(
 			}
 		}
 	}
+}
+
+void DocumentData::setStoryMedia(bool value) {
+	if (value) {
+		_flags |= Flag::StoryDocument;
+		setMaybeSupportsStreaming(true);
+	} else {
+		_flags &= ~Flag::StoryDocument;
+	}
+}
+
+bool DocumentData::storyMedia() const {
+	return (_flags & Flag::StoryDocument);
 }
 
 void DocumentData::setContentUrl(const QString &url) {

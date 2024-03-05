@@ -312,7 +312,7 @@ protected:
     /**
      * @internal
      */
-    KProcess(KProcessPrivate *d, QObject *parent);
+    KCOREADDONS_NO_EXPORT KProcess(KProcessPrivate *d, QObject *parent);
 
     /**
      * @internal
@@ -321,7 +321,7 @@ protected:
 
 private:
     // hide those
-#if QT_DEPRECATED_SINCE(5, 13) && QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#if QT_DEPRECATED_SINCE(5, 13)
     using QProcess::readChannelMode;
     using QProcess::setReadChannelMode;
 #endif

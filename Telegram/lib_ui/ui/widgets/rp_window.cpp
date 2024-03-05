@@ -54,6 +54,14 @@ rpl::producer<Platform::HitTestResult> RpWindow::systemButtonDown() const {
 	return _helper->systemButtonDown();
 }
 
+void RpWindow::overrideSystemButtonOver(Platform::HitTestResult button) {
+	_helper->overrideSystemButtonOver(button);
+}
+
+void RpWindow::overrideSystemButtonDown(Platform::HitTestResult button) {
+	_helper->overrideSystemButtonDown(button);
+}
+
 void RpWindow::setTitle(const QString &title) {
 	_helper->setTitle(title);
 }
@@ -101,6 +109,10 @@ void RpWindow::setBodyTitleArea(
 
 int RpWindow::manualRoundingRadius() const {
 	return _helper->manualRoundingRadius();
+}
+
+const style::TextStyle &RpWindow::titleTextStyle() const {
+	return _helper->titleTextStyle();
 }
 
 } // namespace Ui

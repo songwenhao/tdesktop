@@ -6,8 +6,10 @@
 //
 #include "webview/webview_embed.h"
 
-#include "webview/webview_interface.h"
+#include "webview/webview_data_stream.h"
 #include "webview/webview_dialog.h"
+#include "webview/webview_interface.h"
+#include "base/debug_log.h"
 #include "base/event_filter.h"
 #include "base/options.h"
 #include "base/invoke_queued.h"
@@ -17,6 +19,8 @@
 #include <QtWidgets/QWidget>
 #include <QtGui/QWindow>
 #include <QtCore/QJsonDocument>
+
+#include <charconv>
 
 namespace Webview {
 namespace {
@@ -39,8 +43,7 @@ namespace {
 base::options::toggle OptionWebviewDebugEnabled({
 	.id = kOptionWebviewDebugEnabled,
 	.name = "Enable webview inspecting",
-	.description = "Right click and choose Inspect in the webview windows.",
-	.scope = base::options::windows | base::options::linux,
+	.description = "Right click and choose Inspect in the webview windows. (on macOS launch Safari, open from Develop menu)",
 });
 
 } // namespace
@@ -48,21 +51,18 @@ base::options::toggle OptionWebviewDebugEnabled({
 const char kOptionWebviewDebugEnabled[] = "webview-debug-enabled";
 
 Window::Window(QWidget *parent, WindowConfig config)
-: _providesQWidget(ProvidesQWidget()) {
-	if (!_providesQWidget) {
-		_window.reset(CreateContainerWindow());
-	}
+: _window(CreateContainerWindow()) {
 	if (SupportsEmbedAfterCreate()) {
 		if (!createWebView(parent, config)) {
 			return;
 		}
-		if (!_providesQWidget && !_window) {
+		if (_webview->widget()) {
+			_widget.reset(_webview->widget());
+		} else if (!_window) {
 			_window.reset(CreateContainerWindow(_webview.get()));
 		}
 	}
-	if (_providesQWidget) {
-		_widget.reset(reinterpret_cast<QWidget*>(_webview->winId()));
-	} else {
+	if (!_widget) {
 		if (!_window) {
 			return;
 		}
@@ -76,13 +76,13 @@ Window::Window(QWidget *parent, WindowConfig config)
 	if (!createWebView(parent, config) || !finishWebviewEmbedding()) {
 		return;
 	}
-	_webview->resizeToWindow();
 	base::install_event_filter(_widget, [=](not_null<QEvent*> e) {
 		if (e->type() == QEvent::Resize || e->type() == QEvent::Move) {
 			InvokeQueued(_widget.get(), [=] { _webview->resizeToWindow(); });
 		}
 		return base::EventFilterResult::Continue;
 	});
+	_webview->resizeToWindow();
 	setDialogHandler(nullptr);
 }
 
@@ -91,13 +91,14 @@ Window::~Window() = default;
 bool Window::createWebView(QWidget *parent, const WindowConfig &config) {
 	if (!_webview) {
 		_webview = CreateInstance({
-			.window = _providesQWidget
-				? (void*)parent
-				: (_window ? (void*)_window->winId() : nullptr),
+			.parent = parent,
+			.window = _window ? (void*)_window->winId() : nullptr,
+			.opaqueBg = config.opaqueBg,
 			.messageHandler = messageHandler(),
 			.navigationStartHandler = navigationStartHandler(),
 			.navigationDoneHandler = navigationDoneHandler(),
 			.dialogHandler = dialogHandler(),
+			.dataRequestHandler = dataRequestHandler(),
 			.userDataPath = config.userDataPath.toStdString(),
 			.debug = OptionWebviewDebugEnabled.value(),
 		});
@@ -113,7 +114,7 @@ bool Window::createWebView(QWidget *parent, const WindowConfig &config) {
 bool Window::finishWebviewEmbedding() {
 	Expects(_webview != nullptr);
 	Expects(_widget != nullptr);
-	Expects(_providesQWidget || _window != nullptr);
+	Expects(_webview->widget() != nullptr || _window != nullptr);
 
 	if (_webview->finishEmbedding()) {
 		return true;
@@ -125,6 +126,7 @@ bool Window::finishWebviewEmbedding() {
 }
 
 void Window::updateTheme(
+		QColor opaqueBg,
 		QColor scrollBg,
 		QColor scrollBgOver,
 		QColor scrollBarBg,
@@ -132,6 +134,7 @@ void Window::updateTheme(
 	if (!_webview) {
 		return;
 	}
+#ifndef Q_OS_MAC
 	const auto wrap = [](QColor color) {
 		return u"rgba(%1, %2, %3, %4)"_q
 			.arg(color.red())
@@ -171,12 +174,20 @@ function() {
 		+ function
 		+ ", false);");
 	_webview->eval("(" + function + "());");
+#endif
+	_webview->setOpaqueBg(opaqueBg);
 }
 
 void Window::navigate(const QString &url) {
 	Expects(_webview != nullptr);
 
 	_webview->navigate(url.toStdString());
+}
+
+void Window::navigateToData(const QString &id) {
+	Expects(_webview != nullptr);
+
+	_webview->navigateToData(id.toStdString());
 }
 
 void Window::reload() {
@@ -195,6 +206,15 @@ void Window::eval(const QByteArray &js) {
 	Expects(_webview != nullptr);
 
 	_webview->eval(js.toStdString());
+}
+
+void Window::focus() {
+	Expects(_webview != nullptr);
+
+	if (_window) {
+		_window->requestActivate();
+	}
+	_webview->focus();
 }
 
 void Window::setMessageHandler(Fn<void(std::string)> handler) {
@@ -245,10 +265,16 @@ void Window::setDialogHandler(Fn<DialogResult(DialogArgs)> handler) {
 	_dialogHandler = handler ? handler : DefaultDialogHandler;
 }
 
+void Window::setDataRequestHandler(Fn<DataResult(DataRequest)> handler) {
+	_dataRequestHandler = std::move(handler);
+}
+
 Fn<bool(std::string,bool)> Window::navigationStartHandler() const {
 	return [=](std::string message, bool newWindow) {
 		const auto lower = QString::fromStdString(message).toLower();
-		if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+		if (!lower.startsWith("http://")
+			&& !lower.startsWith("https://")
+			&& !lower.startsWith("desktop-app-resource://")) {
 			return false;
 		}
 		auto result = true;
@@ -284,6 +310,62 @@ Fn<DialogResult(DialogArgs)> Window::dialogHandler() const {
 		}
 		return result;
 	};
+}
+
+Fn<DataResult(DataRequest)> Window::dataRequestHandler() const {
+	return [=](DataRequest request) {
+		return _dataRequestHandler
+			? _dataRequestHandler(std::move(request))
+			: DataResult::Failed;
+	};
+}
+
+void ParseRangeHeaderFor(DataRequest &request, std::string_view header) {
+	const auto unsupported = [&] {
+		LOG(("Unsupported range header: ")
+			+ QString::fromUtf8(header.data(), header.size()));
+	};
+	if (header.compare(0, 6, "bytes=")) {
+		return unsupported();
+	}
+	const auto range = std::string_view(header).substr(6);
+	const auto separator = range.find('-');
+	if (separator == range.npos) {
+		return unsupported();
+	}
+	const auto startFrom = range.data();
+	const auto startTill = startFrom + separator;
+	const auto finishFrom = startTill + 1;
+	const auto finishTill = startFrom + range.size();
+	if (finishTill > finishFrom) {
+		const auto done = std::from_chars(
+			finishFrom,
+			finishTill,
+			request.limit);
+		if (done.ec != std::errc() || done.ptr != finishTill) {
+			request.limit = 0;
+			return unsupported();
+		}
+		request.limit += 1; // 0-499 means first 500 bytes.
+	} else {
+		request.limit = -1;
+	}
+	if (startTill > startFrom) {
+		const auto done = std::from_chars(
+			startFrom,
+			startTill,
+			request.offset);
+		if (done.ec != std::errc() || done.ptr != startTill) {
+			request.offset = request.limit = 0;
+			return unsupported();
+		} else if (request.limit > 0) {
+			request.limit -= request.offset;
+			if (request.limit <= 0) {
+				request.offset = request.limit = 0;
+				return unsupported();
+			}
+		}
+	}
 }
 
 } // namespace Webview

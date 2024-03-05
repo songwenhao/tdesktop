@@ -37,7 +37,13 @@ enum class Error;
 
 namespace HistoryView {
 
+class Reply;
 class TranscribeButton;
+
+using TtlRoundPaintCallback = Fn<void(
+	QPainter&,
+	QRect,
+	const PaintContext &context)>;
 
 class Gif final : public File {
 public:
@@ -68,6 +74,9 @@ public:
 	}
 
 	TextForMimeData selectedText(TextSelection selection) const override;
+	SelectedQuote selectedQuote(TextSelection selection) const override;
+	TextSelection selectionFromQuote(
+		const SelectedQuote &quote) const override;
 
 	bool uploading() const override;
 
@@ -172,8 +181,8 @@ private:
 	[[nodiscard]] bool needInfoDisplay() const;
 	[[nodiscard]] bool needCornerStatusDisplay() const;
 	[[nodiscard]] int additionalWidth(
+		const Reply *reply,
 		const HistoryMessageVia *via,
-		const HistoryMessageReply *reply,
 		const HistoryMessageForwarded *forwarded) const;
 	[[nodiscard]] int additionalWidth() const;
 	[[nodiscard]] bool isUnwrapped() const;
@@ -208,7 +217,12 @@ private:
 		StateRequest request,
 		QPoint position) const;
 
+	void togglePollingStory(bool enabled) const;
+
+	TtlRoundPaintCallback _drawTtl;
+
 	const not_null<DocumentData*> _data;
+	const FullStoryId _storyId;
 	Ui::Text::String _caption;
 	std::unique_ptr<Streamed> _streamed;
 	const std::unique_ptr<MediaSpoiler> _spoiler;
@@ -219,8 +233,9 @@ private:
 	mutable QImage _thumbCache;
 	mutable QImage _roundingMask;
 	mutable std::optional<Ui::BubbleRounding> _thumbCacheRounding;
-	mutable bool _thumbCacheBlurred = false;
-	mutable bool _thumbIsEllipse = false;
+	mutable bool _thumbCacheBlurred : 1 = false;
+	mutable bool _thumbIsEllipse : 1 = false;
+	mutable bool _pollingStory : 1 = false;
 
 };
 

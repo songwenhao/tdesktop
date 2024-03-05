@@ -105,8 +105,6 @@ public:
 
 	[[nodiscard]] rpl::producer<> showSettingsRequested() const;
 
-	std::vector<details::Step*>* getIntroStepHistory();
-
 protected:
 	void paintEvent(QPaintEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;

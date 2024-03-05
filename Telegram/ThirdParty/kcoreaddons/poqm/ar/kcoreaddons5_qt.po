@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2014-06-28 15:38+0300\n"
-"PO-Revision-Date: 2022-11-01 12:28+0400\n"
+"PO-Revision-Date: 2022-12-22 09:02+0400\n"
 "Last-Translator: Zayed Al-Saidi <zayed.alsaidi@gmail.com>\n"
 "Language-Team: ar\n"
 "Language: ar\n"
@@ -17,47 +17,47 @@ msgstr ""
 "X-Generator: Lokalize 21.12.3\n"
 "X-Qt-Contexts: true\n"
 
-#: lib/io/kfilesystemtype.cpp:236
+#: lib/io/kfilesystemtype.cpp:243
 msgctxt "KFileSystemType|"
 msgid "NFS"
 msgstr "نظام ملفات الشبكة"
 
-#: lib/io/kfilesystemtype.cpp:238
+#: lib/io/kfilesystemtype.cpp:245
 msgctxt "KFileSystemType|"
 msgid "SMB"
 msgstr "سامبا"
 
-#: lib/io/kfilesystemtype.cpp:240
+#: lib/io/kfilesystemtype.cpp:247
 msgctxt "KFileSystemType|"
 msgid "FAT"
 msgstr "فات"
 
-#: lib/io/kfilesystemtype.cpp:242
+#: lib/io/kfilesystemtype.cpp:249
 msgctxt "KFileSystemType|"
 msgid "RAMFS"
 msgstr "RAMFS"
 
-#: lib/io/kfilesystemtype.cpp:244
+#: lib/io/kfilesystemtype.cpp:251
 msgctxt "KFileSystemType|"
 msgid "Other"
 msgstr "أخرى"
 
-#: lib/io/kfilesystemtype.cpp:246
+#: lib/io/kfilesystemtype.cpp:253
 msgctxt "KFileSystemType|"
 msgid "NTFS"
 msgstr "إن تي إف إس"
 
-#: lib/io/kfilesystemtype.cpp:248
+#: lib/io/kfilesystemtype.cpp:255
 msgctxt "KFileSystemType|"
 msgid "ExFAT"
 msgstr "إكس فات"
 
-#: lib/io/kfilesystemtype.cpp:250
+#: lib/io/kfilesystemtype.cpp:257
 msgctxt "KFileSystemType|"
 msgid "FUSE"
 msgstr "فيوز"
 
-#: lib/io/kfilesystemtype.cpp:252
+#: lib/io/kfilesystemtype.cpp:259
 msgctxt "KFileSystemType|"
 msgid "Unknown"
 msgstr "مجهول"
@@ -87,7 +87,7 @@ msgstr "GPL v2"
 #: lib/kaboutdata.cpp:318
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 2"
-msgstr "رخصة غنو العمومية إصدارة ٢"
+msgstr "رخصة غنو العمومية إصدارة 2"
 
 #: lib/kaboutdata.cpp:321
 msgctxt "KAboutLicense|@item license (short name)"
@@ -97,7 +97,7 @@ msgstr "LGPL v2"
 #: lib/kaboutdata.cpp:322
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2"
-msgstr "رخصة غنو العمومية الصغرى إصدارة ٢"
+msgstr "رخصة غنو العمومية الصغرى إصدارة 2"
 
 #: lib/kaboutdata.cpp:325
 msgctxt "KAboutLicense|@item license (short name)"
@@ -137,7 +137,7 @@ msgstr "GPL v3"
 #: lib/kaboutdata.cpp:338
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 3"
-msgstr "رخصة غنو العمومية إصدارة ٣"
+msgstr "رخصة غنو العمومية إصدارة 3"
 
 #: lib/kaboutdata.cpp:341
 msgctxt "KAboutLicense|@item license (short name)"
@@ -147,7 +147,7 @@ msgstr "LGPL v3"
 #: lib/kaboutdata.cpp:342
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 3"
-msgstr "رخصة غنو العمومية الصغرى إصدارة ٣"
+msgstr "رخصة غنو العمومية الصغرى إصدارة 3"
 
 #: lib/kaboutdata.cpp:345
 msgctxt "KAboutLicense|@item license (short name)"
@@ -157,7 +157,7 @@ msgstr "LGPL v2.1"
 #: lib/kaboutdata.cpp:346
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2.1"
-msgstr "رخصة غنو العمومية الصغرى إصدارة ٢٫١"
+msgstr "رخصة غنو العمومية الصغرى إصدارة 2٫1"
 
 #: lib/kaboutdata.cpp:350
 msgctxt "KAboutLicense|@item license"
@@ -177,13 +177,13 @@ msgid ""
 "internationalization visit <a href=\"https://l10n.kde.org\">https://l10n.kde."
 "org</a></p>"
 msgstr ""
-"<p>يعمل أفراد طاقم عربآيز على ترجمة واجهة كدي إلى اللغة العربية، وهذا بفضل "
+"<p>يعمل أفراد طاقم عربآيز على ترجمة واجهة كِيدِي إلى اللغة العربية، وهذا بفضل "
 "جهود مترجمين متطوّعين من كافة الدول العربية وغيرها.</p>\n"
-"<p>لمزيد من المعلومات عن ترجمة كدي إلى العربةي، زُر <a href=\"https://www."
+"<p>لمزيد من المعلومات عن ترجمة كِيدِي إلى العربةي، زُر <a href=\"https://www."
 "arabeyes.org\">الموقع الرسمي للفريق</a>. رجاءً أبلغ عن أخطاء الترجمة على "
 "العنوان الآتي: <a href=\"mailto:contact@arabeyes.org\">contact@arabeyes.org</"
 "a></p>\n"
-"<p>تُترجم كدي إلى لغات عديدة بفضل مختلف طواقم الترجمة من العالم بأسره.</p>\n"
+"<p>تُترجم كِيدِي إلى لغات عديدة بفضل مختلف طواقم الترجمة من العالم بأسره.</p>\n"
 "<p>لمزيد من المعلومات زُر <a  href=\"https://l10n.kde.org\">https://l10n.kde."
 "org</a>.</p>"
 
@@ -809,14 +809,21 @@ msgctxt "KFormat|"
 msgid "Just now"
 msgstr "الآن"
 
-#: lib/util/kformatprivate.cpp:512
+#. @item:intext %1 is a whole number
+#: lib/util/kformatprivate.cpp:515
 #, qt-format
 msgctxt "KFormat|"
-msgid "%1 minutes ago"
-msgstr "قبل %1 دقيقة"
+msgid "%n minute(s) ago"
+msgid_plural "%n minute(s) ago"
+msgstr[0] "قبل %n دقيقة"
+msgstr[1] "قبل دقيقة واحدة"
+msgstr[2] "قبل دقيقتين"
+msgstr[3] "قبل %n دقائق"
+msgstr[4] "قبل %n دقيقة"
+msgstr[5] "قبل %n دقيقة"
 
 #. relative datetime with %1 result of QLocale.toString(date, format) or formatRelativeDate and %2 result of QLocale.toString(time, timeformatType) If this does not fit the grammar of your language please contact the i18n team to solve the problem
-#: lib/util/kformatprivate.cpp:528
+#: lib/util/kformatprivate.cpp:531
 #, qt-format
 msgctxt "KFormat|"
 msgid "%1 at %2"

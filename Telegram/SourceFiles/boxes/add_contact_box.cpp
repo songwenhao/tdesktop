@@ -11,12 +11,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/random.h"
 #include "ui/boxes/confirm_box.h"
-#include "boxes/peer_list_controllers.h"
+#include "boxes/abstract_box.h"
 #include "boxes/premium_limits_box.h"
 #include "boxes/peers/add_participants_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_participant_box.h"
-#include "boxes/peers/edit_participants_box.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
@@ -26,33 +25,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_ttl.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
 #include "ui/toast/toast.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/text/format_values.h"
-#include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
-#include "ui/unread_badge.h"
-#include "ui/ui_utility.h"
 #include "ui/painter.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
-#include "data/data_cloud_file.h"
 #include "apiwrap.h"
 #include "api/api_invite_links.h"
 #include "api/api_peer_photo.h"
+#include "api/api_self_destruct.h"
 #include "main/main_session.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
-#include "styles/style_boxes.h"
-#include "styles/style_dialogs.h"
-#include "styles/style_widgets.h"
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
@@ -112,7 +104,7 @@ void ChatCreateDone(
 			if (done) {
 				done(chat);
 			} else {
-				const auto show = std::make_shared<Window::Show>(navigation);
+				const auto show = navigation->uiShow();
 				navigation->showPeerHistory(chat);
 				ChatInviteForbidden(
 					show,
@@ -141,7 +133,7 @@ void MustBePublicFailed(
 	const auto text = channel->isMegagroup()
 		? "Can't create a public group :("
 		: "Can't create a public channel :(";
-	Ui::Toast::Show(Window::Show(navigation).toastParent(), text);
+	navigation->showToast(text);
 	MustBePublicDestroy(channel);
 }
 
@@ -297,8 +289,11 @@ void AddContactBox::prepare() {
 		: tr::lng_enter_contact_data());
 	updateButtons();
 
-	connect(_first, &Ui::InputField::submitted, [=] { submit(); });
-	connect(_last, &Ui::InputField::submitted, [=] { submit(); });
+	const auto submitted = [=] { submit(); };
+	_first->submits(
+	) | rpl::start_with_next(submitted, _first->lifetime());
+	_last->submits(
+	) | rpl::start_with_next(submitted, _last->lifetime());
 	connect(_phone, &Ui::PhoneInput::submitted, [=] { submit(); });
 
 	setDimensions(
@@ -567,23 +562,24 @@ void GroupInfoBox::prepare() {
 		_description->setSubmitSettings(
 			Core::App().settings().sendSubmitWay());
 
-		connect(_description, &Ui::InputField::resized, [=] {
+		_description->heightChanges(
+		) | rpl::start_with_next([=] {
 			descriptionResized();
-		});
-		connect(_description, &Ui::InputField::submitted, [=] {
-			submit();
-		});
-		connect(_description, &Ui::InputField::cancelled, [=] {
+		}, _description->lifetime());
+		_description->submits(
+		) | rpl::start_with_next([=] { submit(); }, _description->lifetime());
+		_description->cancelled(
+		) | rpl::start_with_next([=] {
 			closeBox();
-		});
+		}, _description->lifetime());
 
 		Ui::Emoji::SuggestionsController::Init(
 			getDelegate()->outerContainer(),
 			_description,
 			&_navigation->session());
 	}
-
-	connect(_title, &Ui::InputField::submitted, [=] { submitName(); });
+	_title->submits(
+	) | rpl::start_with_next([=] { submitName(); }, _title->lifetime());
 
 	addButton(
 		((_type != Type::Group || _canAddBot)
@@ -593,6 +589,8 @@ void GroupInfoBox::prepare() {
 	addButton(tr::lng_cancel(), [this] { closeBox(); });
 
 	if (_type == Type::Group) {
+		_navigation->session().api().selfDestruct().reload();
+
 		const auto top = addTopButton(st::infoTopBarMenu);
 		const auto menu =
 			top->lifetime().make_state<base::unique_qptr<Ui::PopupMenu>>();
@@ -601,21 +599,21 @@ void GroupInfoBox::prepare() {
 				top,
 				st::popupMenuWithIcons);
 
+			const auto ttl = ttlPeriod();
 			const auto text = tr::lng_manage_messages_ttl_menu(tr::now)
-				+ (_ttlPeriod
-					? ('\t' + Ui::FormatTTLTiny(_ttlPeriod))
-					: QString());
+				+ (ttl ? ('\t' + Ui::FormatTTLTiny(ttl)) : QString());
 			(*menu)->addAction(
 				text,
-				[=, show = std::make_shared<Ui::BoxShow>(this)] {
+				[=, show = uiShow()] {
 					show->showBox(Box(TTLMenu::TTLBox, TTLMenu::Args{
 						.show = show,
-						.startTtl = _ttlPeriod,
+						.startTtl = ttlPeriod(),
 						.about = nullptr,
 						.callback = crl::guard(this, [=](
 								TimeId t,
 								Fn<void()> close) {
 							_ttlPeriod = t;
+							_ttlPeriodOverridden = true;
 							close();
 						}),
 					}));
@@ -681,6 +679,13 @@ void GroupInfoBox::submitName() {
 	}
 }
 
+TimeId GroupInfoBox::ttlPeriod() const {
+	return _ttlPeriodOverridden
+		? _ttlPeriod
+		: _navigation->session().api().selfDestruct()
+			.periodDefaultHistoryTTLCurrent();
+}
+
 void GroupInfoBox::createGroup(
 		QPointer<Ui::BoxContent> selectUsersBox,
 		const QString &title,
@@ -699,15 +704,13 @@ void GroupInfoBox::createGroup(
 		}
 	}
 	_creationRequestId = _api.request(MTPmessages_CreateChat(
-		MTP_flags(_ttlPeriod
-			? MTPmessages_CreateChat::Flag::f_ttl_period
-			: MTPmessages_CreateChat::Flags(0)),
+		MTP_flags(MTPmessages_CreateChat::Flag::f_ttl_period),
 		MTP_vector<TLUsers>(inputs),
 		MTP_string(title),
-		MTP_int(_ttlPeriod)
+		MTP_int(ttlPeriod())
 	)).done([=](const MTPUpdates &result) {
 		auto image = _photo->takeResultImage();
-		const auto period = _ttlPeriod;
+		const auto period = ttlPeriod();
 		const auto navigation = _navigation;
 		const auto done = _done;
 
@@ -727,19 +730,14 @@ void GroupInfoBox::createGroup(
 			}
 		} else if (type == u"USERS_TOO_FEW"_q) {
 			controller->show(
-				Ui::MakeInformBox(tr::lng_cant_invite_privacy()),
-				Ui::LayerOption::KeepOther);
+				Ui::MakeInformBox(tr::lng_cant_invite_privacy()));
 		} else if (type == u"PEER_FLOOD"_q) {
-			controller->show(
-				Ui::MakeInformBox(
-					PeerFloodErrorText(
-						&_navigation->session(),
-						PeerFloodType::InviteGroup)),
-				Ui::LayerOption::KeepOther);
+			controller->show(Ui::MakeInformBox(
+				PeerFloodErrorText(
+					&_navigation->session(),
+					PeerFloodType::InviteGroup)));
 		} else if (type == u"USER_RESTRICTED"_q) {
-			controller->show(
-				Ui::MakeInformBox(tr::lng_cant_do_this()),
-				Ui::LayerOption::KeepOther);
+			controller->show(Ui::MakeInformBox(tr::lng_cant_do_this()));
 		}
 	}).send();
 }
@@ -798,16 +796,17 @@ void GroupInfoBox::createChannel(
 			? Flag::f_megagroup
 			: Flag::f_broadcast)
 		| ((_type == Type::Forum) ? Flag::f_forum : Flag())
-		| ((_type == Type::Megagroup && _ttlPeriod)
+		| ((_type == Type::Megagroup)
 			? MTPchannels_CreateChannel::Flag::f_ttl_period
 			: MTPchannels_CreateChannel::Flags(0));
+	const auto ttl = ttlPeriod();
 	_creationRequestId = _api.request(MTPchannels_CreateChannel(
 		MTP_flags(flags),
 		MTP_string(title),
 		MTP_string(description),
 		MTPInputGeoPoint(), // geo_point
 		MTPstring(), // address
-		MTP_int((_type == Type::Megagroup) ? _ttlPeriod : 0)
+		MTP_int((_type == Type::Megagroup) ? ttl : 0)
 	)).done([=](const MTPUpdates &result) {
 		_navigation->session().api().applyUpdates(result);
 
@@ -840,8 +839,8 @@ void GroupInfoBox::createChannel(
 						channel,
 						{ std::move(image) });
 				}
-				if (_ttlPeriod && channel->isMegagroup()) {
-					channel->setMessagesTTL(_ttlPeriod);
+				if (ttl && channel->isMegagroup()) {
+					channel->setMessagesTTL(ttl);
 				}
 				channel->session().api().requestFullPeer(channel);
 				_createdChannel = channel;
@@ -1220,9 +1219,7 @@ void SetupChannelBox::mousePressEvent(QMouseEvent *e) {
 		return;
 	} else if (!_channel->inviteLink().isEmpty()) {
 		QGuiApplication::clipboard()->setText(_channel->inviteLink());
-		Ui::Toast::Show(
-			Ui::BoxShow(this).toastParent(),
-			tr::lng_create_channel_link_copied(tr::now));
+		showToast(tr::lng_create_channel_link_copied(tr::now));
 	} else if (_channel->isFullLoaded() && !_creatingInviteLink) {
 		_creatingInviteLink = true;
 		_channel->session().api().inviteLinks().create(_channel);
@@ -1456,12 +1453,10 @@ void SetupChannelBox::showRevokePublicLinkBoxForEdit() {
 	const auto callback = [=] {
 		*revoked = true;
 		navigation->parentController()->show(
-			Box<SetupChannelBox>(navigation, channel, mustBePublic, done),
-			Ui::LayerOption::KeepOther);
+			Box<SetupChannelBox>(navigation, channel, mustBePublic, done));
 	};
 	const auto revoker = navigation->parentController()->show(
-		Box(PublicLinksLimitBox, navigation, callback),
-		Ui::LayerOption::KeepOther);
+		Box(PublicLinksLimitBox, navigation, callback));
 	const auto session = &navigation->session();
 	revoker->boxClosing(
 	) | rpl::start_with_next(crl::guard(session, [=] {
@@ -1531,20 +1526,22 @@ void EditNameBox::prepare() {
 	_first->setMaxLength(Ui::EditPeer::kMaxUserFirstLastName);
 	_last->setMaxLength(Ui::EditPeer::kMaxUserFirstLastName);
 
-	connect(_first, &Ui::InputField::submitted, [=] { submit(); });
-	connect(_last, &Ui::InputField::submitted, [=] { submit(); });
+	_first->submits(
+	) | rpl::start_with_next([=] { submit(); }, _first->lifetime());
+	_last->submits(
+	) | rpl::start_with_next([=] { submit(); }, _last->lifetime());
 
 	_first->customTab(true);
 	_last->customTab(true);
 
-	QObject::connect(
-		_first,
-		&Ui::InputField::tabbed,
-		[=] { _last->setFocus(); });
-	QObject::connect(
-		_last,
-		&Ui::InputField::tabbed,
-		[=] { _first->setFocus(); });
+	_first->tabbed(
+	) | rpl::start_with_next([=] {
+		_last->setFocus();
+	}, _first->lifetime());
+	_last->tabbed(
+	) | rpl::start_with_next([=] {
+		_first->setFocus();
+	}, _last->lifetime());
 }
 
 void EditNameBox::setInnerFocus() {

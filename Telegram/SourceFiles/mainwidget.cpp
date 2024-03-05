@@ -9,21 +9,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_updates.h"
 #include "api/api_views.h"
-#include "data/data_photo.h"
-#include "data/data_document.h"
 #include "data/data_document_media.h"
 #include "data/data_document_resolver.h"
 #include "data/data_forum_topic.h"
-#include "data/data_wall_paper.h"
 #include "data/data_web_page.h"
 #include "data/data_game.h"
 #include "data/data_peer_values.h"
-#include "data/data_drafts.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
-#include "data/data_media_types.h"
 #include "data/data_folder.h"
-#include "data/data_forum_topic.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_user.h"
@@ -35,21 +29,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/chat_theme.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/shadow.h"
-#include "ui/toasts/common_toasts.h"
 #include "ui/widgets/dropdown_menu.h"
-#include "ui/image/image.h"
 #include "ui/focus_persister.h"
 #include "ui/resize_area.h"
-#include "ui/text/text_options.h"
-#include "ui/emoji_config.h"
-#include "ui/ui_utility.h"
-#include "window/section_memento.h"
-#include "window/section_widget.h"
 #include "window/window_connecting_widget.h"
 #include "window/window_top_bar_wrap.h"
 #include "window/notifications_manager.h"
 #include "window/window_slide_animation.h"
-#include "window/window_session_controller.h"
 #include "window/window_history_hider.h"
 #include "window/window_controller.h"
 #include "window/window_peer_menu.h"
@@ -57,27 +43,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/tabbed_selector.h" // TabbedSelector::refreshStickers
 #include "chat_helpers/message_field.h"
 #include "info/info_memento.h"
-#include "info/info_controller.h"
 #include "apiwrap.h"
 #include "dialogs/dialogs_widget.h"
-#include "dialogs/dialogs_key.h"
-#include "history/history.h"
 #include "history/history_widget.h"
-#include "history/history_item.h"
 #include "history/history_item_helpers.h" // GetErrorTextForSending.
 #include "history/view/media/history_view_media.h"
 #include "history/view/history_view_service_message.h"
-#include "history/view/history_view_element.h"
+#include "history/view/history_view_sublist_section.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_cloud_manager.h"
-#include "boxes/add_contact_box.h"
-#include "mainwindow.h"
 #include "inline_bots/inline_bot_layout_item.h"
 #include "ui/boxes/confirm_box.h"
-#include "boxes/sticker_set_box.h"
 #include "boxes/peer_list_controllers.h"
-#include "boxes/download_path_box.h"
-#include "boxes/connection_box.h"
 #include "storage/storage_account.h"
 #include "main/main_domain.h"
 #include "media/audio/media_audio.h"
@@ -85,18 +62,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_widget.h"
 #include "media/player/media_player_dropdown.h"
 #include "media/player/media_player_instance.h"
-#include "media/player/media_player_float.h"
 #include "base/qthelp_regex.h"
-#include "base/qthelp_url.h"
-#include "base/flat_set.h"
 #include "mtproto/mtproto_dc_options.h"
-#include "core/file_utilities.h"
 #include "core/update_checker.h"
 #include "core/shortcuts.h"
 #include "core/application.h"
 #include "core/changelogs.h"
 #include "core/mime_type.h"
-#include "base/unixtime.h"
 #include "calls/calls_call.h"
 #include "calls/calls_instance.h"
 #include "calls/calls_top_bar.h"
@@ -109,12 +81,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "main/main_account.h"
 #include "support/support_helper.h"
-#include "storage/storage_facade.h"
-#include "storage/storage_shared_media.h"
 #include "storage/storage_user_photos.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_chat.h"
-#include "styles/style_boxes.h"
 #include "styles/style_window.h"
 
 #include <QtCore/QCoreApplication>
@@ -597,16 +566,15 @@ bool MainWidget::shareUrl(
 	const auto cursor = MessageCursor{
 		int(url.size()) + 1,
 		int(url.size()) + 1 + int(text.size()),
-		QFIXED_MAX
+		Ui::kQFixedMax
 	};
 	const auto history = thread->owningHistory();
 	const auto topicRootId = thread->topicRootId();
 	history->setLocalDraft(std::make_unique<Data::Draft>(
 		textWithTags,
-		0, // replyTo
-		topicRootId,
+		FullReplyTo{ .topicRootId = topicRootId },
 		cursor,
-		Data::PreviewState::Allowed));
+		Data::WebPageDraft()));
 	history->clearLocalEditDraft(topicRootId);
 	history->session().changes().entryUpdated(
 		thread,
@@ -747,8 +715,8 @@ void MainWidget::sendBotCommand(Bot::SendCommandRequest request) {
 	}
 }
 
-void MainWidget::hideSingleUseKeyboard(PeerData *peer, MsgId replyTo) {
-	_history->hideSingleUseKeyboard(peer, replyTo);
+void MainWidget::hideSingleUseKeyboard(FullMsgId replyToId) {
+	_history->hideSingleUseKeyboard(replyToId);
 }
 
 void MainWidget::searchMessages(const QString &query, Dialogs::Key inChat) {
@@ -760,24 +728,23 @@ void MainWidget::searchMessages(const QString &query, Dialogs::Key inChat) {
 			_dialogs->setInnerFocus();
 		}
 	} else {
-		const auto searchIn = [&](not_null<Window::Controller*> window) {
-			if (const auto controller = window->sessionController()) {
-				controller->content()->searchMessages(query, inChat);
-				controller->widget()->activate();
-			}
-		};
-		const auto account = &session().account();
-		if (const auto peer = inChat.peer()) {
-			if (peer == controller()->singlePeer()) {
-				if (_history->peer() != peer) {
-					controller()->showPeerHistory(peer);
+		if (const auto sublist = inChat.sublist()) {
+			controller()->showSection(
+				std::make_shared<HistoryView::SublistMemento>(sublist));
+		} else if (!Data::SearchTagsFromQuery(query).empty()) {
+			inChat = controller()->session().data().history(
+				controller()->session().user());
+		}
+		if ((!_mainSection
+			|| !_mainSection->searchInChatEmbedded(inChat, query))
+			&& !_history->searchInChatEmbedded(inChat, query)) {
+			const auto account = &session().account();
+			if (const auto window = Core::App().windowFor(account)) {
+				if (const auto controller = window->sessionController()) {
+					controller->content()->searchMessages(query, inChat);
+					controller->widget()->activate();
 				}
-				_history->searchInChatEmbedded(query);
-			} else if (const auto window = Core::App().windowFor(peer)) {
-				searchIn(window);
 			}
-		} else if (const auto window = Core::App().windowFor(account)) {
-			searchIn(window);
 		}
 	}
 }
@@ -785,13 +752,19 @@ void MainWidget::searchMessages(const QString &query, Dialogs::Key inChat) {
 void MainWidget::handleAudioUpdate(const Media::Player::TrackState &state) {
 	using State = Media::Player::State;
 	const auto document = state.id.audio();
+	const auto item = session().data().message(state.id.contextId());
 	if (!Media::Player::IsStoppedOrStopping(state.state)) {
-		createPlayer();
+		const auto ttlSeconds = item
+			&& item->media()
+			&& item->media()->ttlSeconds();
+		if (!ttlSeconds) {
+			createPlayer();
+		}
 	} else if (state.state == State::StoppedAtStart) {
 		Media::Player::instance()->stopAndClose();
 	}
 
-	if (const auto item = session().data().message(state.id.contextId())) {
+	if (item) {
 		session().data().requestItemRepaint(item);
 	}
 	if (document) {
@@ -941,7 +914,7 @@ void MainWidget::setCurrentGroupCall(Calls::GroupCall *call) {
 void MainWidget::createCallTopBar() {
 	Expects(_currentCall != nullptr || _currentGroupCall != nullptr);
 
-	const auto show = std::make_shared<Window::Show>(controller());
+	const auto show = controller()->uiShow();
 	_callTopBar.create(
 		this,
 		(_currentCall
@@ -1221,18 +1194,17 @@ void MainWidget::showChooseReportMessages(
 		peer,
 		SectionShow::Way::Forward,
 		ShowForChooseMessagesMsgId);
-	Ui::ShowMultilineToast({
-		.parentOverride = Window::Show(controller()).toastParent(),
-		.text = { tr::lng_report_please_select_messages(tr::now) },
-	});
+	controller()->showToast(tr::lng_report_please_select_messages(tr::now));
 }
 
 void MainWidget::clearChooseReportMessages() {
 	_history->setChooseReportMessagesDetails({}, nullptr);
 }
 
-void MainWidget::toggleChooseChatTheme(not_null<PeerData*> peer) {
-	_history->toggleChooseChatTheme(peer);
+void MainWidget::toggleChooseChatTheme(
+		not_null<PeerData*> peer,
+		std::optional<bool> show) {
+	_history->toggleChooseChatTheme(peer, show);
 }
 
 bool MainWidget::showHistoryInDifferentWindow(
@@ -1406,7 +1378,7 @@ void MainWidget::showHistory(
 
 	if (!back && (way != Way::ClearStack)) {
 		// This may modify the current section, for example remove its contents.
-		saveSectionInStack();
+		saveSectionInStack(params);
 	}
 
 	if (_history->peer()
@@ -1414,7 +1386,11 @@ void MainWidget::showHistory(
 		&& way != Way::Forward) {
 		clearBotStartToken(_history->peer());
 	}
-	_history->showHistory(peerId, showAtMsgId);
+	_history->showHistory(
+		peerId,
+		showAtMsgId,
+		params.highlightPart,
+		params.highlightPartOffsetHint);
 	if (alreadyThatPeer && params.reapplyLocalDraft) {
 		_history->applyDraft(HistoryWidget::FieldHistoryAction::NewEntry);
 	}
@@ -1524,13 +1500,23 @@ Ui::ChatTheme *MainWidget::customChatTheme() const {
 	return _history->customChatTheme();
 }
 
-void MainWidget::saveSectionInStack() {
+bool MainWidget::saveSectionInStack(
+		const SectionShow &params,
+		Window::SectionWidget *newMainSection) {
 	if (_mainSection) {
 		if (auto memento = _mainSection->createMemento()) {
+			if (params.dropSameFromStack
+				&& newMainSection
+				&& newMainSection->sameTypeAs(memento.get())) {
+				// When choosing saved sublist we want to save the original
+				// "Saved Messages" in the stack, but don't save every
+				// sublist in a new stack entry when clicking them through.
+				return false;
+			}
 			_stack.push_back(std::make_unique<StackItemSection>(
 				std::move(memento)));
 		} else {
-			return;
+			return false;
 		}
 	} else if (const auto history = _history->history()) {
 		_stack.push_back(std::make_unique<StackItemHistory>(
@@ -1538,7 +1524,9 @@ void MainWidget::saveSectionInStack() {
 			_history->msgId(),
 			_history->replyReturns()));
 	} else {
-		return;
+		// We pretend that we "saved" the chats list state in stack,
+		// so that we do animate a transition from chats list to a section.
+		return true;
 	}
 	const auto raw = _stack.back().get();
 	raw->setThirdSectionWeak(_thirdSection.data());
@@ -1551,6 +1539,7 @@ void MainWidget::saveSectionInStack() {
 			}
 		}
 	}, raw->lifetime());
+	return true;
 }
 
 void MainWidget::showSection(
@@ -1753,7 +1742,11 @@ void MainWidget::showNewSection(
 
 	if (saveInStack) {
 		// This may modify the current section, for example remove its contents.
-		saveSectionInStack();
+		if (!saveSectionInStack(params, newMainSection)) {
+			saveInStack = false;
+			animatedShow = false;
+			animationParams = Window::SectionSlideParams();
+		}
 	}
 	auto &settingSection = newThirdSection
 		? _thirdSection
@@ -1775,7 +1768,7 @@ void MainWidget::showNewSection(
 	} else {
 		_mainSection = std::move(newMainSection);
 		_history->finishAnimating();
-		_history->showHistory(0, 0);
+		_history->showHistory(PeerId(), MsgId());
 
 		if (const auto entry = _mainSection->activeChat(); entry.key) {
 			_controller->setActiveChatEntry(entry);
@@ -1928,7 +1921,7 @@ void MainWidget::showBackFromStack(
 
 void MainWidget::orderWidgets() {
 	if (_dialogs) {
-		_dialogs->raise();
+		_dialogs->raiseWithTooltip();
 	}
 	if (_player) {
 		_player->raise();
@@ -2469,6 +2462,10 @@ auto MainWidget::thirdSectionForCurrentMainSection(
 		return std::make_shared<Info::Memento>(
 			peer,
 			Info::Memento::DefaultSection(peer));
+	} else if (const auto sublist = key.sublist()) {
+		return std::make_shared<Info::Memento>(
+			session().user(),
+			Info::Memento::DefaultSection(session().user()));
 	}
 	Unexpected("Key in MainWidget::thirdSectionForCurrentMainSection().");
 }
@@ -2697,10 +2694,6 @@ void MainWidget::updateWindowAdaptiveLayout() {
 
 int MainWidget::backgroundFromY() const {
 	return -getMainSectionTop();
-}
-
-void MainWidget::searchInChat(Dialogs::Key chat) {
-	searchMessages(QString(), chat);
 }
 
 bool MainWidget::contentOverlapped(const QRect &globalRect) {

@@ -40,7 +40,7 @@ constexpr auto kRequestTimeLimit = 60 * crl::time(1000);
 }
 
 [[nodiscard]] bool HasScheduledDate(not_null<HistoryItem*> item) {
-	return (item->date() != ScheduledMessages::kScheduledUntilOnlineTimestamp)
+	return (item->date() != Api::kScheduledUntilOnlineTimestamp)
 		&& (item->date() > base::unixtime::now());
 }
 
@@ -67,7 +67,9 @@ constexpr auto kRequestTimeLimit = 60 * crl::time(1000);
 			MTP_flags(data.vflags().v | MTPDmessage::Flag::f_from_scheduled),
 			data.vid(),
 			data.vfrom_id() ? *data.vfrom_id() : MTPPeer(),
+			MTPint(), // from_boosts_applied
 			data.vpeer_id(),
+			data.vsaved_peer_id() ? *data.vsaved_peer_id() : MTPPeer(),
 			data.vfwd_from() ? *data.vfwd_from() : MTPMessageFwdHeader(),
 			MTP_long(data.vvia_bot_id().value_or_empty()),
 			data.vreply_to() ? *data.vreply_to() : MTPMessageReplyHeader(),
@@ -192,12 +194,13 @@ void ScheduledMessages::sendNowSimpleMessage(
 
 	const auto history = local->history();
 	auto action = Api::SendAction(history);
-	action.replyTo = local->replyToId();
+	action.replyTo = local->replyTo();
 	const auto replyHeader = NewMessageReplyHeader(action);
-	const auto localFlags = NewMessageFlags(history->peer);
+	const auto localFlags = NewMessageFlags(history->peer)
+		& ~MessageFlag::BeingSent;
 	const auto flags = MTPDmessage::Flag::f_entities
 		| MTPDmessage::Flag::f_from_id
-		| (local->replyToId()
+		| (action.replyTo
 			? MTPDmessage::Flag::f_reply_to
 			: MTPDmessage::Flag(0))
 		| (update.vttl_period()
@@ -214,7 +217,9 @@ void ScheduledMessages::sendNowSimpleMessage(
 			MTP_flags(flags),
 			update.vid(),
 			peerToMTP(local->from()->id),
+			MTPint(), // from_boosts_applied
 			peerToMTP(history->peer->id),
+			MTPPeer(), // saved_peer_id
 			MTPMessageFwdHeader(),
 			MTPlong(), // via_bot_id
 			replyHeader,
@@ -466,16 +471,17 @@ HistoryItem *ScheduledMessages::append(
 			// probably this message was edited.
 			if (data.is_edit_hide()) {
 				existing->applyEdition(HistoryMessageEdition(_session, data));
+			} else {
+				existing->updateSentContent({
+					qs(data.vmessage()),
+					Api::EntitiesFromMTP(
+						_session,
+						data.ventities().value_or_empty())
+				}, data.vmedia());
+				existing->updateReplyMarkup(
+					HistoryMessageMarkupData(data.vreply_markup()));
+				existing->updateForwardedInfo(data.vfwd_from());
 			}
-			existing->updateSentContent({
-				qs(data.vmessage()),
-				Api::EntitiesFromMTP(
-					_session,
-					data.ventities().value_or_empty())
-			}, data.vmedia());
-			existing->updateReplyMarkup(
-				HistoryMessageMarkupData(data.vreply_markup()));
-			existing->updateForwardedInfo(data.vfwd_from());
 			existing->updateDate(data.vdate().v);
 			history->owner().requestItemTextRefresh(existing);
 		}, [&](const auto &data) {});

@@ -1,6 +1,6 @@
 project('wayland-protocols',
-	version: '1.25',
-	meson_version: '>= 0.54.0',
+	version: '1.31',
+	meson_version: '>= 0.55.0',
 	license: 'MIT/Expat',
 )
 
@@ -36,9 +36,15 @@ unstable_protocols = {
 }
 
 staging_protocols = {
-	'xdg-activation': ['v1'],
+	'content-type': ['v1'],
 	'drm-lease': ['v1'],
+	'ext-idle-notify': ['v1'],
 	'ext-session-lock': ['v1'],
+	'fractional-scale': ['v1'],
+	'single-pixel-buffer': ['v1'],
+	'tearing-control': ['v1'],
+	'xdg-activation': ['v1'],
+	'xwayland-shell': ['v1'],
 }
 
 protocol_files = []

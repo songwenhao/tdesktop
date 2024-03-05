@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Data {
 
 using FileOriginMessage = FullMsgId;
+using FileOriginStory = FullStoryId;
 
 struct FileOriginUserPhoto {
 	FileOriginUserPhoto(UserId userId, PhotoId photoId)
@@ -132,7 +133,8 @@ struct FileOrigin {
 		FileOriginWallpaper,
 		FileOriginTheme,
 		FileOriginRingtones,
-		FileOriginPremiumPreviews>;
+		FileOriginPremiumPreviews,
+		FileOriginStory>;
 
 	FileOrigin() = default;
 	FileOrigin(FileOriginMessage data) : data(data) {
@@ -154,6 +156,8 @@ struct FileOrigin {
 	FileOrigin(FileOriginRingtones data) : data(data) {
 	}
 	FileOrigin(FileOriginPremiumPreviews data) : data(data) {
+	}
+	FileOrigin(FileOriginStory data) : data(data) {
 	}
 
 	explicit operator bool() const {
@@ -204,6 +208,7 @@ UpdatedFileReferences GetFileReferences(const MTPTheme &data);
 UpdatedFileReferences GetFileReferences(
 	const MTPaccount_SavedRingtones &data);
 UpdatedFileReferences GetFileReferences(const MTPhelp_PremiumPromo &data);
+UpdatedFileReferences GetFileReferences(const MTPstories_Stories &data);
 
 // Admin Log Event.
 UpdatedFileReferences GetFileReferences(const MTPMessageMedia &data);

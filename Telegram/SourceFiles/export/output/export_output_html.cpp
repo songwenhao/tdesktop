@@ -25,7 +25,7 @@ constexpr auto kPersonalUserpicSize = 90;
 constexpr auto kEntryUserpicSize = 48;
 constexpr auto kServiceMessagePhotoSize = 60;
 constexpr auto kHistoryUserpicSize = 42;
-constexpr auto kSavedMessagesColorIndex = 3;
+constexpr auto kSavedMessagesColorIndex = uint8(3);
 constexpr auto kJoinWithinSeconds = 900;
 constexpr auto kPhotoMaxWidth = 520;
 constexpr auto kPhotoMaxHeight = 520;
@@ -35,11 +35,23 @@ constexpr auto kStickerMaxWidth = 384;
 constexpr auto kStickerMaxHeight = 384;
 constexpr auto kStickerMinWidth = 80;
 constexpr auto kStickerMinHeight = 80;
+constexpr auto kStoryThumbWidth = 45;
+constexpr auto kStoryThumbHeight = 80;
+
+constexpr auto kChatsPriority = 0;
+constexpr auto kContactsPriority = 2;
+constexpr auto kFrequentContactsPriority = 3;
+constexpr auto kUserpicsPriority = 4;
+constexpr auto kStoriesPriority = 5;
+constexpr auto kSessionsPriority = 6;
+constexpr auto kWebSessionsPriority = 7;
+constexpr auto kOtherPriority = 8;
 
 const auto kLineBreak = QByteArrayLiteral("<br>");
 
 using Context = details::HtmlContext;
 using UserpicData = details::UserpicData;
+using StoryData = details::StoryData;
 using PeersMap = details::PeersMap;
 using MediaData = details::MediaData;
 
@@ -339,12 +351,18 @@ QByteArray FormatTimeText(TimeId date) {
 namespace details {
 
 struct UserpicData {
-	int colorIndex = 0;
+	uint8 colorIndex = 0;
 	int pixelSize = 0;
 	QString imageLink;
 	QString largeLink;
 	QByteArray firstName;
 	QByteArray lastName;
+	QByteArray tooltip;
+};
+
+struct StoryData {
+	QString imageLink;
+	QString largeLink;
 };
 
 class PeersMap {
@@ -503,6 +521,14 @@ public:
 		const QByteArray &details,
 		const QByteArray &info,
 		const QString &link = QString());
+	[[nodiscard]] QByteArray pushStoriesListEntry(
+		const StoryData &story,
+		const QByteArray &name,
+		const QByteArrayList &details,
+		const QByteArray &info,
+		const std::vector<Data::TextPart> &caption,
+		const QString &internalLinksDomain,
+		const QString &link = QString());
 	[[nodiscard]] QByteArray pushSessionListEntry(
 		int apiId,
 		const QByteArray &name,
@@ -586,6 +612,9 @@ private:
 		const Data::Photo &data,
 		const QString &basePath);
 	[[nodiscard]] QByteArray pushPoll(const Data::Poll &data);
+	[[nodiscard]] QByteArray pushGiveaway(
+		const PeersMap &peers,
+		const Data::GiveawayStart &data);
 
 	File _file;
 	QByteArray _composedStart;
@@ -715,9 +744,17 @@ QByteArray HtmlWriter::Wrap::pushUserpic(const UserpicData &userpic) {
 			},
 			{ "style", sizeStyle }
 		}));
-		result.append(pushDiv(
-			"initials",
-			"line-height: " + size));
+		if (userpic.tooltip.isEmpty()) {
+			result.append(pushDiv(
+				"initials",
+				"line-height: " + size));
+		} else {
+			result.append(pushTag("div", {
+				{ "class", "initials" },
+				{ "style", "line-height: " + size },
+				{ "title", userpic.tooltip },
+			}));
+		}
 		auto character = [](const QByteArray &from) {
 			const auto utf = QString::fromUtf8(from).trimmed();
 			return utf.isEmpty()
@@ -748,6 +785,75 @@ QByteArray HtmlWriter::Wrap::pushListEntry(
 		{},
 		{ details },
 		info);
+}
+
+QByteArray HtmlWriter::Wrap::pushStoriesListEntry(
+		const StoryData &story,
+		const QByteArray &name,
+		const QByteArrayList &details,
+		const QByteArray &info,
+		const std::vector<Data::TextPart> &caption,
+		const QString &internalLinksDomain,
+		const QString &link) {
+	auto result = pushDiv("entry clearfix");
+	if (!link.isEmpty()) {
+		result.append(pushTag("a", {
+			{ "class", "pull_left userpic_wrap" },
+			{ "href", relativePath(link).toUtf8() + "#allow_back" },
+		}));
+	} else {
+		result.append(pushDiv("pull_left userpic_wrap"));
+	}
+	if (!story.imageLink.isEmpty()) {
+		const auto sizeStyle = "width: "
+			+ Data::NumberToString(kStoryThumbWidth)
+			+ "px; height: "
+			+ Data::NumberToString(kStoryThumbHeight)
+			+ "px";
+		result.append(pushTag("img", {
+			{ "class", "story" },
+			{ "style", sizeStyle },
+			{ "src", relativePath(story.imageLink).toUtf8() },
+			{ "empty", "" }
+		}));
+	}
+	result.append(popTag());
+	result.append(pushDiv("body"));
+	if (!info.isEmpty()) {
+		result.append(pushDiv("pull_right info details"));
+		result.append(SerializeString(info));
+		result.append(popTag());
+	}
+	if (!name.isEmpty()) {
+		if (!link.isEmpty()) {
+			result.append(pushTag("a", {
+				{ "class", "block_link expanded" },
+				{ "href", relativePath(link).toUtf8() + "#allow_back" },
+			}));
+		}
+		result.append(pushDiv("name bold"));
+		result.append(SerializeString(name));
+		result.append(popTag());
+		if (!link.isEmpty()) {
+			result.append(popTag());
+		}
+	}
+	const auto text = caption.empty()
+		? QByteArray()
+		: FormatText(caption, internalLinksDomain, _base);
+	if (!text.isEmpty()) {
+		result.append(pushDiv("text"));
+		result.append(text);
+		result.append(popTag());
+	}
+	for (const auto &detail : details) {
+		result.append(pushDiv("details_entry details"));
+		result.append(SerializeString(detail));
+		result.append(popTag());
+	}
+	result.append(popTag());
+	result.append(popTag());
+	return result;
 }
 
 QByteArray HtmlWriter::Wrap::pushSessionListEntry(
@@ -894,7 +1000,7 @@ QByteArray HtmlWriter::Wrap::pushServiceMessage(
 	result.append(popTag());
 	if (photo) {
 		auto userpic = UserpicData();
-		userpic.colorIndex = Data::PeerColorIndex(dialog.peerId);
+		userpic.colorIndex = dialog.colorIndex;
 		userpic.firstName = dialog.name;
 		userpic.lastName = dialog.lastName;
 		userpic.pixelSize = kServiceMessagePhotoSize;
@@ -1015,7 +1121,7 @@ auto HtmlWriter::Wrap::pushMessage(
 		if (data.recurringUsed) {
 			return "You were charged " + amount + " via recurring payment";
 		}
-		auto result =  "You have successfully transferred "
+		auto result = "You have successfully transferred "
 			+ amount
 			+ " for "
 			+ wrapReplyToLink("this invoice");
@@ -1033,6 +1139,8 @@ auto HtmlWriter::Wrap::pushMessage(
 		return data.attachMenu
 			? "You allowed this bot to message you "
 			"when you added it in the attachment menu."_q
+			: data.fromRequest
+			? "You allowed this bot to message you in his web-app."_q
 			: data.app.isEmpty()
 			? ("You allowed this bot to message you when you opened "
 				+ SerializeString(data.app))
@@ -1173,6 +1281,40 @@ auto HtmlWriter::Wrap::pushMessage(
 		return serviceFrom + " suggests to use this photo";
 	}, [&](const ActionRequestedPeer &data) {
 		return "requested: "_q/* + data.peerId*/;
+	}, [&](const ActionSetChatWallPaper &data) {
+		return serviceFrom
+			+ (data.same
+				? (" set "
+					+ wrapReplyToLink("the same background")
+					+ " for this chat")
+				: " set a new background for this chat");
+	}, [&](const ActionGiftCode &data) {
+		return data.unclaimed
+			? ("This is an unclaimed Telegram Premium for "
+				+ NumberToString(data.months)
+				+ (data.months > 1 ? " months" : "month")
+				+ " prize in a giveaway organized by a channel.")
+			: data.viaGiveaway
+			? ("You won a Telegram Premium for "
+				+ NumberToString(data.months)
+				+ (data.months > 1 ? " months" : "month")
+				+ " prize in a giveaway organized by a channel.")
+			: ("You've received a Telegram Premium for "
+				+ NumberToString(data.months)
+				+ (data.months > 1 ? " months" : "month")
+				+ " gift from a channel.");
+	}, [&](const ActionGiveawayLaunch &data) {
+		return serviceFrom + " just started a giveaway "
+			"of Telegram Premium subscriptions to its followers.";
+	}, [&](const ActionGiveawayResults &data) {
+		return QByteArray::number(data.winners)
+			+ " of the giveaway were randomly selected by Telegram "
+			"and received private messages with giftcodes.";
+	}, [&](const ActionBoostApply &data) {
+		return serviceFrom
+			+ " boosted the group "
+			+ QByteArray::number(data.boosts)
+			+ (data.boosts > 1 ? " times" : " time");
 	}, [](v::null_t) { return QByteArray(); });
 
 	if (!serviceText.isEmpty()) {
@@ -1356,8 +1498,9 @@ QByteArray HtmlWriter::Wrap::pushMedia(
 	if (!data.classes.isEmpty()) {
 		return pushGenericMedia(data);
 	}
+	using namespace Data;
 	const auto &content = message.media.content;
-	if (const auto document = std::get_if<Data::Document>(&content)) {
+	if (const auto document = std::get_if<Document>(&content)) {
 		Assert(!message.media.ttl);
 		if (document->isSticker) {
 			return pushStickerMedia(*document, basePath);
@@ -1367,11 +1510,13 @@ QByteArray HtmlWriter::Wrap::pushMedia(
 			return pushVideoFileMedia(*document, basePath);
 		}
 		Unexpected("Non generic document in HtmlWriter::Wrap::pushMedia.");
-	} else if (const auto photo = std::get_if<Data::Photo>(&content)) {
+	} else if (const auto photo = std::get_if<Photo>(&content)) {
 		Assert(!message.media.ttl);
 		return pushPhotoMedia(*photo, basePath);
-	} else if (const auto poll = std::get_if<Data::Poll>(&content)) {
+	} else if (const auto poll = std::get_if<Poll>(&content)) {
 		return pushPoll(*poll);
+	} else if (const auto giveaway = std::get_if<GiveawayStart>(&content)) {
+		return pushGiveaway(peers, *giveaway);
 	}
 	Assert(v::is_null(content));
 	return QByteArray();
@@ -1432,7 +1577,7 @@ QByteArray HtmlWriter::Wrap::pushStickerMedia(
 		const QString &basePath) {
 	using namespace Data;
 
-	const auto [thumb, size] = WriteImageThumb(
+	const auto &[thumb, size] = WriteImageThumb(
 		basePath,
 		data.file.relativePath,
 		CalculateThumbSize(
@@ -1599,7 +1744,7 @@ QByteArray HtmlWriter::Wrap::pushPhotoMedia(
 		const QString &basePath) {
 	using namespace Data;
 
-	const auto [thumb, size] = WriteImageThumb(
+	const auto &[thumb, size] = WriteImageThumb(
 		basePath,
 		data.image.file.relativePath,
 		CalculateThumbSize(
@@ -1688,6 +1833,52 @@ QByteArray HtmlWriter::Wrap::pushPoll(const Data::Poll &data) {
 	result.append(pushDiv("total details	"));
 	result.append(votes(data.totalVotes));
 	result.append(popTag());
+	result.append(popTag());
+	result.append(popTag());
+	return result;
+}
+
+QByteArray HtmlWriter::Wrap::pushGiveaway(
+		const PeersMap &peers,
+		const Data::GiveawayStart &data) {
+	auto result = pushDiv("media_wrap clearfix");
+	result.append(pushDiv("media_giveaway"));
+
+	result.append(pushDiv("section_title bold"));
+	result.append(SerializeString("Giveaway Prizes"));
+	result.append(popTag());
+	result.append(pushDiv("section_body"));
+	result.append("<b>"
+		+ Data::NumberToString(data.quantity)
+		+ "</b> "
+		+ SerializeString((data.quantity > 1)
+			? "Telegram Premium Subscriptions"
+			: "Telegram Premium Subscription")
+		+ " for <b>" + Data::NumberToString(data.months) + "</b> "
+		+ (data.months > 1 ? "months." : "month."));
+	result.append(popTag());
+
+	result.append(pushDiv("section_title bold"));
+	result.append(SerializeString("Participants"));
+	result.append(popTag());
+	result.append(pushDiv("section_body"));
+	auto channels = QByteArrayList();
+	for (const auto &channel : data.channels) {
+		channels.append("<b>" + peers.wrapPeerName(channel) + "</b>");
+	}
+	result.append(SerializeString((channels.size() > 1)
+		? "All subscribers of those channels: "
+		: "All subscribers of the channel: ")
+		+ channels.join(", "));
+	result.append(popTag());
+
+	result.append(pushDiv("section_title bold"));
+	result.append(SerializeString("Winners Selection Date"));
+	result.append(popTag());
+	result.append(pushDiv("section_body"));
+	result.append(Data::FormatDateTime(data.untilDate));
+	result.append(popTag());
+
 	result.append(popTag());
 	result.append(popTag());
 	return result;
@@ -1851,6 +2042,7 @@ MediaData HtmlWriter::Wrap::prepareMediaData(
 		result.description = data.description;
 		result.status = Data::FormatMoneyAmount(data.amount, data.currency);
 	}, [](const Poll &data) {
+	}, [](const GiveawayStart &data) {
 	}, [](const UnsupportedMedia &data) {
 		Unexpected("Unsupported message.");
 	}, [](v::null_t) {});
@@ -1973,6 +2165,7 @@ Result HtmlWriter::start(
 		"images/section_other.png",
 		"images/section_photos.png",
 		"images/section_sessions.png",
+		"images/section_stories.png",
 		"images/section_web.png",
 		"js/script.js",
 	};
@@ -2000,7 +2193,7 @@ Result HtmlWriter::start(
 Result HtmlWriter::writePersonal(const Data::PersonalInfo &data) {
 	Expects(_summary != nullptr);
 
-	_selfColorIndex = Data::PeerColorIndex(data.user.info.userId);
+	_selfColorIndex = data.user.info.colorIndex;
 	if (_settings.types & Settings::Type::Userpics) {
 		_delayedPersonalInfo = std::make_unique<Data::PersonalInfo>(data);
 		return Result::Success();
@@ -2169,11 +2362,112 @@ QString HtmlWriter::userpicsFilePath() const {
 
 void HtmlWriter::pushUserpicsSection() {
 	pushSection(
-		4,
+		kUserpicsPriority,
 		"Profile pictures",
 		"photos",
 		_userpicsCount,
 		userpicsFilePath());
+}
+
+Result HtmlWriter::writeStoriesStart(const Data::StoriesInfo &data) {
+	Expects(_summary != nullptr);
+	Expects(_stories == nullptr);
+
+	_storiesCount = data.count;
+	if (!_storiesCount) {
+		return Result::Success();
+	}
+	_stories = fileWithRelativePath(storiesFilePath());
+
+	auto block = _stories->pushHeader(
+		"Stories archive",
+		mainFileRelativePath());
+	block.append(_stories->pushDiv("page_body list_page"));
+	block.append(_stories->pushDiv("entry_list"));
+	if (const auto result = _stories->writeBlock(block); !result) {
+		return result;
+	}
+	return Result::Success();
+}
+
+Result HtmlWriter::writeStoriesSlice(const Data::StoriesSlice &data) {
+	Expects(_stories != nullptr);
+
+	_storiesCount -= data.skipped;
+	if (data.list.empty()) {
+		return Result::Success();
+	}
+	auto block = QByteArray();
+	for (const auto &story : data.list) {
+		auto data = StoryData{};
+		using SkipReason = Data::File::SkipReason;
+		const auto &file = story.file();
+		Assert(!file.relativePath.isEmpty()
+			|| file.skipReason != SkipReason::None);
+		auto status = QByteArrayList();
+		if (story.pinned) {
+			status.append("Saved to Profile");
+		}
+		if (story.expires > 0) {
+			status.append("Expiring: " + Data::FormatDateTime(story.expires));
+		}
+		status.append([&]() -> Data::Utf8String {
+			switch (file.skipReason) {
+			case SkipReason::Unavailable:
+				return "(Story unavailable, please try again later)";
+			case SkipReason::FileSize:
+				return "(Story exceeds maximum size. "
+					"Change data exporting settings to download.)";
+			case SkipReason::FileType:
+				return "(Story not included. "
+					"Change data exporting settings to download.)";
+			case SkipReason::None: return Data::FormatFileSize(file.size);
+			}
+			Unexpected("Skip reason while writing story path.");
+		}());
+		const auto &path = story.file().relativePath;
+		const auto &image = story.thumb().file.relativePath.isEmpty()
+			? story.file().relativePath
+			: story.thumb().file.relativePath;
+		data.imageLink = Data::WriteImageThumb(
+			_settings.path,
+			image,
+			kStoryThumbWidth * 2,
+			kStoryThumbHeight * 2);
+		const auto info = (story.date > 0)
+			? Data::FormatDateTime(story.date)
+			: QByteArray();
+		block.append(_stories->pushStoriesListEntry(
+			data,
+			(path.isEmpty() ? QString("Story unavailable") : path).toUtf8(),
+			status,
+			info,
+			story.caption,
+			_environment.internalLinksDomain,
+			path));
+	}
+	return _stories->writeBlock(block);
+}
+
+Result HtmlWriter::writeStoriesEnd() {
+	pushStoriesSection();
+	if (_stories) {
+		return base::take(_stories)->close();
+	}
+	return Result::Success();
+}
+
+QString HtmlWriter::storiesFilePath() const {
+	return "lists/stories.html";
+}
+
+void HtmlWriter::pushStoriesSection() {
+	pushSection(
+		kStoriesPriority,
+		"Stories archive",
+		"stories",
+		_storiesCount,
+		storiesFilePath());
 }
 
 Result HtmlWriter::writeContactsList(const Data::ContactsList &data) {
@@ -2208,6 +2502,10 @@ Result HtmlWriter::writeSavedContacts(const Data::ContactsList &data) {
 		};
 		userpic.firstName = contact.firstName;
 		userpic.lastName = contact.lastName;
+		if (contact.userId) {
+			const auto raw = contact.userId.bare & PeerId::kChatTypeMask;
+			userpic.tooltip = (u"ID: "_q + QString::number(raw)).toUtf8();
+		}
 		block.append(file->pushListEntry(
 			userpic,
 			ComposeName(userpic, "Deleted Account"),
@@ -2221,7 +2519,7 @@ Result HtmlWriter::writeSavedContacts(const Data::ContactsList &data) {
 	}
 
 	pushSection(
-		2,
+		kContactsPriority,
 		"Contacts",
 		"contacts",
 		data.list.size(),
@@ -2287,7 +2585,7 @@ Result HtmlWriter::writeFrequentContacts(const Data::ContactsList &data) {
 	}
 
 	pushSection(
-		3,
+		kFrequentContactsPriority,
 		"Frequent contacts",
 		"frequent",
 		size,
@@ -2353,7 +2651,7 @@ Result HtmlWriter::writeSessions(const Data::SessionsList &data) {
 	}
 
 	pushSection(
-		5,
+		kSessionsPriority,
 		"Sessions",
 		"sessions",
 		data.list.size(),
@@ -2399,7 +2697,7 @@ Result HtmlWriter::writeWebSessions(const Data::SessionsList &data) {
 	}
 
 	pushSection(
-		6,
+		kWebSessionsPriority,
 		"Web sessions",
 		"web",
 		data.webList.size(),
@@ -2411,7 +2709,7 @@ Result HtmlWriter::writeOtherData(const Data::File &data) {
 	Expects(_summary != nullptr);
 
 	pushSection(
-		7,
+		kOtherPriority,
 		"Other data",
 		"other",
 		1,
@@ -2440,7 +2738,7 @@ Result HtmlWriter::writeDialogsStart(const Data::DialogsInfo &data) {
 	}
 
 	pushSection(
-		0,
+		kChatsPriority,
 		"Chats",
 		"chats",
 		data.chats.size() + data.left.size(),
@@ -2510,7 +2808,7 @@ Result HtmlWriter::writeDialogSlice(const Data::MessagesSlice &data) {
 				_settings.path,
 				FormatDateText(date)));
 		}
-		const auto [info, content] = _chat->pushMessage(
+		const auto &[info, content] = _chat->pushMessage(
 			message,
 			previous,
 			_dialog,

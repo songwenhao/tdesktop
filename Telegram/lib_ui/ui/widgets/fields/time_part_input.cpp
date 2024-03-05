@@ -6,6 +6,7 @@
 //
 #include "ui/widgets/fields/time_part_input.h"
 
+#include "base/qt/qt_string_view.h"
 #include "ui/ui_utility.h" // WheelDirection
 
 #include <QtCore/QRegularExpression>
@@ -13,12 +14,13 @@
 namespace Ui {
 
 std::optional<int> TimePart::number() {
+	static const auto RegExp = QRegularExpression("^\\d+$");
 	const auto text = getLastText();
 	auto view = QStringView(text);
 	while (view.size() > 1 && view.at(0) == '0') {
 		view = base::StringViewMid(view, 1);
 	}
-	return QRegularExpression("^\\d+$").match(view).hasMatch()
+	return RegExp.match(view).hasMatch()
 		? std::make_optional(view.toInt())
 		: std::nullopt;
 }

@@ -15,7 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/password_input.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/toast/toast.h"
@@ -243,7 +243,7 @@ void TermsBox::prepare() {
 			st::termsPadding),
 		0,
 		age ? age->height() : 0);
-	const auto toastParent = Ui::BoxShow(this).toastParent();
+	const auto show = uiShow();
 	content->entity()->setClickHandlerFilter([=](
 			const ClickHandlerPtr &handler,
 			Qt::MouseButton button) {
@@ -252,8 +252,7 @@ void TermsBox::prepare() {
 			: QString();
 		if (TextUtilities::RegExpMention().match(link).hasMatch()) {
 			_lastClickedMention = link;
-			Ui::Toast::Show(
-				toastParent,
+			show->showToast(
 				tr::lng_terms_agree_to_proceed(tr::now, lt_bot, link));
 			return false;
 		}

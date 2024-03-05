@@ -23,10 +23,10 @@ inline void DeInitOnTopPanel(not_null<QWidget*> panel) {
 inline void ReInitOnTopPanel(not_null<QWidget*> panel) {
 }
 
-inline void UpdateOverlayed(not_null<QWidget*> widget) {
+inline void ShowOverAll(not_null<QWidget*> widget, bool canFocus) {
 }
 
-inline void ShowOverAll(not_null<QWidget*> widget, bool canFocus) {
+inline void AcceptAllMouseInput(not_null<QWidget*> widget) {
 }
 
 inline void DisableSystemWindowResize(not_null<QWidget*> widget, QSize ratio) {

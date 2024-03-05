@@ -11,10 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/local_url_handlers.h"
 #include "mainwidget.h"
-#include "mainwindow.h"
 #include "main/main_session.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/text/text_entity.h"
 #include "ui/toast/toast.h"
 #include "base/qthelp_regex.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -26,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+#include "window/window_session_controller_link_info.h"
 #include "styles/style_layers.h"
 
 namespace {
@@ -34,6 +33,12 @@ namespace {
 
 void SearchByHashtag(ClickContext context, const QString &tag) {
 	const auto my = context.other.value<ClickHandlerContext>();
+	if (const auto delegate = my.elementDelegate
+		? my.elementDelegate()
+		: nullptr) {
+		delegate->elementSearchInList(tag, my.itemId);
+		return;
+	}
 	const auto controller = my.sessionWindow.get();
 	if (!controller) {
 		return;
@@ -146,7 +151,8 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			if (my.show) {
 				my.show->showBox(std::move(box));
 			} else if (use) {
-				use->show(std::move(box), Ui::LayerOption::KeepOther);
+				use->show(std::move(box));
+				use->activate();
 			}
 		} else {
 			open();
@@ -208,8 +214,7 @@ void MentionClickHandler::onClick(ClickContext context) const {
 			? Core::App().activeWindow()->sessionController()
 			: nullptr;
 		if (use) {
-			using Info = Window::SessionNavigation::PeerByLinkInfo;
-			use->showPeerByLink(Info{
+			use->showPeerByLink(Window::PeerByLinkInfo{
 				.usernameOrId = _tag.mid(1),
 				.resolveType = Window::ResolveType::Mention,
 			});
@@ -288,7 +293,9 @@ void BotCommandClickHandler::onClick(ClickContext context) const {
 		return;
 	}
 	const auto my = context.other.value<ClickHandlerContext>();
-	if (const auto delegate = my.elementDelegate ? my.elementDelegate() : nullptr) {
+	if (const auto delegate = my.elementDelegate
+		? my.elementDelegate()
+		: nullptr) {
 		delegate->elementSendBotCommand(_cmd, my.itemId);
 	} else if (const auto controller = my.sessionWindow.get()) {
 		auto &data = controller->session().data();
@@ -307,7 +314,6 @@ void BotCommandClickHandler::onClick(ClickContext context) const {
 			.peer = peer,
 			.command = _cmd,
 			.context = my.itemId,
-			.replyTo = 0,
 		});
 	}
 }
@@ -335,16 +341,13 @@ void MonospaceClickHandler::onClick(ClickContext context) const {
 		const auto hasCopyRestriction = item
 			&& (!item->history()->peer->allowsForwarding()
 				|| item->forbidsForward());
-		const auto toastParent = Window::Show(controller).toastParent();
 		if (hasCopyRestriction) {
-			Ui::Toast::Show(
-				toastParent,
-				item->history()->peer->isBroadcast()
-					? tr::lng_error_nocopy_channel(tr::now)
-					: tr::lng_error_nocopy_group(tr::now));
+			controller->showToast(item->history()->peer->isBroadcast()
+				? tr::lng_error_nocopy_channel(tr::now)
+				: tr::lng_error_nocopy_group(tr::now));
 			return;
 		}
-		Ui::Toast::Show(toastParent, tr::lng_text_copied(tr::now));
+		controller->showToast(tr::lng_text_copied(tr::now));
 	}
 	TextUtilities::SetClipboardText(TextForMimeData::Simple(_text.trimmed()));
 }

@@ -20,6 +20,10 @@ struct ReactionFlyAnimationArgs;
 class ReactionFlyAnimation;
 } // namespace Ui
 
+namespace Ui::Text {
+class CustomEmoji;
+} // namespace Ui::Text
+
 namespace HistoryView {
 using PaintContext = Ui::ChatPaintContext;
 class Message;
@@ -37,6 +41,7 @@ struct InlineListData {
 		InBubble  = 0x01,
 		OutLayout = 0x02,
 		Flipped   = 0x04,
+		Tags      = 0x08,
 	};
 	friend inline constexpr bool is_flag_type(Flag) { return true; };
 	using Flags = base::flags<Flag>;
@@ -65,6 +70,8 @@ public:
 	void updateSkipBlock(int width, int height);
 	void removeSkipBlock();
 
+	[[nodiscard]] bool areTags() const;
+	[[nodiscard]] std::vector<ReactionId> computeTagsList() const;
 	[[nodiscard]] bool hasCustomEmoji() const;
 	void unloadCustomEmoji();
 
@@ -88,6 +95,9 @@ public:
 		ReactionId,
 		std::unique_ptr<Ui::ReactionFlyAnimation>> animations);
 
+	[[nodiscard]] static float64 TagDotAlpha();
+	[[nodiscard]] static QImage PrepareTagBg(QColor tagBg, QColor dotBg);
+
 private:
 	struct Userpics {
 		QImage image;
@@ -99,6 +109,7 @@ private:
 	void layout();
 	void layoutButtons();
 
+	void setButtonTag(Button &button, const QString &title);
 	void setButtonCount(Button &button, int count);
 	void setButtonUserpics(
 		Button &button,
@@ -111,6 +122,13 @@ private:
 		QPoint innerTopLeft,
 		const PaintContext &context,
 		const QColor &textColor) const;
+	void paintSingleBg(
+		Painter &p,
+		const QRect &fill,
+		const QColor &color,
+		float64 opacity) const;
+
+	void validateTagBg(const QColor &color) const;
 
 	QSize countOptimalSize() override;
 
@@ -120,6 +138,8 @@ private:
 	Data _data;
 	std::vector<Button> _buttons;
 	QSize _skipBlock;
+	mutable QImage _tagBg;
+	mutable QColor _tagBgColor;
 	mutable QImage _customCache;
 	mutable int _customSkip = 0;
 	bool _hasCustomEmoji = false;

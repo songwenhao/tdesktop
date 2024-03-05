@@ -9,6 +9,7 @@
 #include "ui/rp_widget.h"
 #include "ui/painter.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtGui/QtEvents>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QWindow>
@@ -32,12 +33,12 @@ private:
 	void resizeGL(int w, int h) override;
 	void paintEvent(QPaintEvent *e) override;
 	void paintGL() override;
+	bool eventHook(QEvent *e) override;
 	void callDeInit();
 
 	const std::unique_ptr<Renderer> _renderer;
 	QMetaObject::Connection _connection;
 	QSize _deviceSize;
-	bool _inPaintEvent = false;
 
 };
 
@@ -84,16 +85,10 @@ void SurfaceOpenGL::resizeGL(int w, int h) {
 }
 
 void SurfaceOpenGL::paintEvent(QPaintEvent *e) {
-	if (_inPaintEvent) {
-		return;
-	}
-	_inPaintEvent = true;
 	if (_deviceSize != size() * devicePixelRatio()) {
-		QResizeEvent event = { size(), size() };
-		resizeEvent(&event);
+		QCoreApplication::postEvent(this, new QResizeEvent(size(), size()));
 	}
 	QOpenGLWidget::paintEvent(e);
-	_inPaintEvent = false;
 }
 
 void SurfaceOpenGL::paintGL() {
@@ -107,6 +102,14 @@ void SurfaceOpenGL::paintGL() {
 	}
 	f->glDisable(GL_BLEND);
 	_renderer->paint(this, *f);
+}
+
+bool SurfaceOpenGL::eventHook(QEvent *e) {
+	const auto result = RpWidgetBase::eventHook(e);
+	if (e->type() == QEvent::ScreenChangeInternal) {
+		_deviceSize = size() * devicePixelRatio();
+	}
+	return result;
 }
 
 void SurfaceOpenGL::callDeInit() {

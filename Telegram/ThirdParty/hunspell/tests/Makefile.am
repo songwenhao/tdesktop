@@ -76,6 +76,7 @@ checkcompounddup.dic \
 checkcompoundtriple.dic \
 simplifiedtriple.dic \
 checkcompoundrep.dic \
+checkcompoundrep2.dic \
 checkcompoundcase2.dic \
 checkcompoundcaseutf.dic \
 checkcompoundpattern.dic \
@@ -104,6 +105,10 @@ IJ.dic \
 i68568.dic \
 i68568utf.dic \
 1706659.dic \
+1748408-1.dic \
+1748408-2.dic \
+1748408-3.dic \
+1748408-4.dic \
 digits_in_words.dic \
 colons_in_words.dic \
 ngram_utf_fix.dic \
@@ -132,7 +137,8 @@ nepali.dic \
 hu.dic \
 warn.dic \
 timelimit.dic \
-ignoresug.dic
+ignoresug.dic \
+limit-multiple-compounding.dic
 
 clean-local:
 	-rm -rf testSubDir
@@ -387,6 +393,9 @@ checkcompoundrep.aff \
 checkcompoundrep.dic \
 checkcompoundrep.good \
 checkcompoundrep.wrong \
+checkcompoundrep2.aff \
+checkcompoundrep2.dic \
+checkcompoundrep2.good \
 checkcompoundtriple.aff \
 checkcompoundtriple.dic \
 checkcompoundtriple.good \
@@ -520,6 +529,18 @@ i68568utf.wrong \
 1706659.aff \
 1706659.dic \
 1706659.wrong \
+1748408-1.aff \
+1748408-1.dic \
+1748408-1.good \
+1748408-2.aff \
+1748408-2.dic \
+1748408-2.good \
+1748408-3.aff \
+1748408-3.dic \
+1748408-3.good \
+1748408-4.aff \
+1748408-4.dic \
+1748408-4.good \
 digits_in_words.aff \
 digits_in_words.dic \
 digits_in_words.wrong \
@@ -637,5 +658,9 @@ ignoresug.aff \
 ignoresug.dic \
 ignoresug.good \
 ignoresug.morph \
+limit-multiple-compounding.aff \
+limit-multiple-compounding.dic \
+limit-multiple-compounding.good \
+limit-multiple-compounding.wrong \
 \
 utf8_nonbmp.test

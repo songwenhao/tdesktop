@@ -1,14 +1,14 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include "ui/text/custom_emoji_instance.h"
 
 #include "ui/effects/animation_value.h"
 #include "ui/effects/frame_generator.h"
+#include "ui/dynamic_image.h"
 #include "ui/ui_utility.h"
 #include "ui/painter.h"
 
@@ -20,7 +20,6 @@ class QPainter;
 namespace Ui::CustomEmoji {
 namespace {
 
-constexpr auto kMaxSize = 128;
 constexpr auto kMaxFrames = 180;
 constexpr auto kCacheVersion = 1;
 constexpr auto kPreloadFrames = 3;
@@ -169,8 +168,6 @@ Cache::Cache(int size) : _size(size) {
 std::optional<Cache> Cache::FromSerialized(
 		const QByteArray &serialized,
 		int requestedSize) {
-	Expects(requestedSize > 0 && requestedSize <= kMaxSize);
-
 	if (serialized.size() <= sizeof(CacheHeader)) {
 		return {};
 	}
@@ -822,6 +819,10 @@ Object::~Object() {
 	unload();
 }
 
+int Object::width() {
+	return st::emojiSize + 2 * st::emojiPadding;
+}
+
 QString Object::entityData() {
 	return _instance->entityData();
 }
@@ -859,6 +860,98 @@ bool Object::readyInDefaultState() {
 
 void Object::repaint() {
 	_repaint();
+}
+
+Internal::Internal(
+	QString entityData,
+	QImage image,
+	QMargins padding,
+	bool colored)
+: _entityData(std::move(entityData))
+, _image(std::move(image))
+, _padding(padding)
+, _colored(colored) {
+}
+
+int Internal::width() {
+	return _padding.left()
+		+ (_image.width() / _image.devicePixelRatio())
+		+ _padding.right();
+}
+
+QString Internal::entityData() {
+	return _entityData;
+}
+
+void Internal::paint(QPainter &p, const Context &context) {
+	context.internal.colorized = _colored;
+
+	const auto size = _image.size() / style::DevicePixelRatio();
+	const auto rect = QRect(
+		context.position + QPoint(_padding.left(), _padding.top()),
+		size);
+	PaintScaledImage(p, rect, { &_image }, context);
+}
+
+void Internal::unload() {
+}
+
+bool Internal::ready() {
+	return true;
+}
+
+bool Internal::readyInDefaultState() {
+	return true;
+}
+
+DynamicImageEmoji::DynamicImageEmoji(
+	QString entityData,
+	std::shared_ptr<DynamicImage> image,
+	Fn<void()> repaint,
+	QMargins padding,
+	int size)
+: _entityData(entityData)
+, _image(std::move(image))
+, _repaint(std::move(repaint))
+, _padding(padding)
+, _size(size) {
+}
+
+int DynamicImageEmoji::width() {
+	return _padding.left() + _size + _padding.right();
+}
+
+QString DynamicImageEmoji::entityData() {
+	return _entityData;
+}
+
+void DynamicImageEmoji::paint(QPainter &p, const Context &context) {
+	if (!_subscribed) {
+		_subscribed = true;
+		_image->subscribeToUpdates(_repaint);
+	}
+
+	const auto rect = QRect(
+		context.position + QPoint(_padding.left(), _padding.top()),
+		QSize(_size, _size));
+	auto image = _image->image(_size);
+	context.internal.colorized = false;
+	PaintScaledImage(p, rect, { &image }, context);
+}
+
+void DynamicImageEmoji::unload() {
+	if (_subscribed) {
+		_subscribed = false;
+		_image->subscribeToUpdates(nullptr);
+	}
+}
+
+bool DynamicImageEmoji::ready() {
+	return true;
+}
+
+bool DynamicImageEmoji::readyInDefaultState() {
+	return true;
 }
 
 } // namespace Ui::CustomEmoji

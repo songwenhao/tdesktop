@@ -13,7 +13,7 @@
 #include <kcoreaddons_export.h>
 
 /**
- * \class KNetworkMounts knetworkmounts.h <KCoreAddons/KNetworkMounts>
+ * \class KNetworkMounts knetworkmounts.h <KNetworkMounts>
  *
  * Performance control on network mounts.
  *
@@ -273,10 +273,10 @@ public:
 
 private:
     /// Creates a new KNetworkMounts object
-    KNetworkMounts();
+    KCOREADDONS_NO_EXPORT KNetworkMounts();
 
     /// Destructor
-    ~KNetworkMounts() override;
+    KCOREADDONS_NO_EXPORT ~KNetworkMounts() override;
 
     std::unique_ptr<class KNetworkMountsPrivate> const d;
 };

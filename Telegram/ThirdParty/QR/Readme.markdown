@@ -21,7 +21,7 @@ Core features:
 * Output format: Raw modules/pixels of the QR symbol
 * Detects finder-like penalty patterns more accurately than other implementations
 * Encodes numeric and special-alphanumeric text in less space than general text
-* Open source code under the permissive MIT License
+* Open-source code under the permissive MIT License
 
 Manual parameters:
 
@@ -41,7 +41,7 @@ More information about QR Code technology and this library's design can be found
 Examples
 --------
 
-Java language:
+The code below is in Java, but the other language ports are designed with essentially the same API naming and behavior.
 
 ```java
 import java.awt.image.BufferedImage;
@@ -65,129 +65,11 @@ for (int y = 0; y < qr1.size; y++) {
 }
 ```
 
-TypeScript/JavaScript languages:
-
-```typescript
-// Name abbreviated for the sake of these examples here
-const QRC = qrcodegen.QrCode;
-
-// Simple operation
-const qr0 = QRC.encodeText("Hello, world!", QRC.Ecc.MEDIUM);
-const svg = toSvgString(qr0, 4);  // See qrcodegen-input-demo
-
-// Manual operation
-const segs = qrcodegen.QrSegment.makeSegments("3141592653589793238462643383");
-const qr1 = QRC.encodeSegments(segs, QRC.Ecc.HIGH, 5, 5, 2, false);
-for (let y = 0; y < qr1.size; y++) {
-    for (let x = 0; x < qr1.size; x++) {
-        (... paint qr1.getModule(x, y) ...)
-    }
-}
-```
-
-Python language:
-
-```python
-from qrcodegen import *
-
-# Simple operation
-qr0 = QrCode.encode_text("Hello, world!", QrCode.Ecc.MEDIUM)
-svg = to_svg_str(qr0, 4)  # See qrcodegen-demo
-
-# Manual operation
-segs = QrSegment.make_segments("3141592653589793238462643383")
-qr1 = QrCode.encode_segments(segs, QrCode.Ecc.HIGH, 5, 5, 2, False)
-for y in range(qr1.get_size()):
-    for x in range(qr1.get_size()):
-        (... paint qr1.get_module(x, y) ...)
-```
-
-C++ language:
-
-```c++
-#include <string>
-#include <vector>
-#include "QrCode.hpp"
-using namespace qrcodegen;
-
-// Simple operation
-QrCode qr0 = QrCode::encodeText("Hello, world!", QrCode::Ecc::MEDIUM);
-std::string svg = toSvgString(qr0, 4);  // See QrCodeGeneratorDemo
-
-// Manual operation
-std::vector<QrSegment> segs =
-    QrSegment::makeSegments("3141592653589793238462643383");
-QrCode qr1 = QrCode::encodeSegments(
-    segs, QrCode::Ecc::HIGH, 5, 5, 2, false);
-for (int y = 0; y < qr1.getSize(); y++) {
-    for (int x = 0; x < qr1.getSize(); x++) {
-        (... paint qr1.getModule(x, y) ...)
-    }
-}
-```
-
-C language:
-
-```c
-#include <stdbool.h>
-#include <stdint.h>
-#include "qrcodegen.h"
-
-// Text data
-uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
-uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
-bool ok = qrcodegen_encodeText("Hello, world!",
-    tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
-    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
-    qrcodegen_Mask_AUTO, true);
-if (!ok)
-    return;
-
-int size = qrcodegen_getSize(qr0);
-for (int y = 0; y < size; y++) {
-    for (int x = 0; x < size; x++) {
-        (... paint qrcodegen_getModule(qr0, x, y) ...)
-    }
-}
-
-// Binary data
-uint8_t dataAndTemp[qrcodegen_BUFFER_LEN_FOR_VERSION(7)]
-    = {0xE3, 0x81, 0x82};
-uint8_t qr1[qrcodegen_BUFFER_LEN_FOR_VERSION(7)];
-ok = qrcodegen_encodeBinary(dataAndTemp, 3, qr1,
-    qrcodegen_Ecc_HIGH, 2, 7, qrcodegen_Mask_4, false);
-```
-
-Rust language:
-
-```rust
-extern crate qrcodegen;
-use qrcodegen::QrCode;
-use qrcodegen::QrCodeEcc;
-use qrcodegen::QrSegment;
-
-// Simple operation
-let qr = QrCode::encode_text("Hello, world!",
-    QrCodeEcc::Medium).unwrap();
-let svg = to_svg_string(&qr, 4);  // See qrcodegen-demo
-
-// Manual operation
-let chrs: Vec<char> = "3141592653589793238462643383".chars().collect();
-let segs = QrSegment::make_segments(&chrs);
-let qr = QrCode::encode_segments_advanced(
-    &segs, QrCodeEcc::High, 5, 5, Some(Mask::new(2)), false).unwrap();
-for y in 0 .. qr.size() {
-    for x in 0 .. qr.size() {
-        (... paint qr.get_module(x, y) ...)
-    }
-}
-```
-
 
 License
 -------
 
-Copyright © 2021 Project Nayuki. (MIT License)  
+Copyright © 2022 Project Nayuki. (MIT License)  
 [https://www.nayuki.io/page/qr-code-generator-library](https://www.nayuki.io/page/qr-code-generator-library)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of

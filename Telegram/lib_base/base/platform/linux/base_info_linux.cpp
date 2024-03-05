@@ -7,6 +7,7 @@
 #include "base/platform/linux/base_info_linux.h"
 
 #include "base/algorithm.h"
+#include "base/platform/linux/base_linux_library.h"
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 #include "base/platform/linux/base_linux_xcb_utilities.h"
@@ -26,16 +27,15 @@
 #include <gnu/libc-version.h>
 #endif // __GLIBC__
 
+extern "C" {
+struct wl_display;
+} // extern "C"
+
 namespace Platform {
 namespace {
 
-constexpr auto kMaxDeviceModelLength = 15;
-
-[[nodiscard]] QString GetDesktopEnvironment() {
-	const auto value = qEnvironmentVariable("XDG_CURRENT_DESKTOP");
-	return value.contains(':')
-		? value.left(value.indexOf(':'))
-		: value;
+[[nodiscard]] QStringList GetDesktopEnvironment() {
+	return qEnvironmentVariable("XDG_CURRENT_DESKTOP").trimmed().split(':');
 }
 
 [[nodiscard]] QString ChassisTypeToString(uint type) {
@@ -65,6 +65,18 @@ constexpr auto kMaxDeviceModelLength = 15;
 	default:
 		return "";
 	}
+}
+
+[[nodiscard]] bool IsGlibcLess228() {
+	static const auto result = [] {
+		const auto libcName = GetLibcName();
+		const auto libcVersion = GetLibcVersion();
+		return (libcName == qstr("glibc"))
+			&& !libcVersion.isEmpty()
+			&& (QVersionNumber::fromString(libcVersion)
+				< QVersionNumber(2, 28));
+	}();
+	return result;
 }
 
 } // namespace
@@ -144,12 +156,10 @@ QString SystemVersionPretty() {
 
 		if (IsWayland()) {
 			resultList << "Wayland";
+		} else if (IsXwayland()) {
+			resultList << "Xwayland";
 		} else if (IsX11()) {
-			if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
-				resultList << "XWayland";
-			} else {
-				resultList << "X11";
-			}
+			resultList << "X11";
 		}
 
 		const auto libcName = GetLibcName();
@@ -182,19 +192,17 @@ QString SystemLanguage() {
 }
 
 QDate WhenSystemBecomesOutdated() {
-	const auto libcName = GetLibcName();
-	const auto libcVersion = GetLibcVersion();
-
-	if (libcName == qstr("glibc") && !libcVersion.isEmpty()) {
-		if (QVersionNumber::fromString(libcVersion) < QVersionNumber(2, 28)) {
-			return QDate(2023, 7, 1); // Older than CentOS 8.
-		}
+	if (IsGlibcLess228()) {
+		return QDate(2023, 7, 1); // Older than CentOS 8.
 	}
 	return QDate();
 }
 
 int AutoUpdateVersion() {
-	return 2;
+	if (IsGlibcLess228()) {
+		return 2;
+	}
+	return 4;
 }
 
 QString AutoUpdateKey() {
@@ -223,8 +231,8 @@ QString GetLibcVersion() {
 
 QString GetWindowManager() {
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
-	base::Platform::XCB::CustomConnection connection;
-	if (xcb_connection_has_error(connection)) {
+	const base::Platform::XCB::Connection connection;
+	if (!connection || xcb_connection_has_error(connection)) {
 		return {};
 	}
 
@@ -283,17 +291,69 @@ QString GetWindowManager() {
 }
 
 bool IsX11() {
-	return QGuiApplication::instance()
-		? QGuiApplication::platformName() == "xcb"
-		: qEnvironmentVariableIsSet("DISPLAY");
+	if (!QGuiApplication::instance()) {
+		static const auto result = []() -> bool {
+#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
+			const base::Platform::XCB::Connection connection;
+			return connection && !xcb_connection_has_error(connection);
+#else // !DESKTOP_APP_DISABLE_X11_INTEGRATION
+			return qEnvironmentVariableIsSet("DISPLAY");
+#endif // DESKTOP_APP_DISABLE_X11_INTEGRATION
+		}();
+		return result;
+	}
+	static const auto result = (QGuiApplication::platformName() == "xcb");
+	return result;
 }
 
 bool IsWayland() {
-	return QGuiApplication::instance()
-		? QGuiApplication::platformName().startsWith(
-			"wayland",
-			Qt::CaseInsensitive)
-		: qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+	if (!QGuiApplication::instance()) {
+		static const auto result = []() -> bool {
+			struct wl_display *(*wl_display_connect)(const char *name);
+			void (*wl_display_disconnect)(struct wl_display *display);
+			if (const auto lib = base::Platform::LoadLibrary(
+					"libwayland-client.so.0",
+					RTLD_NODELETE); lib
+					&& LOAD_LIBRARY_SYMBOL(lib, wl_display_connect)
+					&& LOAD_LIBRARY_SYMBOL(lib, wl_display_disconnect)) {
+				const auto display = wl_display_connect(nullptr);
+				wl_display_disconnect(display);
+				return display;
+			}
+			return qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+		}();
+		return result;
+	}
+	static const auto result
+		= QGuiApplication::platformName().startsWith("wayland");
+	return result;
+}
+
+bool IsXwayland() {
+#ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
+	static const auto result = []() -> bool {
+		const base::Platform::XCB::Connection connection;
+		if (!connection || xcb_connection_has_error(connection)) {
+			return false;
+		}
+		constexpr auto kXWAYLAND = "XWAYLAND";
+		const auto reply = base::Platform::XCB::MakeReplyPointer(
+			xcb_query_extension_reply(
+				connection,
+				xcb_query_extension(
+					connection,
+					strlen(kXWAYLAND),
+					kXWAYLAND),
+				nullptr));
+		if (!reply) {
+			return false;
+		}
+		return reply->present;
+	}();
+	return result;
+#else // !DESKTOP_APP_DISABLE_X11_INTEGRATION
+	return IsX11() && qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+#endif // DESKTOP_APP_DISABLE_X11_INTEGRATION
 }
 
 void Start(QJsonObject options) {

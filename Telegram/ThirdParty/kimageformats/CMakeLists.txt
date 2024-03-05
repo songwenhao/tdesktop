@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(KImageFormats)
 
 include(FeatureSummary)
-find_package(ECM 5.103.0  NO_MODULE)
+find_package(ECM 5.110.0  NO_MODULE)
 set_package_properties(ECM PROPERTIES TYPE REQUIRED DESCRIPTION "Extra CMake Modules." URL "https://commits.kde.org/extra-cmake-modules")
 feature_summary(WHAT REQUIRED_PACKAGES_NOT_FOUND FATAL_ON_MISSING_REQUIRED_PACKAGES)
 
@@ -51,7 +51,10 @@ set_package_properties(OpenEXR PROPERTIES
     PURPOSE "Required for the QImage plugin for OpenEXR images"
 )
 
-find_package(libavif 0.8.2 CONFIG)
+find_package(libavif 0.8.2 CONFIG QUIET)
+if(NOT libavif_FOUND)
+    find_package(libavif 1 CONFIG)
+endif()
 set_package_properties(libavif PROPERTIES
     TYPE OPTIONAL
     PURPOSE "Required for the QImage plugin for AVIF images"
@@ -65,8 +68,8 @@ add_feature_info(LibHeif LibHeif_FOUND "required for the QImage plugin for HEIF/
 
 option(KIMAGEFORMATS_JXL "Enable plugin for JPEG XL format" ON)
 if(KIMAGEFORMATS_JXL)
-    pkg_check_modules(LibJXL IMPORTED_TARGET libjxl>=0.6.1)
-    pkg_check_modules(LibJXLThreads IMPORTED_TARGET libjxl_threads>=0.6.1)
+    pkg_check_modules(LibJXL IMPORTED_TARGET libjxl>=0.7.0)
+    pkg_check_modules(LibJXLThreads IMPORTED_TARGET libjxl_threads>=0.7.0)
 endif()
 add_feature_info(LibJXL LibJXL_FOUND "required for the QImage plugin for JPEG XL images")
 

@@ -7,6 +7,7 @@
 #include "base/platform/win/base_file_utilities_win.h"
 
 #include "base/platform/win/base_windows_safe_library.h"
+#include "base/platform/win/base_windows_shlobj_h.h"
 #include "base/algorithm.h"
 
 #include <QtCore/QString>
@@ -14,8 +15,8 @@
 
 #include <array>
 #include <string>
+#include <shellapi.h>
 #include <Shlwapi.h>
-#include <shlobj.h>
 #include <RestartManager.h>
 #include <io.h>
 
@@ -53,24 +54,23 @@ DWORD(__stdcall *RmEndSession)(
 
 } // namespace
 
-bool ShowInFolder(const QString &filepath) {
+void ShowInFolder(const QString &filepath) {
 	auto nativePath = QDir::toNativeSeparators(filepath);
 	const auto path = nativePath.toStdWString();
 	if (const auto pidl = ILCreateFromPathW(path.c_str())) {
-		const auto result = SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+		SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
 		ILFree(pidl);
-		return (result == S_OK);
+		return;
 	}
 	const auto pathEscaped = nativePath.replace('"', QString("\"\""));
 	const auto command = ("/select," + pathEscaped).toStdWString();
-	const auto result = int64(ShellExecute(
+	ShellExecute(
 		0,
 		0,
 		L"explorer",
 		command.c_str(),
 		0,
-		SW_SHOWNORMAL));
-	return (result > 32);
+		SW_SHOWNORMAL);
 }
 
 QString FileNameFromUserString(QString name) {

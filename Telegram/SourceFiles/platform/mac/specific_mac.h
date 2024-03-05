@@ -16,8 +16,6 @@ class LocationPoint;
 
 namespace Platform {
 
-[[nodiscard]] bool IsDarkMenuBar();
-
 inline bool AutostartSupported() {
 	return false;
 }
@@ -33,6 +31,10 @@ inline bool SkipTaskbarSupported() {
 	return false;
 }
 
+inline bool RunInBackground() {
+	return true;
+}
+
 void ActivateThisProcess();
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
@@ -40,6 +42,10 @@ inline uint64 ActivationWindowId(not_null<QWidget*> window) {
 }
 
 inline void ActivateOtherProcess(uint64 processId, uint64 windowId) {
+}
+
+inline QString ExecutablePathForShortcuts() {
+	return cExeDir() + cExeName();
 }
 
 namespace ThirdParty {
@@ -69,12 +75,5 @@ int psFixPrevious();
 void psDownloadPathEnableAccess();
 QByteArray psDownloadPathBookmark(const QString &path);
 QByteArray psPathBookmark(const QString &path);
-
-QString strNotificationAboutThemeChange();
-QString strNotificationAboutScreenLocked();
-QString strNotificationAboutScreenUnlocked();
-QString strStyleOfInterface();
-QString strTitleWrapClass();
-QString strTitleClass();
 
 bool psLaunchMaps(const Data::LocationPoint &point);

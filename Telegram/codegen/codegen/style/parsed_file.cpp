@@ -12,6 +12,7 @@
 #include <QtCore/QRegularExpression>
 #include "codegen/common/basic_tokenized_file.h"
 #include "codegen/common/logging.h"
+#include "base/qt/qt_string_view.h"
 
 using BasicToken = codegen::common::BasicTokenizedFile::Token;
 using BasicType = BasicToken::Type;
@@ -93,6 +94,7 @@ std::string logType(const structure::Type &type) {
 	}
 	static auto builtInTypes = new QMap<structure::TypeTag, std::string> {
 		{ structure::TypeTag::Int       , "int" },
+		{ structure::TypeTag::Bool      , "bool" },
 		{ structure::TypeTag::Double    , "double" },
 		{ structure::TypeTag::Pixels    , "pixels" },
 		{ structure::TypeTag::String    , "string" },
@@ -116,7 +118,8 @@ bool validateAnsiString(const QString &value) {
 }
 
 bool validateAlignString(const QString &value) {
-	return QRegularExpression("^[a-z_]+$").match(value).hasMatch();
+	static const auto RegExp = QRegularExpression("^[a-z_]+$");
+	return RegExp.match(value).hasMatch();
 }
 
 } // namespace
@@ -304,6 +307,8 @@ structure::Value ParsedFile::readValue() {
 		return pointValue;
 	} else if (auto sizeValue = readSizeValue()) {
 		return sizeValue;
+	} else if (auto boolValue = readBoolValue()) {
+		return boolValue;
 	} else if (auto alignValue = readAlignValue()) {
 		return alignValue;
 	} else if (auto marginsValue = readMarginsValue()) {
@@ -492,10 +497,11 @@ structure::Value ParsedFile::readPositiveValue() {
 	} else if (numericToken.type == BasicType::Double) {
 		return { structure::TypeTag::Double, tokenValue(numericToken).toDouble() };
 	} else if (numericToken.type == BasicType::Name) {
+		static const auto RegExp = QRegularExpression("^\\d+px$");
 		auto value = tokenValue(numericToken);
-		auto match = QRegularExpression("^\\d+px$").match(value);
+		auto match = RegExp.match(value);
 		if (match.hasMatch()) {
-			return { structure::TypeTag::Pixels, value.mid(0, value.size() - 2).toInt() };
+			return { structure::TypeTag::Pixels, base::StringViewMid(value, 0, value.size() - 2).toInt() };
 		}
 	}
 	file_.putBack();
@@ -568,8 +574,8 @@ structure::Value ParsedFile::readColorValue() {
 }
 
 structure::Value ParsedFile::readPointValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "point") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "point") {
 			assertNextToken(BasicType::LeftParenthesis);
 
 			auto x = readNumericOrNumericCopyValue(); assertNextToken(BasicType::Comma);
@@ -589,8 +595,8 @@ structure::Value ParsedFile::readPointValue() {
 }
 
 structure::Value ParsedFile::readSizeValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "size") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "size") {
 			assertNextToken(BasicType::LeftParenthesis);
 
 			auto w = readNumericOrNumericCopyValue(); assertNextToken(BasicType::Comma);
@@ -609,9 +615,21 @@ structure::Value ParsedFile::readSizeValue() {
 	return {};
 }
 
+structure::Value ParsedFile::readBoolValue() {
+	if (auto value = file_.getToken(BasicType::Name)) {
+		if (tokenValue(value) == "true") {
+			return { structure::TypeTag::Bool, true };
+		} else if (tokenValue(value) == "false") {
+			return { structure::TypeTag::Bool, false };
+		}
+		file_.putBack();
+	}
+	return {};
+}
+
 structure::Value ParsedFile::readAlignValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "align") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "align") {
 			assertNextToken(BasicType::LeftParenthesis);
 
 			auto align = tokenValue(assertNextToken(BasicType::Name));
@@ -630,8 +648,8 @@ structure::Value ParsedFile::readAlignValue() {
 }
 
 structure::Value ParsedFile::readMarginsValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "margins") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "margins") {
 			assertNextToken(BasicType::LeftParenthesis);
 
 			auto l = readNumericOrNumericCopyValue(); assertNextToken(BasicType::Comma);
@@ -655,8 +673,8 @@ structure::Value ParsedFile::readMarginsValue() {
 }
 
 structure::Value ParsedFile::readFontValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "font") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "font") {
 			assertNextToken(BasicType::LeftParenthesis);
 
 			int flags = 0;
@@ -701,8 +719,8 @@ structure::Value ParsedFile::readFontValue() {
 }
 
 structure::Value ParsedFile::readIconValue() {
-	if (auto font = file_.getToken(BasicType::Name)) {
-		if (tokenValue(font) == "icon") {
+	if (auto name = file_.getToken(BasicType::Name)) {
+		if (tokenValue(name) == "icon") {
 			std::vector<structure::data::monoicon> parts;
 			if (file_.getToken(BasicType::LeftBrace)) { // complex icon
 				do {

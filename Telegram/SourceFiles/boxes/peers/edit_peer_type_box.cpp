@@ -29,10 +29,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "mtproto/sender.h"
 #include "ui/rp_widget.h"
+#include "ui/vertical_list.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/box_content_divider.h"
 #include "ui/wrap/padding_wrap.h"
@@ -44,7 +45,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
-#include "styles/style_settings.h"
 
 namespace {
 
@@ -52,7 +52,7 @@ class Controller : public base::has_weak_ptr {
 public:
 	Controller(
 		Window::SessionNavigation *navigation,
-		std::shared_ptr<Ui::BoxShow> show,
+		std::shared_ptr<Ui::Show> show,
 		not_null<Ui::VerticalLayout*> container,
 		not_null<PeerData*> peer,
 		bool useLocationPhrases,
@@ -140,7 +140,7 @@ private:
 		rpl::producer<QString> about);
 
 	Window::SessionNavigation *_navigation = nullptr;
-	std::shared_ptr<Ui::BoxShow> _show;
+	std::shared_ptr<Ui::Show> _show;
 
 	not_null<PeerData*> _peer;
 	bool _linkOnly = false;
@@ -168,7 +168,7 @@ private:
 
 Controller::Controller(
 	Window::SessionNavigation *navigation,
-	std::shared_ptr<Ui::BoxShow> show,
+	std::shared_ptr<Ui::Show> show,
 	not_null<Ui::VerticalLayout*> container,
 	not_null<PeerData*> peer,
 	bool useLocationPhrases,
@@ -218,9 +218,9 @@ void Controller::createContent() {
 					object_ptr<Ui::VerticalLayout>(_wrap.get())));
 			const auto wrap = _controls.whoSendWrap->entity();
 
-			AddSkip(wrap);
+			Ui::AddSkip(wrap);
 			if (_dataSavedValue->hasLinkedChat) {
-				AddSubsectionTitle(wrap, tr::lng_manage_peer_send_title());
+				Ui::AddSubsectionTitle(wrap, tr::lng_manage_peer_send_title());
 
 				_controls.joinToWrite = wrap->add(EditPeerInfoBox::CreateButton(
 					wrap,
@@ -264,16 +264,16 @@ void Controller::createContent() {
 				_dataSavedValue->requestToJoin = toggled;
 			}, wrap->lifetime());
 
-			AddSkip(wrap);
-			AddDividerText(
+			Ui::AddSkip(wrap);
+			Ui::AddDividerText(
 				wrap,
 				rpl::conditional(
 					std::move(joinToWrite),
 					tr::lng_manage_peer_send_approve_members_about(),
 					tr::lng_manage_peer_send_only_members_about()));
 		}
-		AddSkip(_wrap.get());
-		AddSubsectionTitle(
+		Ui::AddSkip(_wrap.get());
+		Ui::AddSubsectionTitle(
 			_wrap.get(),
 			tr::lng_manage_peer_no_forwards_title());
 		_controls.noForwards = _wrap->add(EditPeerInfoBox::CreateButton(
@@ -289,8 +289,8 @@ void Controller::createContent() {
 		) | rpl::start_with_next([=](bool toggled) {
 			_dataSavedValue->noForwards = toggled;
 		}, _wrap->lifetime());
-		AddSkip(_wrap.get());
-		AddDividerText(
+		Ui::AddSkip(_wrap.get());
+		Ui::AddDividerText(
 			_wrap.get(),
 			(_isGroup
 				? tr::lng_manage_peer_no_forwards_about
@@ -419,13 +419,13 @@ object_ptr<Ui::RpWidget> Controller::createUsernameEdit() {
 	const auto container = result->entity();
 
 	using namespace Settings;
-	AddSkip(container);
+	Ui::AddSkip(container);
 	container->add(
 		object_ptr<Ui::FlatLabel>(
 			container,
 			tr::lng_create_group_link(),
-			st::settingsSubsectionTitle),
-		st::settingsSubsectionTitlePadding);
+			st::defaultSubsectionTitle),
+		st::defaultSubsectionTitlePadding);
 
 	const auto placeholder = container->add(
 		object_ptr<Ui::RpWidget>(container),
@@ -453,7 +453,7 @@ object_ptr<Ui::RpWidget> Controller::createUsernameEdit() {
 
 	AddUsernameCheckLabel(container, _usernameCheckInfo.events());
 
-	AddDividerText(
+	Ui::AddDividerText(
 		container,
 		tr::lng_create_channel_link_about());
 
@@ -585,9 +585,8 @@ void Controller::checkUsernameAvailability() {
 			showUsernameError(tr::lng_create_channel_link_invalid());
 		} else if (type == u"USERNAME_PURCHASE_AVAILABLE"_q) {
 			_goodUsername = false;
-			_usernameCheckInfo.fire({
-				.type = UsernameCheckInfo::Type::PurchaseAvailable,
-			});
+			_usernameCheckInfo.fire(
+				UsernameCheckInfo::PurchaseAvailable(checking, _peer));
 		} else if (type == u"USERNAME_OCCUPIED"_q && checking != username) {
 			showUsernameError(tr::lng_create_channel_link_occupied());
 		}
@@ -601,9 +600,7 @@ void Controller::askUsernameRevoke() {
 		_controls.privacy->setValue(Privacy::HasUsername);
 		checkUsernameAvailability();
 	});
-	_show->showBox(
-		Box(PublicLinksLimitBox, _navigation, revokeCallback),
-		Ui::LayerOption::KeepOther);
+	_show->showBox(Box(PublicLinksLimitBox, _navigation, revokeCallback));
 }
 
 void Controller::usernameChanged() {
@@ -677,7 +674,7 @@ object_ptr<Ui::RpWidget> Controller::createInviteLinkBlock() {
 
 	using namespace Settings;
 	if (_dataSavedValue) {
-		AddSkip(container);
+		Ui::AddSkip(container);
 
 		AddSubsectionTitle(container, tr::lng_create_permanent_link_title());
 	}
@@ -688,9 +685,9 @@ object_ptr<Ui::RpWidget> Controller::createInviteLinkBlock() {
 		_peer->session().user(),
 		nullptr);
 
-	AddSkip(container);
+	Ui::AddSkip(container);
 
-	AddDividerText(
+	Ui::AddDividerText(
 		container,
 		((_peer->isMegagroup() || _peer->asChat())
 			? tr::lng_group_invite_about_permanent_group()
@@ -735,7 +732,7 @@ void EditPeerTypeBox::prepare() {
 	const auto controller = Ui::CreateChild<Controller>(
 		this,
 		_navigation,
-		std::make_shared<Ui::BoxShow>(this),
+		uiShow(),
 		content.data(),
 		_peer,
 		_useLocationPhrases,

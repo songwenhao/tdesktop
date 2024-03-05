@@ -16,7 +16,23 @@ if (NOT DESKTOP_APP_USE_PACKAGED)
     else()
         target_include_directories(external_openssl_common SYSTEM
         INTERFACE
-            ${libs_loc}/openssl/include
+            ${libs_loc}/openssl_1_1_1/include
+        )
+    endif()
+
+    if (LINUX)
+        if (DESKTOP_APP_USE_GLIBC_WRAPS)
+            target_link_libraries(external_openssl_common
+            INTERFACE
+                desktop-app::linux_glibc_wraps
+                $<TARGET_FILE:desktop-app::linux_glibc_wraps>
+            )
+        endif()
+
+        target_link_libraries(external_openssl_common
+        INTERFACE
+            ${CMAKE_DL_LIBS}
+            pthread
         )
     endif()
 endif()

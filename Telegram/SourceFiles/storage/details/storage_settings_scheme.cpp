@@ -10,10 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/details/storage_file_utilities.h"
 #include "storage/cache/storage_cache_database.h"
 #include "storage/serialize_common.h"
+#include "storage/storage_media_prepare.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "mtproto/mtproto_config.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/chat/attach/attach_send_files_way.h"
 #include "ui/power_saving.h"
 #include "window/themes/window_theme.h"
@@ -1147,9 +1148,9 @@ bool ReadSetting(
 		settingsStream >> duckingEnabled;
 		if (CheckStreamStatus(settingsStream)) {
 			auto &app = Core::App().settings();
-			app.setCallOutputDeviceId(outputDeviceID);
+			app.setCallPlaybackDeviceId(outputDeviceID);
+			app.setCallCaptureDeviceId(inputDeviceID);
 			app.setCallOutputVolume(outputVolume);
-			app.setCallInputDeviceId(inputDeviceID);
 			app.setCallInputVolume(inputVolume);
 			app.setCallAudioDuckingEnabled(duckingEnabled);
 		}

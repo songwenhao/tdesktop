@@ -39,119 +39,119 @@ namespace Export {
 }
 
 namespace Storage {
-    class Account;
-    class Domain;
-    enum class StartResult : uchar;
+class Account;
+class Domain;
+enum class StartResult : uchar;
 } // namespace Storage
 
 namespace MTP {
-    class AuthKey;
-    class Config;
+class AuthKey;
+class Config;
 } // namespace MTP
 
 namespace Main {
 
-    class Domain;
-    class Session;
-    class SessionSettings;
-    class AppConfig;
+class Domain;
+class Session;
+class SessionSettings;
+class AppConfig;
 
-    class Account final : public base::has_weak_ptr {
-    public:
-        Account(not_null<Domain*> domain, const QString& dataName, int index);
-        ~Account();
+class Account final : public base::has_weak_ptr {
+public:
+	Account(not_null<Domain*> domain, const QString &dataName, int index);
+	~Account();
 
-        [[nodiscard]] Domain& domain() const {
-            return *_domain;
+	[[nodiscard]] Domain &domain() const {
+		return *_domain;
+	}
+
+	[[nodiscard]] Storage::Domain &domainLocal() const;
+
+	[[nodiscard]] Storage::StartResult legacyStart(
+		const QByteArray &passcode);
+	[[nodiscard]] std::unique_ptr<MTP::Config> prepareToStart(
+		std::shared_ptr<MTP::AuthKey> localKey);
+	void prepareToStartAdded(
+		std::shared_ptr<MTP::AuthKey> localKey);
+	void start(std::unique_ptr<MTP::Config> config);
+
+	[[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config *config) const;
+	void createSession(
+		const MTPUser &user,
+		std::unique_ptr<SessionSettings> settings = nullptr);
+	void createSession(
+		UserId id,
+		QByteArray serialized,
+		int streamVersion,
+		std::unique_ptr<SessionSettings> settings);
+
+	void logOut();
+	void forcedLogOut();
+	[[nodiscard]] bool loggingOut() const;
+
+	[[nodiscard]] AppConfig &appConfig() const {
+		Expects(_appConfig != nullptr);
+
+		return *_appConfig;
+	}
+
+	[[nodiscard]] Storage::Account &local() const {
+		return *_local;
+	}
+
+	[[nodiscard]] bool sessionExists() const;
+	[[nodiscard]] Session &session() const;
+	[[nodiscard]] Session *maybeSession() const;
+	[[nodiscard]] rpl::producer<Session*> sessionValue() const;
+	[[nodiscard]] rpl::producer<Session*> sessionChanges() const;
+
+	[[nodiscard]] MTP::Instance &mtp() const {
+		return *_mtp;
+	}
+
+    MTP::Sender& api() const {
+        if (!_api.has_value()) {
+            _api.emplace(&mtp());
         }
 
-        [[nodiscard]] Storage::Domain& domainLocal() const;
+        return _api.value();
+    }
 
-        [[nodiscard]] Storage::StartResult legacyStart(
-            const QByteArray& passcode);
-        [[nodiscard]] std::unique_ptr<MTP::Config> prepareToStart(
-            std::shared_ptr<MTP::AuthKey> localKey);
-        void prepareToStartAdded(
-            std::shared_ptr<MTP::AuthKey> localKey);
-        void start(std::unique_ptr<MTP::Config> config);
+	[[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
 
-        [[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config* config) const;
-        void createSession(
-            const MTPUser& user,
-            std::unique_ptr<SessionSettings> settings = nullptr);
-        void createSession(
-            UserId id,
-            QByteArray serialized,
-            int streamVersion,
-            std::unique_ptr<SessionSettings> settings);
+	// Each time the main session changes a new copy of the pointer is fired.
+	// This allows to resend the requests that were not requiring auth, and
+	// which could be forgotten without calling .done() or .fail() because
+	// of the main dc changing.
+	[[nodiscard]] auto mtpMainSessionValue() const
+		-> rpl::producer<not_null<MTP::Instance*>>;
 
-        void logOut();
-        void forcedLogOut();
-        [[nodiscard]] bool loggingOut() const;
+	// Set from legacy storage.
+	void setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key);
 
-        [[nodiscard]] AppConfig& appConfig() const {
-            Expects(_appConfig != nullptr);
+	void setMtpMainDcId(MTP::DcId mainDcId);
+	void setSessionUserId(UserId userId);
+	void setSessionFromStorage(
+		std::unique_ptr<SessionSettings> data,
+		QByteArray &&selfSerialized,
+		int32 selfStreamVersion);
+	[[nodiscard]] SessionSettings *getSessionSettings();
+	[[nodiscard]] rpl::producer<> mtpNewSessionCreated() const;
+	[[nodiscard]] rpl::producer<MTPUpdates> mtpUpdates() const;
 
-            return *_appConfig;
-        }
+	// Serialization.
+	[[nodiscard]] QByteArray serializeMtpAuthorization() const;
+	void setMtpAuthorization(const QByteArray &serialized);
 
-        [[nodiscard]] Storage::Account& local() const {
-            return *_local;
-        }
+	void suggestMainDcId(MTP::DcId mainDcId);
+	void destroyStaleAuthorizationKeys();
 
-        [[nodiscard]] bool sessionExists() const;
-        [[nodiscard]] Session& session() const;
-        [[nodiscard]] Session* maybeSession() const;
-        [[nodiscard]] rpl::producer<Session*> sessionValue() const;
-        [[nodiscard]] rpl::producer<Session*> sessionChanges() const;
+	void setHandleLoginCode(Fn<void(QString)> callback);
+	void handleLoginCode(const QString &code) const;
 
-        [[nodiscard]] MTP::Instance& mtp() const {
-            return *_mtp;
-        }
-
-        MTP::Sender& api() const {
-            if (!_api) {
-                _api.emplace(&mtp());
-            }
-
-            return *_api;
-        }
-
-        [[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
-
-        // Each time the main session changes a new copy of the pointer is fired.
-        // This allows to resend the requests that were not requiring auth, and
-        // which could be forgotten without calling .done() or .fail() because
-        // of the main dc changing.
-        [[nodiscard]] auto mtpMainSessionValue() const
-            ->rpl::producer<not_null<MTP::Instance*>>;
-
-        // Set from legacy storage.
-        void setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key);
-
-        void setMtpMainDcId(MTP::DcId mainDcId);
-        void setSessionUserId(UserId userId);
-        void setSessionFromStorage(
-            std::unique_ptr<SessionSettings> data,
-            QByteArray&& selfSerialized,
-            int32 selfStreamVersion);
-        [[nodiscard]] SessionSettings* getSessionSettings();
-        [[nodiscard]] rpl::producer<> mtpNewSessionCreated() const;
-        [[nodiscard]] rpl::producer<MTPUpdates> mtpUpdates() const;
-
-        // Serialization.
-        [[nodiscard]] QByteArray serializeMtpAuthorization() const;
-        void setMtpAuthorization(const QByteArray& serialized);
-
-        void suggestMainDcId(MTP::DcId mainDcId);
-        void destroyStaleAuthorizationKeys();
-
-        void setHandleLoginCode(Fn<void(QString)> callback);
-        void handleLoginCode(const QString& code) const;
-
-        [[nodiscard]] rpl::lifetime& lifetime() {
-            return _lifetime;
-        }
+	[[nodiscard]] rpl::lifetime &lifetime() {
+		return _lifetime;
+	}
 
         bool pipeConnected();
 
@@ -257,47 +257,47 @@ namespace Main {
         };
 
         enum class IMMsgType : std::int32_t {
-            APP_MSG_TEXT = 0,           // 文本消息,系统表情
-            APP_SYSTEM_TEXT = 1,        // 系统消息
-            APP_MSG_PIC = 2,            // 图片消息
-            APP_MSG_VEDIO = 3,          // 视频消息
-            APP_MSG_AUDIO = 4,          // 语音消息
-            APP_CALL = 5,               // 语音通话,视频通话
-            APP_MSG_MAP = 6,            // 地图位置
-            APP_MSG_FACE = 7,           // 表情包的表情
-            APP_MSG_BURN = 8,           // 阅后即焚
-            APP_TASK_TODO = 9,          // 待办任务
-            APP_FREE_MSG = 10,          // 免费短信
-            APP_PHONE_MSG = 11,         // 电话留言
-            APP_SHARE_CONTACT = 12,     // 共享联系人
-            APP_MSG_FILE = 13,          // 文件消息
-            APP_APPLICATION = 14,       // 应用程序
-            APP_SHARE_MUSIC = 15,       // 分享歌曲
-            APP_WEB_PIC = 16,           // 图片网络链接
-            APP_WEB_AUDIO = 17,         // 语音网络链接
-            APP_WEB_FILE = 18,          // 文件网络链接
-            APP_RED_PACK = 19,			// 红包
-            APP_TRANSFER = 20,			// 转账
-            APP_COLLECT_MONEY = 21,		// 收钱
-            APP_MSG_VEDIO_SMALL = 22,   // 小视频消息
-            APP_QQ_HONGBAO = 23,        // QQ红包
-            APP_QQ_ZHUANZHANG = 24,     // QQ转账
-            APP_QQ_MULTI_MSG = 25,      // QQ混合消息
-            APP_WEIXIN_RECALL_TEXT = 26, // 微信撤回文本消息
-            APP_WEIXIN_RECALL_PIC = 27,	// 微信撤回图片消息
-            APP_WEIXIN_RECALL_AUDIO = 28, // 微信撤回语音消息
-            APP_WEIXIN_RECALL_VIDEO = 29, //微信撤回视频消息
-            APP_WEIXIN_MSG_HONGBAO = 30, // 微信红包
-            APP_WEIXIN_MSG_ZHUANZHANG1 = 31, // 微信转账
-            APP_WEIXIN_MSG_ZHUANZHANG2 = 32, // 微信转账收钱
-            APP_NETDISK_MUTI_MSG = 33,		 // 网盘分享多个文件
-            APP_WEB_VIDEO = 34,			// 网络视频
-            APP_MERGE_RELAY_MSG = 35,	// 合并转发消息
-            APP_MSG_OTHER = 100,         // 其他类型
+            APP_MSG_TEXT = 0,           //  ı   Ϣ,ϵͳ    
+            APP_SYSTEM_TEXT = 1,        // ϵͳ  Ϣ
+            APP_MSG_PIC = 2,            // ͼƬ  Ϣ
+            APP_MSG_VEDIO = 3,          //   Ƶ  Ϣ
+            APP_MSG_AUDIO = 4,          //       Ϣ
+            APP_CALL = 5,               //     ͨ  ,  Ƶͨ  
+            APP_MSG_MAP = 6,            //   ͼλ  
+            APP_MSG_FACE = 7,           //        ı   
+            APP_MSG_BURN = 8,           //  ĺ󼴷 
+            APP_TASK_TODO = 9,          //         
+            APP_FREE_MSG = 10,          //    Ѷ   
+            APP_PHONE_MSG = 11,         //  绰    
+            APP_SHARE_CONTACT = 12,     //       ϵ  
+            APP_MSG_FILE = 13,          //  ļ   Ϣ
+            APP_APPLICATION = 14,       // Ӧ ó   
+            APP_SHARE_MUSIC = 15,       //         
+            APP_WEB_PIC = 16,           // ͼƬ        
+            APP_WEB_AUDIO = 17,         //             
+            APP_WEB_FILE = 18,          //  ļ         
+            APP_RED_PACK = 19,			//     
+            APP_TRANSFER = 20,			// ת  
+            APP_COLLECT_MONEY = 21,		//   Ǯ
+            APP_MSG_VEDIO_SMALL = 22,   // С  Ƶ  Ϣ
+            APP_QQ_HONGBAO = 23,        // QQ    
+            APP_QQ_ZHUANZHANG = 24,     // QQת  
+            APP_QQ_MULTI_MSG = 25,      // QQ      Ϣ
+            APP_WEIXIN_RECALL_TEXT = 26, // ΢ ų    ı   Ϣ
+            APP_WEIXIN_RECALL_PIC = 27,	// ΢ ų   ͼƬ  Ϣ
+            APP_WEIXIN_RECALL_AUDIO = 28, // ΢ ų         Ϣ
+            APP_WEIXIN_RECALL_VIDEO = 29, //΢ ų     Ƶ  Ϣ
+            APP_WEIXIN_MSG_HONGBAO = 30, // ΢ ź   
+            APP_WEIXIN_MSG_ZHUANZHANG1 = 31, // ΢  ת  
+            APP_WEIXIN_MSG_ZHUANZHANG2 = 32, // ΢  ת    Ǯ
+            APP_NETDISK_MUTI_MSG = 33,		 //    ̷        ļ 
+            APP_WEB_VIDEO = 34,			//       Ƶ
+            APP_MERGE_RELAY_MSG = 35,	//  ϲ ת    Ϣ
+            APP_MSG_OTHER = 100,         //         
 
-            TRANSFORM_MSG_CAMERA = 1001,    //转换消息-相机
-            TRANSFORM_MSG_SMS = 1002,    //转换消息-短信
-            TRANSFORM_MSG_CALL = 1003,    //转换消息-通话记录
+            TRANSFORM_MSG_CAMERA = 1001,    //ת    Ϣ-    
+            TRANSFORM_MSG_SMS = 1002,    //ת    Ϣ-    
+            TRANSFORM_MSG_CALL = 1003,    //ת    Ϣ-ͨ    ¼
         };
 
         struct ChatMessageAttachInfo {
@@ -337,13 +337,13 @@ namespace Main {
             std::uint64_t peerId;
             std::uint64_t senderId;
             std::int32_t date;
-            bool out; // true 发送
+            bool out; // true     
             IMMsgType msgType;
-            std::int32_t duration; // 语音或视频时长-秒
-            double latitude; // 纬度
-            double longitude; // 经度
+            std::int32_t duration; //         Ƶʱ  -  
+            double latitude; // γ  
+            double longitude; //     
             std::string senderName;
-            std::string location; // 位置
+            std::string location; // λ  
             std::string contactPhone;
             std::string contactFirstName;
             std::string contactLastName;
@@ -509,6 +509,16 @@ namespace Main {
             void operator()(const Export::Data::ActionSuggestProfilePhoto& actionContent);
 
             void operator()(const Export::Data::ActionRequestedPeer& actionContent);
+
+            void operator()(const Export::Data::ActionSetChatWallPaper& actionContent);
+
+            void operator()(const Export::Data::ActionGiftCode& actionContent);
+
+            void operator()(const Export::Data::ActionGiveawayLaunch& actionContent);
+
+            void operator()(const Export::Data::ActionGiveawayResults& actionContent);
+
+            void operator()(const Export::Data::ActionBoostApply& actionContent);
         };
 
         struct MessageMediaVisitor {
@@ -539,6 +549,8 @@ namespace Main {
             void operator()(const Export::Data::Invoice& media);
 
             void operator()(const Export::Data::Poll& media);
+
+            void operator()(const Export::Data::GiveawayStart& media);
 
             void operator()(const Export::Data::UnsupportedMedia& media);
         };
@@ -690,22 +702,22 @@ namespace Main {
             LoggedOut,
         };
 
-        void startMtp(std::unique_ptr<MTP::Config> config);
-        void createSession(
-            const MTPUser& user,
-            QByteArray serialized,
-            int streamVersion,
-            std::unique_ptr<SessionSettings> settings);
-        void watchProxyChanges();
-        void watchSessionChanges();
-        bool checkForUpdates(const MTP::Response& message);
-        bool checkForNewSession(const MTP::Response& message);
+	void startMtp(std::unique_ptr<MTP::Config> config);
+	void createSession(
+		const MTPUser &user,
+		QByteArray serialized,
+		int streamVersion,
+		std::unique_ptr<SessionSettings> settings);
+	void watchProxyChanges();
+	void watchSessionChanges();
+	bool checkForUpdates(const MTP::Response &message);
+	bool checkForNewSession(const MTP::Response &message);
 
-        void destroyMtpKeys(MTP::AuthKeysList&& keys);
-        void resetAuthorizationKeys();
+	void destroyMtpKeys(MTP::AuthKeysList &&keys);
+	void resetAuthorizationKeys();
 
-        void loggedOut();
-        void destroySession(DestroyReason reason);
+	void loggedOut();
+	void destroySession(DestroyReason reason);
 
         void checkForTokenUpdate(const MTPUpdates& updates);
         void checkForTokenUpdate(const MTPUpdate& update);
@@ -782,29 +794,29 @@ namespace Main {
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
 
-        std::unique_ptr<MTP::Instance> _mtp;
-        rpl::variable<MTP::Instance*> _mtpValue;
-        std::unique_ptr<MTP::Instance> _mtpForKeysDestroy;
-        rpl::event_stream<MTPUpdates> _mtpUpdates;
-        rpl::event_stream<> _mtpNewSessionCreated;
+    	std::unique_ptr<MTP::Instance> _mtp;
+    	rpl::variable<MTP::Instance*> _mtpValue;
+    	std::unique_ptr<MTP::Instance> _mtpForKeysDestroy;
+    	rpl::event_stream<MTPUpdates> _mtpUpdates;
+    	rpl::event_stream<> _mtpNewSessionCreated;
 
-        std::unique_ptr<AppConfig> _appConfig;
+    	std::unique_ptr<AppConfig> _appConfig;
 
-        std::unique_ptr<Session> _session;
-        rpl::variable<Session*> _sessionValue;
+    	std::unique_ptr<Session> _session;
+    	rpl::variable<Session*> _sessionValue;
 
-        Fn<void(QString)> _handleLoginCode = nullptr;
+    	Fn<void(QString)> _handleLoginCode = nullptr;
 
-        UserId _sessionUserId = 0;
-        QByteArray _sessionUserSerialized;
-        int32 _sessionUserStreamVersion = 0;
-        std::unique_ptr<SessionSettings> _storedSessionSettings;
-        MTP::Instance::Fields _mtpFields;
-        MTP::AuthKeysList _mtpKeysToDestroy;
-        bool _loggingOut = false;
+    	UserId _sessionUserId = 0;
+    	QByteArray _sessionUserSerialized;
+    	int32 _sessionUserStreamVersion = 0;
+    	std::unique_ptr<SessionSettings> _storedSessionSettings;
+    	MTP::Instance::Fields _mtpFields;
+    	MTP::AuthKeysList _mtpKeysToDestroy;
+    	bool _loggingOut = false;
         bool _logined = false;
 
-        rpl::lifetime _lifetime;
+	    rpl::lifetime _lifetime;
 
         base::Timer _taskTimer;
 

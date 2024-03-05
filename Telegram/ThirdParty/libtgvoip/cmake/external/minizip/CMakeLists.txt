@@ -9,41 +9,44 @@ add_library(desktop-app::external_minizip ALIAS external_minizip)
 
 if (DESKTOP_APP_USE_PACKAGED)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(MINIZIP IMPORTED_TARGET minizip<2.0.0)
+    pkg_check_modules(MINIZIP IMPORTED_TARGET minizip)
 
     if (MINIZIP_FOUND)
         target_link_libraries(external_minizip INTERFACE PkgConfig::MINIZIP)
-        return()
     endif()
 endif()
 
-add_library(external_minizip_bundled STATIC)
-init_target(external_minizip_bundled "(external)")
+if (NOT MINIZIP_FOUND)
+    if (NOT WIN32)
+        add_library(external_minizip_bundled STATIC)
+        init_target(external_minizip_bundled "(external)")
 
-set(minizip_loc ${third_party_loc}/minizip)
+        set(minizip_loc ${third_party_loc}/minizip)
 
-target_sources(external_minizip_bundled
-PRIVATE
-    ${minizip_loc}/crypt.h
-    ${minizip_loc}/ioapi.c
-    ${minizip_loc}/ioapi.h
-    ${minizip_loc}/zip.c
-    ${minizip_loc}/zip.h
-    ${minizip_loc}/unzip.c
-    ${minizip_loc}/unzip.h
-)
+        target_sources(external_minizip_bundled
+        PRIVATE
+            ${minizip_loc}/crypt.h
+            ${minizip_loc}/ioapi.c
+            ${minizip_loc}/ioapi.h
+            ${minizip_loc}/zip.c
+            ${minizip_loc}/zip.h
+            ${minizip_loc}/unzip.c
+            ${minizip_loc}/unzip.h
+        )
 
-target_include_directories(external_minizip_bundled SYSTEM
-PUBLIC
-    ${minizip_loc}
-)
+        target_include_directories(external_minizip_bundled SYSTEM
+        PUBLIC
+            ${minizip_loc}
+        )
 
-target_link_libraries(external_minizip_bundled
-PRIVATE
-    desktop-app::external_zlib
-)
-
-target_link_libraries(external_minizip
-INTERFACE
-    external_minizip_bundled
-)
+        target_link_libraries(external_minizip
+        INTERFACE
+            external_minizip_bundled
+        )
+    else()
+        target_include_directories(external_minizip SYSTEM
+        INTERFACE
+            ${libs_loc}/zlib/contrib/minizip
+        )
+    endif()
+endif()

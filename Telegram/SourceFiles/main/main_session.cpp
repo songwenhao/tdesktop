@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 
 #include "apiwrap.h"
+#include "api/api_peer_colors.h"
 #include "api/api_updates.h"
-#include "api/api_send_progress.h"
 #include "api/api_user_privacy.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
@@ -28,7 +28,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
 #include "storage/storage_facade.h"
-#include "storage/storage_account.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_user.h"
@@ -241,7 +240,7 @@ bool Session::premium() const {
 }
 
 bool Session::premiumPossible() const {
-	return premium() || _premiumPossible.current();
+	return premium() || premiumCanBuy();
 }
 
 bool Session::premiumBadgesShown() const {
@@ -261,6 +260,10 @@ rpl::producer<bool> Session::premiumPossibleValue() const {
 		std::move(premium),
 		_premiumPossible.value(),
 		_1 || _2);
+}
+
+bool Session::premiumCanBuy() const {
+	return _premiumPossible.current();
 }
 
 bool Session::isTestMode() const {
@@ -474,6 +477,11 @@ Window::SessionController *Session::tryResolveWindow() const {
 		}
 	}
 	return _windows.front();
+}
+
+auto Session::colorIndicesValue()
+-> rpl::producer<Ui::ColorIndicesCompressed> {
+	return api().peerColors().indicesValue();
 }
 
 } // namespace Main

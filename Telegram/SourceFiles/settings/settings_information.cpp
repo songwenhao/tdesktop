@@ -7,15 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_information.h"
 
-#include "editor/photo_editor_layer_widget.h"
-#include "settings/settings_common.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/box_content_divider.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
@@ -24,12 +22,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/delayed_activation.h"
 #include "ui/painter.h"
+#include "ui/vertical_list.h"
 #include "ui/unread_badge_paint.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
 #include "boxes/add_contact_box.h"
-#include "boxes/change_phone_box.h"
 #include "boxes/premium_limits_box.h"
 #include "boxes/username_box.h"
 #include "data/data_session.h"
@@ -50,7 +48,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "api/api_peer_photo.h"
 #include "api/api_user_names.h"
-#include "core/file_utilities.h"
 #include "base/call_delayed.h"
 #include "base/options.h"
 #include "base/unixtime.h"
@@ -63,7 +60,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 
 #include <QtGui/QGuiApplication>
-#include <QtGui/QClipboard>
 #include <QtCore/QBuffer>
 
 namespace Settings {
@@ -188,7 +184,7 @@ public:
 		not_null<Ui::VerticalLayout*> container,
 		not_null<Window::SessionController*> controller);
 
-	[[nodiscard]] rpl::producer<> currentAccountActivations() const;
+	[[nodiscard]] rpl::producer<> closeRequests() const;
 
 private:
 	void setup();
@@ -209,7 +205,7 @@ private:
 	std::unique_ptr<Ui::VerticalLayoutReorder> _reorder;
 	int _reordering = 0;
 
-	rpl::event_stream<> _currentAccountActivations;
+	rpl::event_stream<> _closeRequests;
 
 	base::binary_guard _accountSwitchGuard;
 
@@ -363,7 +359,7 @@ void SetupRows(
 		not_null<UserData*> self) {
 	const auto session = &self->session();
 
-	AddSkip(container);
+	Ui::AddSkip(container);
 
 	AddRow(
 		container,
@@ -371,10 +367,11 @@ void SetupRows(
 		Info::Profile::NameValue(self) | Ui::Text::ToWithEntities(),
 		tr::lng_profile_copy_fullname(tr::now),
 		[=] { controller->show(Box<EditNameBox>(self)); },
-		{ &st::settingsIconUser, kIconLightBlue });
+		{ &st::menuIconProfile });
 
 	const auto showChangePhone = [=] {
-		controller->showSettings(ChangePhone::Id());
+		controller->show(
+			Ui::MakeInformBox(tr::lng_change_phone_error()));
 		controller->window().activate();
 	};
 	AddRow(
@@ -383,7 +380,7 @@ void SetupRows(
 		Info::Profile::PhoneValue(self),
 		tr::lng_profile_copy_phone(tr::now),
 		showChangePhone,
-		{ &st::settingsIconCalls, kIconGreen });
+		{ &st::menuIconPhone });
 
 	auto username = Info::Profile::UsernameValue(self);
 	auto empty = base::duplicate(
@@ -419,15 +416,17 @@ void SetupRows(
 		std::move(value),
 		tr::lng_context_copy_mention(tr::now),
 		[=] {
-			const auto box = controller->show(Box(UsernamesBox, session));
+			const auto box = controller->show(
+				Box(UsernamesBox, session->user()));
 			box->boxClosing(
 			) | rpl::start_with_next([=] {
 				session->api().usernames().requestToCache(session->user());
 			}, box->lifetime());
 		},
-		{ &st::settingsIconMention, kIconLightOrange });
+		{ &st::menuIconUsername });
 
-	AddSkip(container);
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, tr::lng_settings_username_about());
 }
 
 void SetupBio(
@@ -536,10 +535,8 @@ void SetupBio(
 	auto cursor = bio->textCursor();
 	cursor.setPosition(bio->getLastText().size());
 	bio->setTextCursor(cursor);
-	QObject::connect(bio, &Ui::InputField::submitted, [=] {
-		save();
-	});
-	QObject::connect(bio, &Ui::InputField::changed, updated);
+	bio->submits() | rpl::start_with_next([=] { save(); }, bio->lifetime());
+	bio->changes() | rpl::start_with_next(updated, bio->lifetime());
 	bio->setInstantReplaces(Ui::InstantReplaces::Default());
 	bio->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue());
@@ -549,14 +546,13 @@ void SetupBio(
 		&self->session());
 	updated();
 
-	AddDividerText(container, tr::lng_settings_about_bio());
+	Ui::AddDividerText(container, tr::lng_settings_about_bio());
 }
 
 void SetupAccountsWrap(
 		not_null<Ui::VerticalLayout*> container,
 		not_null<Window::SessionController*> controller) {
-	AddDivider(container);
-	AddSkip(container);
+	Ui::AddSkip(container);
 
 	SetupAccounts(container, controller);
 }
@@ -676,8 +672,7 @@ void SetupAccountsWrap(
 			state->menu);
 		addAction(tr::lng_context_new_window(tr::now), [=] {
 			Ui::PreventDelayedActivation();
-			Core::App().ensureSeparateWindowForAccount(account);
-			Core::App().domain().maybeActivate(account);
+			callback(Qt::ControlModifier);
 		}, &st::menuIconNewWindow);
 		Window::AddSeparatorAndShiftUp(addAction);
 
@@ -728,8 +723,8 @@ AccountsList::AccountsList(
 	setup();
 }
 
-rpl::producer<> AccountsList::currentAccountActivations() const {
-	return _currentAccountActivations.events();
+rpl::producer<> AccountsList::closeRequests() const {
+	return _closeRequests.events();
 }
 
 void AccountsList::setup() {
@@ -780,13 +775,12 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 	const auto result = _outer->add(
 		object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
 			_outer.get(),
-			CreateButton(
+			CreateButtonWithIcon(
 				_outer.get(),
 				tr::lng_menu_add_account(),
 				st::mainMenuAddAccountButton,
 				{
 					&st::settingsIconAdd,
-					0,
 					IconType::Round,
 					&st::windowBgActive
 				})))->setDuration(0);
@@ -887,7 +881,7 @@ void AccountsList::rebuild() {
 					return;
 				}
 				if (account == &_controller->session().account()) {
-					_currentAccountActivations.fire({});
+					_closeRequests.fire({});
 					return;
 				}
 				const auto newWindow = (modifiers & Qt::ControlModifier);
@@ -895,14 +889,16 @@ void AccountsList::rebuild() {
 					if (guard) {
 						_reorder->finishReordering();
 						if (newWindow) {
+							_closeRequests.fire({});
 							Core::App().ensureSeparateWindowForAccount(
 								account);
 						}
 						Core::App().domain().maybeActivate(account);
 					}
 				};
-				if (Core::App().separateWindowForAccount(account)) {
-					activate();
+				if (const auto window = Core::App().separateWindowForAccount(account)) {
+					_closeRequests.fire({});
+					window->activate();
 				} else {
 					base::call_delayed(
 						st::defaultRippleAnimation.hideDuration,
@@ -966,7 +962,7 @@ AccountsEvents SetupAccounts(
 		container,
 		controller);
 	return {
-		.currentAccountActivations = list->currentAccountActivations(),
+		.closeRequests = list->closeRequests(),
 	};
 }
 

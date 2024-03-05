@@ -18,6 +18,10 @@
 #include <QtCore/QPointer>
 #include <QtGui/QtEvents>
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+#include <qpa/qplatformbackingstore.h>
+#endif // Qt >= 6.4.0
+
 namespace Ui {
 
 void ToggleChildrenVisibility(not_null<QWidget*> widget, bool visible);
@@ -25,6 +29,7 @@ void ToggleChildrenVisibility(not_null<QWidget*> widget, bool visible);
 } // namespace Ui
 
 class TWidget;
+class TWidgetPrivate;
 
 template <typename Base>
 class TWidgetHelper : public Base {
@@ -146,6 +151,12 @@ protected:
 	virtual void enterFromChildEvent(QEvent *e, QWidget *child) {
 	}
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+	virtual std::optional<QPlatformBackingStoreRhiConfig> rhiConfig() const {
+		return std::nullopt;
+	}
+#endif // Qt >= 6.4.0
+
 private:
 	TWidget *tparent() {
 		return qobject_cast<TWidget*>(Base::parentWidget());
@@ -157,6 +168,8 @@ private:
 	template <typename OtherBase>
 	friend class TWidgetHelper;
 
+	friend class TWidgetPrivate;
+
 };
 
 class TWidget : public TWidgetHelper<QWidget> {
@@ -164,8 +177,7 @@ class TWidget : public TWidgetHelper<QWidget> {
 	Q_OBJECT
 
 public:
-	TWidget(QWidget *parent = nullptr) : TWidgetHelper<QWidget>(parent) {
-	}
+	TWidget(QWidget *parent = nullptr);
 
 	// Get the size of the widget as it should be.
 	// Negative return value means no default width.
@@ -187,8 +199,8 @@ public:
 
 	// Resize to minimum of natural width and available width.
 	void resizeToNaturalWidth(int newWidth) {
-		auto maxWidth = naturalWidth();
-		resizeToWidth((maxWidth >= 0) ? qMin(newWidth, maxWidth) : newWidth);
+		const auto natural = naturalWidth();
+		resizeToWidth((natural >= 0) ? qMin(newWidth, natural) : newWidth);
 	}
 
 	QRect rectNoMargins() const {
@@ -214,7 +226,7 @@ public:
 
 	// Updates the area that is visible inside the scroll container.
 	void setVisibleTopBottom(int visibleTop, int visibleBottom) {
-		auto max = height();
+		const auto max = std::max(height(), 0);
 		visibleTopBottomUpdated(
 			std::clamp(visibleTop, 0, max),
 			std::clamp(visibleBottom, 0, max));
@@ -249,7 +261,10 @@ namespace Ui {
 
 class RpWidget;
 
-void ResizeFitChild(not_null<RpWidget*> parent, not_null<RpWidget*> child);
+void ResizeFitChild(
+	not_null<RpWidget*> parent,
+	not_null<RpWidget*> child,
+	int heightMin = 0);
 
 template <typename Widget>
 using RpWidgetParent = std::conditional_t<

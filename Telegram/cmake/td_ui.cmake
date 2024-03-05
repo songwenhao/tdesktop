@@ -23,6 +23,7 @@ set(style_files
     calls/calls.style
     export/view/export.style
     info/info.style
+    info/boosts/giveaway/giveaway.style
     info/userpic/info_userpic_builder.style
     intro/intro.style
     media/player/media_player.style
@@ -34,6 +35,7 @@ set(style_files
     overview/overview.style
     window/window.style
     editor/editor.style
+    statistics/statistics.style
 )
 
 set(dependent_style_files
@@ -68,7 +70,13 @@ PRIVATE
     countries/countries_instance.cpp
     countries/countries_instance.h
 
+    data/data_statistics_chart.cpp
+    data/data_statistics_chart.h
     data/data_subscription_option.h
+
+    dialogs/dialogs_three_state_icon.h
+    dialogs/ui/dialogs_stories_list.cpp
+    dialogs/ui/dialogs_stories_list.h
 
     editor/controllers/undo_controller.cpp
     editor/controllers/undo_controller.h
@@ -92,6 +100,10 @@ PRIVATE
 
     history/history_view_top_toast.cpp
     history/history_view_top_toast.h
+    history/view/controls/history_view_characters_limit.cpp
+    history/view/controls/history_view_characters_limit.h
+    history/view/controls/history_view_voice_record_button.cpp
+    history/view/controls/history_view_voice_record_button.h
 
     info/profile/info_profile_icon.cpp
     info/profile/info_profile_icon.h
@@ -101,6 +113,16 @@ PRIVATE
     info/userpic/info_userpic_color_circle_button.h
     info/userpic/info_userpic_emoji_builder_layer.cpp
     info/userpic/info_userpic_emoji_builder_layer.h
+
+    info/boosts/giveaway/boost_badge.cpp
+    info/boosts/giveaway/boost_badge.h
+    info/boosts/giveaway/giveaway_type_row.cpp
+    info/boosts/giveaway/giveaway_type_row.h
+    info/boosts/giveaway/select_countries_box.cpp
+    info/boosts/giveaway/select_countries_box.h
+
+    intro/intro_code_input.cpp
+    intro/intro_code_input.h
 
     layout/abstract_layout_item.cpp
     layout/abstract_layout_item.h
@@ -154,8 +176,49 @@ PRIVATE
     platform/mac/file_bookmark_mac.mm
     platform/platform_file_bookmark.h
 
+    settings/settings_common.cpp
+    settings/settings_common.h
+
+    statistics/chart_lines_filter_controller.cpp
+    statistics/chart_lines_filter_controller.h
+    statistics/chart_rulers_data.cpp
+    statistics/chart_rulers_data.h
+    statistics/chart_widget.cpp
+    statistics/chart_widget.h
+    statistics/segment_tree.cpp
+    statistics/segment_tree.h
+    statistics/statistics_common.h
+    statistics/statistics_data_deserialize.cpp
+    statistics/statistics_data_deserialize.h
+    statistics/statistics_format_values.cpp
+    statistics/statistics_format_values.h
+    statistics/view/abstract_chart_view.cpp
+    statistics/view/abstract_chart_view.h
+    statistics/view/bar_chart_view.cpp
+    statistics/view/bar_chart_view.h
+    statistics/view/chart_rulers_view.cpp
+    statistics/view/chart_rulers_view.h
+    statistics/view/chart_view_factory.cpp
+    statistics/view/chart_view_factory.h
+    statistics/view/linear_chart_view.cpp
+    statistics/view/linear_chart_view.h
+    statistics/view/stack_chart_common.cpp
+    statistics/view/stack_chart_common.h
+    statistics/view/stack_linear_chart_common.cpp
+    statistics/view/stack_linear_chart_common.h
+    statistics/view/stack_linear_chart_view.cpp
+    statistics/view/stack_linear_chart_view.h
+    statistics/widgets/chart_header_widget.cpp
+    statistics/widgets/chart_header_widget.h
+    statistics/widgets/chart_lines_filter_widget.cpp
+    statistics/widgets/chart_lines_filter_widget.h
+    statistics/widgets/point_details_widget.cpp
+    statistics/widgets/point_details_widget.h
+
     ui/boxes/auto_delete_settings.cpp
     ui/boxes/auto_delete_settings.h
+    ui/boxes/boost_box.cpp
+    ui/boxes/boost_box.h
     ui/boxes/calendar_box.cpp
     ui/boxes/calendar_box.h
     ui/boxes/choose_date_time.cpp
@@ -176,6 +239,8 @@ PRIVATE
     ui/boxes/rate_call_box.h
     ui/boxes/report_box.cpp
     ui/boxes/report_box.h
+    ui/boxes/show_or_premium_box.cpp
+    ui/boxes/show_or_premium_box.h
     ui/boxes/single_choice_box.cpp
     ui/boxes/single_choice_box.h
     ui/boxes/time_picker_box.cpp
@@ -222,6 +287,8 @@ PRIVATE
     ui/chat/message_bar.h
     ui/chat/message_bubble.cpp
     ui/chat/message_bubble.h
+    ui/chat/more_chats_bar.cpp
+    ui/chat/more_chats_bar.h
     ui/chat/pinned_bar.cpp
     ui/chat/pinned_bar.h
     ui/chat/requests_bar.cpp
@@ -236,6 +303,8 @@ PRIVATE
     ui/controls/download_bar.h
     ui/controls/emoji_button.cpp
     ui/controls/emoji_button.h
+    ui/controls/filter_link_header.cpp
+    ui/controls/filter_link_header.h
     ui/controls/jump_down_button.cpp
     ui/controls/jump_down_button.h
     ui/controls/invite_link_buttons.cpp
@@ -253,6 +322,7 @@ PRIVATE
     ui/controls/who_reacted_context_action.cpp
     ui/controls/who_reacted_context_action.h
     ui/controls/window_outdated_bar.cpp
+    ui/controls/window_outdated_bar_dummy.cpp
     ui/controls/window_outdated_bar.h
     ui/effects/fireworks_animation.cpp
     ui/effects/fireworks_animation.h
@@ -260,16 +330,22 @@ PRIVATE
     ui/effects/glare.h
     ui/effects/loading_element.cpp
     ui/effects/loading_element.h
+    ui/effects/outline_segments.cpp
+    ui/effects/outline_segments.h
     ui/effects/premium_graphics.cpp
     ui/effects/premium_graphics.h
     ui/effects/premium_stars.cpp
     ui/effects/premium_stars.h
     ui/effects/premium_stars_colored.cpp
     ui/effects/premium_stars_colored.h
+    ui/effects/premium_top_bar.cpp
+    ui/effects/premium_top_bar.h
     ui/effects/round_checkbox.cpp
     ui/effects/round_checkbox.h
     ui/effects/scroll_content_shadow.cpp
     ui/effects/scroll_content_shadow.h
+    ui/effects/shake_animation.cpp
+    ui/effects/shake_animation.h
     ui/effects/snowflakes.cpp
     ui/effects/snowflakes.h
     ui/effects/toggle_arrow.cpp
@@ -307,8 +383,12 @@ PRIVATE
     ui/empty_userpic.h
     ui/grouped_layout.cpp
     ui/grouped_layout.h
+    ui/new_badges.cpp
+    ui/new_badges.h
     ui/power_saving.cpp
     ui/power_saving.h
+    ui/vertical_list.cpp
+    ui/vertical_list.h
     ui/unread_badge_paint.cpp
     ui/unread_badge_paint.h
     ui/userpic_view.cpp
@@ -320,6 +400,16 @@ PRIVATE
 
     ui/ui_pch.h
 )
+
+if (DESKTOP_APP_SPECIAL_TARGET)
+    remove_target_sources(td_ui ${src_loc}
+        ui/controls/window_outdated_bar_dummy.cpp
+    )
+else()
+    remove_target_sources(td_ui ${src_loc}
+        ui/controls/window_outdated_bar.cpp
+    )
+endif()
 
 target_include_directories(td_ui
 PUBLIC

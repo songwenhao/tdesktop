@@ -48,32 +48,7 @@ struct IconDescriptor;
 
 namespace Settings {
 
-extern const char kOptionMonoSettingsIcons[];
-
 using Button = Ui::SettingsButton;
-
-class AbstractSection;
-
-struct SectionMeta {
-	[[nodiscard]] virtual object_ptr<AbstractSection> create(
-		not_null<QWidget*> parent,
-		not_null<Window::SessionController*> controller) const = 0;
-};
-
-template <typename SectionType>
-struct SectionMetaImplementation : SectionMeta {
-	object_ptr<AbstractSection> create(
-		not_null<QWidget*> parent,
-		not_null<Window::SessionController*> controller
-	) const final override {
-		return object_ptr<SectionType>(parent, controller);
-	}
-
-	[[nodiscard]] static not_null<SectionMeta*> Meta() {
-		static SectionMetaImplementation result;
-		return &result;
-	}
-};
 
 class AbstractSection : public Ui::RpWidget {
 public:
@@ -116,28 +91,6 @@ public:
 	}
 };
 
-template <typename SectionType>
-class Section : public AbstractSection {
-public:
-	using AbstractSection::AbstractSection;
-
-	[[nodiscard]] static Type Id() {
-		return &SectionMetaImplementation<SectionType>::Meta;
-	}
-	[[nodiscard]] Type id() const final override {
-		return Id();
-	}
-};
-
-inline constexpr auto kIconRed = 1;
-inline constexpr auto kIconGreen = 2;
-inline constexpr auto kIconLightOrange = 3;
-inline constexpr auto kIconLightBlue = 4;
-inline constexpr auto kIconDarkBlue = 5;
-inline constexpr auto kIconPurple = 6;
-inline constexpr auto kIconDarkOrange = 8;
-inline constexpr auto kIconGray = 9;
-
 enum class IconType {
 	Rounded,
 	Round,
@@ -146,10 +99,9 @@ enum class IconType {
 
 struct IconDescriptor {
 	const style::icon *icon = nullptr;
-	int color = 0; // settingsIconBg{color}, 9 for settingsIconBgArchive.
 	IconType type = IconType::Rounded;
 	const style::color *background = nullptr;
-	std::optional<QBrush> backgroundBrush; // Can be useful for gragdients.
+	std::optional<QBrush> backgroundBrush; // Can be useful for gradients.
 
 	explicit operator bool() const {
 		return (icon != nullptr);
@@ -174,22 +126,16 @@ private:
 
 };
 
-void AddSkip(not_null<Ui::VerticalLayout*> container);
-void AddSkip(not_null<Ui::VerticalLayout*> container, int skip);
-void AddDivider(not_null<Ui::VerticalLayout*> container);
-void AddDividerText(
-	not_null<Ui::VerticalLayout*> container,
-	rpl::producer<QString> text);
 void AddButtonIcon(
 	not_null<Ui::AbstractButton*> button,
 	const style::SettingsButton &st,
 	IconDescriptor &&descriptor);
-object_ptr<Button> CreateButton(
+object_ptr<Button> CreateButtonWithIcon(
 	not_null<QWidget*> parent,
 	rpl::producer<QString> text,
 	const style::SettingsButton &st,
 	IconDescriptor &&descriptor = {});
-not_null<Button*> AddButton(
+not_null<Button*> AddButtonWithIcon(
 	not_null<Ui::VerticalLayout*> container,
 	rpl::producer<QString> text,
 	const style::SettingsButton &st,
@@ -205,11 +151,6 @@ void CreateRightLabel(
 	rpl::producer<QString> label,
 	const style::SettingsButton &st,
 	rpl::producer<QString> buttonText);
-not_null<Ui::FlatLabel*> AddSubsectionTitle(
-	not_null<Ui::VerticalLayout*> container,
-	rpl::producer<QString> text,
-	style::margins addPadding = {},
-	const style::FlatLabel *st = nullptr);
 void AddDividerTextWithLottie(
 	not_null<Ui::VerticalLayout*> parent,
 	rpl::producer<> showFinished,
@@ -224,12 +165,6 @@ struct LottieIcon {
 	not_null<QWidget*> parent,
 	Lottie::IconDescriptor &&descriptor,
 	style::margins padding = {});
-
-void FillMenu(
-	not_null<Window::SessionController*> controller,
-	Type type,
-	Fn<void(Type)> showOther,
-	Ui::Menu::MenuCallback addAction);
 
 struct SliderWithLabel {
 	object_ptr<Ui::RpWidget> widget;

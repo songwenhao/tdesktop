@@ -37,7 +37,7 @@ import java.util.Objects;
  * from 1 to 40, all 4 error correction levels, and 4 character encoding modes.</p>
  * <p>Ways to create a QR Code object:</p>
  * <ul>
- *   <li><p>High level: Take the payload data and call {@link QrCode#encodeText(String,Ecc)}
+ *   <li><p>High level: Take the payload data and call {@link QrCode#encodeText(CharSequence,Ecc)}
  *     or {@link QrCode#encodeBinary(byte[],Ecc)}.</p></li>
  *   <li><p>Mid level: Custom-make the list of {@link QrSegment segments}
  *     and call {@link QrCode#encodeSegments(List,Ecc)} or
@@ -66,7 +66,7 @@ public final class QrCode {
 	 * @throws DataTooLongException if the text fails to fit in the
 	 * largest version QR Code at the ECL, which means it is too long
 	 */
-	public static QrCode encodeText(String text, Ecc ecl) {
+	public static QrCode encodeText(CharSequence text, Ecc ecl) {
 		Objects.requireNonNull(text);
 		Objects.requireNonNull(ecl);
 		List<QrSegment> segs = QrSegment.makeSegments(text);
@@ -102,7 +102,7 @@ public final class QrCode {
 	 * of the result may be higher than the ecl argument if it can be done without increasing the version.
 	 * <p>This function allows the user to create a custom sequence of segments that switches
 	 * between modes (such as alphanumeric and byte) to encode text in less space.
-	 * This is a mid-level API; the high-level API is {@link #encodeText(String,Ecc)}
+	 * This is a mid-level API; the high-level API is {@link #encodeText(CharSequence,Ecc)}
 	 * and {@link #encodeBinary(byte[],Ecc)}.</p>
 	 * @param segs the segments to encode
 	 * @param ecl the error correction level to use (not {@code null}) (boostable)
@@ -125,7 +125,7 @@ public final class QrCode {
 	 * mask, or &#x2212;1 to automatically choose an appropriate mask (which may be slow).
 	 * <p>This function allows the user to create a custom sequence of segments that switches
 	 * between modes (such as alphanumeric and byte) to encode text in less space.
-	 * This is a mid-level API; the high-level API is {@link #encodeText(String,Ecc)}
+	 * This is a mid-level API; the high-level API is {@link #encodeText(CharSequence,Ecc)}
 	 * and {@link #encodeBinary(byte[],Ecc)}.</p>
 	 * @param segs the segments to encode
 	 * @param ecl the error correction level to use (not {@code null}) (boostable)
@@ -262,7 +262,26 @@ public final class QrCode {
 		drawFunctionPatterns();
 		byte[] allCodewords = addEccAndInterleave(dataCodewords);
 		drawCodewords(allCodewords);
-		mask = handleConstructorMasking(msk);
+		
+		// Do masking
+		if (msk == -1) {  // Automatically choose best mask
+			int minPenalty = Integer.MAX_VALUE;
+			for (int i = 0; i < 8; i++) {
+				applyMask(i);
+				drawFormatBits(i);
+				int penalty = getPenaltyScore();
+				if (penalty < minPenalty) {
+					msk = i;
+					minPenalty = penalty;
+				}
+				applyMask(i);  // Undoes the mask due to XOR
+			}
+		}
+		assert 0 <= msk && msk <= 7;
+		mask = msk;
+		applyMask(msk);  // Apply the final choice of mask
+		drawFormatBits(msk);  // Overwrite old format bits
+		
 		isFunction = null;
 	}
 	
@@ -503,30 +522,6 @@ public final class QrCode {
 	}
 	
 	
-	// A messy helper function for the constructor. This QR Code must be in an unmasked state when this
-	// method is called. The given argument is the requested mask, which is -1 for auto or 0 to 7 for fixed.
-	// This method applies and returns the actual mask chosen, from 0 to 7.
-	private int handleConstructorMasking(int msk) {
-		if (msk == -1) {  // Automatically choose best mask
-			int minPenalty = Integer.MAX_VALUE;
-			for (int i = 0; i < 8; i++) {
-				applyMask(i);
-				drawFormatBits(i);
-				int penalty = getPenaltyScore();
-				if (penalty < minPenalty) {
-					msk = i;
-					minPenalty = penalty;
-				}
-				applyMask(i);  // Undoes the mask due to XOR
-			}
-		}
-		assert 0 <= msk && msk <= 7;
-		applyMask(msk);  // Apply the final choice of mask
-		drawFormatBits(msk);  // Overwrite old format bits
-		return msk;  // The caller shall assign this value to the final-declared field
-	}
-	
-	
 	// Calculates and returns the penalty score based on state of this QR Code's current modules.
 	// This is used by the automatic mask choice algorithm to find the mask pattern that yields the lowest score.
 	private int getPenaltyScore() {
@@ -599,7 +594,9 @@ public final class QrCode {
 		int total = size * size;  // Note that size is odd, so dark/total != 1/2
 		// Compute the smallest integer k >= 0 such that (45-5k)% <= dark/total <= (55+5k)%
 		int k = (Math.abs(dark * 20 - total * 10) + total - 1) / total - 1;
+		assert 0 <= k && k <= 9;
 		result += k * PENALTY_N4;
+		assert 0 <= result && result <= 2568888;  // Non-tight upper bound based on default values of PENALTY_N1, ..., N4
 		return result;
 	}
 	

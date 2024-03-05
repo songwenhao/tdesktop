@@ -161,7 +161,8 @@ QImage *ItemBase::getResultThumb(Data::FileOrigin origin) const {
 QPixmap ItemBase::getResultContactAvatar(int width, int height) const {
 	if (_result->_type == Result::Type::Contact) {
 		auto result = Ui::EmptyUserpic(
-			Ui::EmptyUserpic::UserpicColor(BareId(qHash(_result->_id))),
+			Ui::EmptyUserpic::UserpicColor(Ui::EmptyUserpic::ColorIndex(
+				BareId(qHash(_result->_id)))),
 			_result->getLayoutTitle()
 		).generate(width);
 		if (result.height() != height * cIntRetinaFactor()) {
@@ -212,7 +213,7 @@ QString ItemBase::getResultThumbLetter() const {
 			domain = parts.at(2);
 		}
 
-		parts = domain.split('@').back().split('.');
+		parts = domain.split('@').constLast().split('.');
 		if (parts.size() > 1) {
 			return parts.at(parts.size() - 2).at(0).toUpper();
 		}

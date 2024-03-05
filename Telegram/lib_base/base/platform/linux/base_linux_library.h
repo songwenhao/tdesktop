@@ -6,7 +6,10 @@
 //
 #pragma once
 
-#include <QtCore/QLibrary>
+#include "base/custom_delete.h"
+
+#include <dlfcn.h>
+#include <memory>
 
 #define LOAD_LIBRARY_SYMBOL(lib, func) \
 	::base::Platform::LoadSymbol(lib, #func, func)
@@ -14,17 +17,19 @@
 namespace base {
 namespace Platform {
 
-bool LoadLibrary(
-	QLibrary &lib,
-	const char *name,
-	std::optional<int> version = std::nullopt);
+using LibraryHandle = std::unique_ptr<void, custom_delete<dlclose>>;
 
-[[nodiscard]] QFunctionPointer LoadSymbolGeneric(
-	QLibrary &lib,
+LibraryHandle LoadLibrary(const char *name, int flags = 0);
+
+[[nodiscard]] void *LoadSymbolGeneric(
+	const LibraryHandle &lib,
 	const char *name);
 
 template <typename Function>
-inline bool LoadSymbol(QLibrary &lib, const char *name, Function &func) {
+inline bool LoadSymbol(
+		const LibraryHandle &lib,
+		const char *name,
+		Function &func) {
 	func = reinterpret_cast<Function>(LoadSymbolGeneric(lib, name));
 	return (func != nullptr);
 }

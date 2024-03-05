@@ -10,11 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/add_contact_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_peer_info_box.h"
-#include "boxes/peer_list_controllers.h"
+#include "boxes/peers/replace_boost_box.h"
 #include "boxes/delete_messages_box.h"
-#include "window/window_adaptive.h"
 #include "window/window_controller.h"
-#include "window/main_window.h"
 #include "window/window_filters_menu.h"
 #include "info/info_memento.h"
 #include "info/info_controller.h"
@@ -28,15 +26,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_instance.h"
 #include "media/view/media_view_open_common.h"
 #include "data/data_document_resolver.h"
-#include "data/data_media_types.h"
 #include "data/data_session.h"
+#include "data/data_file_origin.h"
 #include "data/data_folder.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_user.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
-#include "data/data_document_resolver.h"
 #include "data/data_changes.h"
 #include "data/data_group_call.h"
 #include "data/data_forum.h"
@@ -49,32 +46,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/emoji_interactions.h"
 #include "core/shortcuts.h"
 #include "core/application.h"
-#include "core/core_settings.h"
 #include "core/click_handler_types.h"
 #include "base/unixtime.h"
-#include "base/random.h"
-#include "ui/layers/generic_box.h"
+#include "ui/controls/userpic_button.h"
 #include "ui/text/text_utilities.h"
 #include "ui/text/format_values.h" // Ui::FormatPhone.
 #include "ui/delayed_activation.h"
-#include "ui/chat/attach/attach_bot_webview.h"
-#include "ui/chat/message_bubble.h"
-#include "ui/chat/chat_style.h"
+#include "ui/boxes/boost_box.h"
 #include "ui/chat/chat_theme.h"
 #include "ui/effects/message_sending_animation_controller.h"
 #include "ui/style/style_palette_colorizer.h"
 #include "ui/toast/toast.h"
-#include "ui/toasts/common_toasts.h"
 #include "calls/calls_instance.h" // Core::App().calls().inCall().
 #include "calls/group/calls_group_call.h"
 #include "ui/boxes/calendar_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "mainwidget.h"
-#include "mainwindow.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "lang/lang_keys.h"
 #include "apiwrap.h"
 #include "api/api_chat_invite.h"
 #include "api/api_global_privacy.h"
@@ -83,7 +75,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "window/themes/window_theme.h"
 #include "window/window_peer_menu.h"
+#include "window/window_session_controller_link_info.h"
 #include "settings/settings_main.h"
+#include "settings/settings_premium.h"
 #include "settings/settings_privacy_security.h"
 #include "styles/style_window.h"
 #include "styles/style_dialogs.h"
@@ -94,40 +88,10 @@ namespace {
 
 constexpr auto kCustomThemesInMemory = 5;
 constexpr auto kMaxChatEntryHistorySize = 50;
-constexpr auto kDayBaseFile = ":/gui/day-custom-base.tdesktop-theme"_cs;
-constexpr auto kNightBaseFile = ":/gui/night-custom-base.tdesktop-theme"_cs;
-
-[[nodiscard]] Fn<void(style::palette&)> PreparePaletteCallback(
-	bool dark,
-	std::optional<QColor> accent) {
-	return [=](style::palette &palette) {
-		using namespace Theme;
-		const auto &embedded = EmbeddedThemes();
-		const auto i = ranges::find(
-			embedded,
-			dark ? EmbeddedType::Night : EmbeddedType::Default,
-			&EmbeddedScheme::type);
-		Assert(i != end(embedded));
-		const auto colorizer = accent
-			? ColorizerFrom(*i, *accent)
-			: style::colorizer();
-
-		auto instance = Instance();
-		const auto loaded = LoadFromFile(
-			(dark ? kNightBaseFile : kDayBaseFile).utf16(),
-			&instance,
-			nullptr,
-			nullptr,
-			colorizer);
-		Assert(loaded);
-		palette.finalize();
-		palette = instance.palette;
-	};
-}
 
 [[nodiscard]] Ui::ChatThemeBubblesData PrepareBubblesData(
-	const Data::CloudTheme &theme,
-	Data::CloudThemeType type) {
+		const Data::CloudTheme &theme,
+		Data::CloudThemeType type) {
 	const auto i = theme.settings.find(type);
 	return {
 		.colors = (i != end(theme.settings)
@@ -139,13 +103,150 @@ constexpr auto kNightBaseFile = ":/gui/night-custom-base.tdesktop-theme"_cs;
 	};
 }
 
+class MainWindowShow final : public ChatHelpers::Show {
+public:
+	explicit MainWindowShow(not_null<SessionController*> controller);
+
+	void activate() override;
+
+	void showOrHideBoxOrLayer(
+		std::variant<
+			v::null_t,
+			object_ptr<Ui::BoxContent>,
+			std::unique_ptr<Ui::LayerWidget>> &&layer,
+		Ui::LayerOptions options,
+		anim::type animated) const override;
+
+	not_null<QWidget*> toastParent() const override;
+	bool valid() const override;
+	operator bool() const override;
+
+	Main::Session &session() const override;
+	bool paused(ChatHelpers::PauseReason reason) const override;
+	rpl::producer<> pauseChanged() const override;
+
+	rpl::producer<bool> adjustShadowLeft() const override;
+	SendMenu::Type sendMenuType() const override;
+
+	bool showMediaPreview(
+		Data::FileOrigin origin,
+		not_null<DocumentData*> document) const override;
+	bool showMediaPreview(
+		Data::FileOrigin origin,
+		not_null<PhotoData*> photo) const override;
+
+	void processChosenSticker(
+		ChatHelpers::FileChosen &&chosen) const override;
+
+private:
+	const base::weak_ptr<SessionController> _window;
+
+};
+
+MainWindowShow::MainWindowShow(not_null<SessionController*> controller)
+: _window(base::make_weak(controller)) {
+}
+
+void MainWindowShow::activate() {
+	if (const auto window = _window.get()) {
+		Window::ActivateWindow(window);
+	}
+}
+
+void MainWindowShow::showOrHideBoxOrLayer(
+		std::variant<
+			v::null_t,
+			object_ptr<Ui::BoxContent>,
+			std::unique_ptr<Ui::LayerWidget>> &&layer,
+		Ui::LayerOptions options,
+		anim::type animated) const {
+	if (const auto window = _window.get()) {
+		window->window().widget()->showOrHideBoxOrLayer(
+			std::move(layer),
+			options,
+			animated);
+	}
+}
+
+not_null<QWidget*> MainWindowShow::toastParent() const {
+	const auto window = _window.get();
+	Assert(window != nullptr);
+	return window->widget()->bodyWidget();
+}
+
+bool MainWindowShow::valid() const {
+	return !_window.empty();
+}
+
+MainWindowShow::operator bool() const {
+	return valid();
+}
+
+Main::Session &MainWindowShow::session() const {
+	const auto window = _window.get();
+	Assert(window != nullptr);
+	return window->session();
+}
+
+bool MainWindowShow::paused(ChatHelpers::PauseReason reason) const {
+	const auto window = _window.get();
+	return window && window->isGifPausedAtLeastFor(reason);
+}
+
+rpl::producer<> MainWindowShow::pauseChanged() const {
+	const auto window = _window.get();
+	if (!window) {
+		return rpl::never<>();
+	}
+	return window->gifPauseLevelChanged();
+}
+
+rpl::producer<bool> MainWindowShow::adjustShadowLeft() const {
+	const auto window = _window.get();
+	if (!window) {
+		return rpl::single(false);
+	}
+	return window->adaptive().value(
+	) | rpl::map([=] {
+		return !window->adaptive().isOneColumn();
+	});
+}
+
+SendMenu::Type MainWindowShow::sendMenuType() const {
+	const auto window = _window.get();
+	if (!window) {
+		return SendMenu::Type::Disabled;
+	}
+	return window->content()->sendMenuType();
+}
+
+bool MainWindowShow::showMediaPreview(
+		Data::FileOrigin origin,
+		not_null<DocumentData*> document) const {
+	const auto window = _window.get();
+	return window && window->widget()->showMediaPreview(origin, document);
+}
+
+bool MainWindowShow::showMediaPreview(
+		Data::FileOrigin origin,
+		not_null<PhotoData*> photo) const {
+	const auto window = _window.get();
+	return window && window->widget()->showMediaPreview(origin, photo);
+}
+
+void MainWindowShow::processChosenSticker(
+		ChatHelpers::FileChosen &&chosen) const {
+	if (const auto window = _window.get()) {
+		Ui::PostponeCall(window, [=, chosen = std::move(chosen)]() mutable {
+			window->stickerOrEmojiChosen(std::move(chosen));
+		});
+	}
+}
+
 } // namespace
 
 void ActivateWindow(not_null<SessionController*> controller) {
-	const auto window = controller->widget();
-	window->raise();
-	window->activateWindow();
-	Ui::ActivateWindowDelayed(window);
+	Ui::ActivateWindow(controller->widget());
 }
 
 bool IsPaused(
@@ -190,8 +291,8 @@ void DateClickHandler::onClick(ClickContext context) const {
 }
 
 SessionNavigation::SessionNavigation(not_null<Main::Session*> session)
-	: _session(session)
-	, _api(&_session->mtp()) {
+: _session(session)
+, _api(&_session->mtp()) {
 }
 
 SessionNavigation::~SessionNavigation() = default;
@@ -211,7 +312,7 @@ void SessionNavigation::showPeerByLink(const PeerByLinkInfo &info) {
 			if (info.startAutoSubmit) {
 				peer->session().api().blockedPeers().unblock(
 					peer,
-					[=] { showPeerByLinkResolved(peer, info); },
+					[=](bool) { showPeerByLinkResolved(peer, info); },
 					true);
 			} else {
 				showPeerByLinkResolved(peer, info);
@@ -293,12 +394,9 @@ void SessionNavigation::resolveChannelById(
 		done(channel);
 		return;
 	}
-	const auto fail = [=] {
-		Ui::ShowMultilineToast({
-			.parentOverride = Window::Show(this).toastParent(),
-			.text = { tr::lng_error_post_link_invalid(tr::now) }
-		});
-	};
+	const auto fail = crl::guard(this, [=] {
+		uiShow()->showToast(tr::lng_error_post_link_invalid(tr::now));
+	});
 	_api.request(base::take(_resolveRequestId)).cancel();
 	_resolveRequestId = _api.request(MTPchannels_GetChannels(
 		MTP_vector<MTPInputChannel>(
@@ -398,16 +496,31 @@ void SessionNavigation::showPeerByLinkResolved(
 				info.messageId,
 				callback);
 		}
+	} else if (info.storyId) {
+		const auto storyId = FullStoryId{ peer->id, info.storyId };
+		peer->owner().stories().resolve(storyId, crl::guard(this, [=] {
+			if (peer->owner().stories().lookup(storyId)) {
+				parentController()->openPeerStory(
+					peer,
+					storyId.story,
+					Data::StoriesContext{ Data::StoriesContextSingle() });
+			} else {
+				showToast(tr::lng_stories_link_invalid(tr::now));
+			}
+		}));
 	} else if (bot && resolveType == ResolveType::BotApp) {
 		const auto itemId = info.clickFromMessageId;
 		const auto item = _session->data().message(itemId);
 		const auto contextPeer = item
 			? item->history()->peer
 			: bot;
+		const auto action = bot->session().attachWebView().lookupLastAction(
+			info.clickFromAttachBotWebviewUrl
+		).value_or(Api::SendAction(bot->owner().history(contextPeer)));
 		crl::on_main(this, [=] {
 			bot->session().attachWebView().requestApp(
 				parentController(),
-				Api::SendAction(bot->owner().history(contextPeer)),
+				action,
 				bot,
 				info.botAppName,
 				info.startToken,
@@ -439,6 +552,8 @@ void SessionNavigation::showPeerByLinkResolved(
 		} else {
 			showPeerInfo(peer, params);
 		}
+	} else if (resolveType == ResolveType::Boost && peer->isChannel()) {
+		resolveBoostState(peer->asChannel());
 	} else {
 		// Show specific posts only in channels / supergroups.
 		const auto msgId = peer->isChannel()
@@ -463,6 +578,14 @@ void SessionNavigation::showPeerByLinkResolved(
 					attachBotUsername,
 					info.attachBotToggleCommand.value_or(QString()));
 			});
+		} else if (bot && info.attachBotMenuOpen) {
+			const auto startCommand = info.attachBotToggleCommand.value_or(
+				QString());
+			bot->session().attachWebView().requestAddToMenu(
+				bot,
+				InlineBots::AddToMenuOpenMenu{ startCommand },
+				parentController(),
+				std::optional<Api::SendAction>());
 		} else if (bot && info.attachBotToggleCommand) {
 			const auto itemId = info.clickFromMessageId;
 			const auto item = _session->data().message(itemId);
@@ -474,13 +597,15 @@ void SessionNavigation::showPeerByLinkResolved(
 				: nullptr;
 			bot->session().attachWebView().requestAddToMenu(
 				bot,
-				*info.attachBotToggleCommand,
+				InlineBots::AddToMenuOpenAttach{
+					.startCommand = *info.attachBotToggleCommand,
+					.chooseTypes = info.attachBotChooseTypes,
+				},
 				parentController(),
 				(contextUser
 					? Api::SendAction(
 						contextUser->owner().history(contextUser))
-					: std::optional<Api::SendAction>()),
-				info.attachBotChooseTypes);
+					: std::optional<Api::SendAction>()));
 		} else {
 			crl::on_main(this, [=] {
 				showPeerHistory(peer, params, msgId);
@@ -489,17 +614,155 @@ void SessionNavigation::showPeerByLinkResolved(
 	}
 }
 
+void SessionNavigation::resolveBoostState(not_null<ChannelData*> channel) {
+	if (_boostStateResolving == channel) {
+		return;
+	}
+	_boostStateResolving = channel;
+	_api.request(MTPpremium_GetBoostsStatus(
+		channel->input
+	)).done([=](const MTPpremium_BoostsStatus &result) {
+		_boostStateResolving = nullptr;
+		channel->updateLevelHint(result.data().vlevel().v);
+		const auto submit = [=](Fn<void(Ui::BoostCounters)> done) {
+			applyBoost(channel, done);
+		};
+		uiShow()->show(Box(Ui::BoostBox, Ui::BoostBoxData{
+			.name = channel->name(),
+			.boost = ParseBoostCounters(result),
+			.features = LookupBoostFeatures(channel),
+			.allowMulti = (BoostsForGift(_session) > 0),
+			.group = channel->isMegagroup(),
+		}, submit));
+	}).fail([=](const MTP::Error &error) {
+		_boostStateResolving = nullptr;
+		showToast(u"Error: "_q + error.type());
+	}).send();
+}
+
+void SessionNavigation::applyBoost(
+		not_null<ChannelData*> channel,
+		Fn<void(Ui::BoostCounters)> done) {
+	_api.request(MTPpremium_GetMyBoosts(
+	)).done([=](const MTPpremium_MyBoosts &result) {
+		const auto &data = result.data();
+		_session->data().processUsers(data.vusers());
+		_session->data().processChats(data.vchats());
+		const auto slots = ParseForChannelBoostSlots(
+			channel,
+			data.vmy_boosts().v);
+		if (!slots.free.empty()) {
+			applyBoostsChecked(channel, { slots.free.front() }, done);
+		} else if (slots.other.empty()) {
+			if (!slots.already.empty()) {
+				if (const auto receive = BoostsForGift(_session)) {
+					const auto again = true;
+					const auto name = channel->name();
+					uiShow()->show(
+						Box(Ui::GiftForBoostsBox, name, receive, again));
+				} else {
+					uiShow()->show(
+						Box(Ui::BoostBoxAlready, channel->isMegagroup()));
+				}
+			} else if (!_session->premium()) {
+				const auto group = channel->isMegagroup();
+				uiShow()->show(Box(Ui::PremiumForBoostsBox, group, [=] {
+					const auto id = peerToChannel(channel->id).bare;
+					Settings::ShowPremium(
+						parentController(),
+						"channel_boost__" + QString::number(id));
+				}));
+			} else if (const auto receive = BoostsForGift(_session)) {
+				const auto again = false;
+				const auto name = channel->name();
+				uiShow()->show(
+					Box(Ui::GiftForBoostsBox, name, receive, again));
+			} else {
+				uiShow()->show(
+					Box(Ui::GiftedNoBoostsBox, channel->isMegagroup()));
+			}
+			done({});
+		} else {
+			const auto weak = std::make_shared<QPointer<Ui::BoxContent>>();
+			const auto reassign = [=](
+					std::vector<int> slots,
+					int groups,
+					int channels) {
+				const auto count = int(slots.size());
+				const auto callback = [=](Ui::BoostCounters counters) {
+					if (const auto strong = weak->data()) {
+						strong->closeBox();
+					}
+					done(counters);
+					uiShow()->showToast(tr::lng_boost_reassign_done(
+						tr::now,
+						lt_count,
+						count,
+						lt_channels,
+						(!groups
+							? tr::lng_boost_reassign_channels
+							: !channels
+							? tr::lng_boost_reassign_groups
+							: tr::lng_boost_reassign_mixed)(
+									tr::now,
+									lt_count,
+									groups + channels)));
+				};
+				applyBoostsChecked(
+					channel,
+					slots,
+					crl::guard(this, callback));
+			};
+			*weak = uiShow()->show(ReassignBoostsBox(
+				channel,
+				slots.other,
+				reassign,
+				[=] { done({}); }));
+		}
+	}).fail([=](const MTP::Error &error) {
+		const auto type = error.type();
+		showToast(u"Error: "_q + type);
+		done({});
+	}).handleFloodErrors().send();
+}
+
+void SessionNavigation::applyBoostsChecked(
+		not_null<ChannelData*> channel,
+		std::vector<int> slots,
+		Fn<void(Ui::BoostCounters)> done) {
+	auto mtp = MTP_vector_from_range(ranges::views::all(
+		slots
+	) | ranges::views::transform([](int slot) {
+		return MTP_int(slot);
+	}));
+	_api.request(MTPpremium_ApplyBoost(
+		MTP_flags(MTPpremium_ApplyBoost::Flag::f_slots),
+		std::move(mtp),
+		channel->input
+	)).done([=](const MTPpremium_MyBoosts &result) {
+		_api.request(MTPpremium_GetBoostsStatus(
+			channel->input
+		)).done([=](const MTPpremium_BoostsStatus &result) {
+			channel->updateLevelHint(result.data().vlevel().v);
+			done(ParseBoostCounters(result));
+		}).fail([=](const MTP::Error &error) {
+			showToast(u"Error: "_q + error.type());
+			done({});
+		}).send();
+	}).fail([=](const MTP::Error &error) {
+		showToast(u"Error: "_q + error.type());
+		done({});
+	}).send();
+}
+
 void SessionNavigation::joinVoiceChatFromLink(
 		not_null<PeerData*> peer,
 		const PeerByLinkInfo &info) {
 	Expects(info.voicechatHash.has_value());
 
-	const auto bad = [=] {
-		Ui::ShowMultilineToast({
-			.parentOverride = Window::Show(this).toastParent(),
-			.text = { tr::lng_group_invite_bad_link(tr::now) }
-		});
-	};
+	const auto bad = crl::guard(this, [=] {
+		uiShow()->showToast(tr::lng_group_invite_bad_link(tr::now));
+	});
 	const auto hash = *info.voicechatHash;
 	_api.request(base::take(_resolveRequestId)).cancel();
 	_resolveRequestId = _api.request(
@@ -548,7 +811,9 @@ void SessionNavigation::showRepliesForMessage(
 			auto memento = std::make_shared<HistoryView::RepliesMemento>(
 				history,
 				rootId,
-				commentId);
+				commentId,
+				params.highlightPart,
+				params.highlightPartOffsetHint);
 			memento->setFromTopic(topic);
 			showSection(std::move(memento), params);
 			return;
@@ -633,9 +898,7 @@ void SessionNavigation::showRepliesForMessage(
 		_showingRepliesRequestId = 0;
 		if (error.type() == u"CHANNEL_PRIVATE"_q
 			|| error.type() == u"USER_BANNED_IN_CHANNEL"_q) {
-			Ui::Toast::Show(
-				Show(this).toastParent(),
-				tr::lng_group_not_accessible(tr::now));
+			showToast(tr::lng_group_not_accessible(tr::now));
 		}
 	}).send();
 }
@@ -727,10 +990,54 @@ void SessionNavigation::showPollResults(
 	showSection(std::make_shared<Info::Memento>(poll, contextId), params);
 }
 
+void SessionNavigation::searchInChat(Dialogs::Key inChat) {
+	searchMessages(QString(), inChat);
+}
+
+void SessionNavigation::searchMessages(
+		const QString &query,
+		Dialogs::Key inChat) {
+	parentController()->content()->searchMessages(query, inChat);
+}
+
+auto SessionNavigation::showToast(Ui::Toast::Config &&config)
+-> base::weak_ptr<Ui::Toast::Instance> {
+	return uiShow()->showToast(std::move(config));
+}
+
+auto SessionNavigation::showToast(const QString &text, crl::time duration)
+-> base::weak_ptr<Ui::Toast::Instance> {
+	return uiShow()->showToast(text);
+}
+
+auto SessionNavigation::showToast(
+	TextWithEntities &&text,
+	crl::time duration)
+-> base::weak_ptr<Ui::Toast::Instance> {
+	return uiShow()->showToast(std::move(text));
+}
+
+std::shared_ptr<ChatHelpers::Show> SessionNavigation::uiShow() {
+	return parentController()->uiShow();
+}
+
+struct SessionController::CachedThemeKey {
+	Ui::ChatThemeKey theme;
+	QString paper;
+
+	friend inline auto operator<=>(
+		const CachedThemeKey&,
+		const CachedThemeKey&) = default;
+	[[nodiscard]] explicit operator bool() const {
+		return theme || !paper.isEmpty();
+	}
+};
+
 struct SessionController::CachedTheme {
 	std::weak_ptr<Ui::ChatTheme> theme;
 	std::shared_ptr<Data::DocumentMedia> media;
 	Data::WallPaper paper;
+	bool basedOnDark = false;
 	bool caching = false;
 	rpl::lifetime lifetime;
 };
@@ -748,12 +1055,12 @@ SessionController::SessionController(
 , _tabbedSelector(
 	std::make_unique<ChatHelpers::TabbedSelector>(
 		_window->widget(),
-		this,
+		uiShow(),
 		GifPauseReason::TabbedPanel))
 , _invitePeekTimer([=] { checkInvitePeek(); })
 , _activeChatsFilter(session->data().chatsFilters().defaultId())
 , _defaultChatTheme(std::make_shared<Ui::ChatTheme>())
-, _chatStyle(std::make_unique<Ui::ChatStyle>())
+, _chatStyle(std::make_unique<Ui::ChatStyle>(session->colorIndicesValue()))
 , _cachedReactionIconFactory(std::make_unique<ReactionIconFactory>())
 , _giftPremiumValidator(this) {
 	init();
@@ -767,6 +1074,14 @@ SessionController::SessionController(
 		if (update.type == Theme::BackgroundUpdate::Type::New
 			|| update.type == Theme::BackgroundUpdate::Type::Changed) {
 			pushDefaultChatBackground();
+		}
+	}, _lifetime);
+	style::PaletteChanged(
+	) | rpl::start_with_next([=] {
+		for (auto &[key, value] : _customChatThemes) {
+			if (!key.theme.id) {
+				value.theme.reset();
+			}
 		}
 	}, _lifetime);
 
@@ -795,7 +1110,8 @@ SessionController::SessionController(
 	) | rpl::filter([=](Data::Folder *folder) {
 		return (folder != nullptr)
 			&& (folder == _openedFolder.current())
-			&& folder->chatsList()->indexed()->empty();
+			&& folder->chatsList()->indexed()->empty()
+			&& !folder->storiesCount();
 	}) | rpl::start_with_next([=](Data::Folder *folder) {
 		folder->updateChatListSortPosition();
 		closeFolder();
@@ -924,21 +1240,54 @@ void SessionController::showGiftPremiumBox(UserData *user) {
 	}
 }
 
-void SessionController::init() {
-	if (session().supportMode()) {
-		initSupportMode();
-	}
+void SessionController::showGiftPremiumsBox(const QString &ref) {
+	_giftPremiumValidator.showChoosePeerBox(ref);
 }
 
-void SessionController::initSupportMode() {
-	session().supportHelper().registerWindow(this);
+void SessionController::init() {
+	if (session().supportMode()) {
+		session().supportHelper().registerWindow(this);
+	}
+	setupShortcuts();
+}
 
+void SessionController::setupShortcuts() {
 	Shortcuts::Requests(
 	) | rpl::filter([=] {
-		return (Core::App().activeWindow() == &window());
+		return (Core::App().activeWindow() == &window())
+			&& !isLayerShown()
+			&& !window().locked();
 	}) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
 		using C = Shortcuts::Command;
 
+		const auto app = &Core::App();
+		const auto accountsCount = int(app->domain().accounts().size());
+		auto &&accounts = ranges::views::zip(
+			Shortcuts::kShowAccount,
+			ranges::views::ints(0, accountsCount));
+		for (const auto &[command, index] : accounts) {
+			request->check(command) && request->handle([=] {
+				const auto list = app->domain().orderedAccounts();
+				if (index >= list.size()) {
+					return false;
+				}
+				const auto account = list[index];
+				if (account == &session().account()) {
+					return false;
+				}
+				const auto window = app->separateWindowForAccount(account);
+				if (window) {
+					window->activate();
+				} else {
+					app->domain().maybeActivate(account);
+				}
+				return true;
+			});
+		}
+
+		if (!session().supportMode()) {
+			return;
+		}
 		request->check(C::SupportHistoryBack) && request->handle([=] {
 			return chatEntryHistoryMove(-1);
 		});
@@ -993,14 +1342,18 @@ void SessionController::activateFirstChatsFilter() {
 bool SessionController::uniqueChatsInSearchResults() const {
 	return session().supportMode()
 		&& !session().settings().supportAllSearchResults()
-		&& !searchInChat.current();
+		&& !_searchInChat.current();
 }
 
 void SessionController::openFolder(not_null<Data::Folder*> folder) {
 	if (_openedFolder.current() != folder) {
 		resetFakeUnreadWhileOpened();
 	}
-	setActiveChatsFilter(0);
+	if (activeChatsFilterCurrent() != 0) {
+		setActiveChatsFilter(0);
+	} else if (adaptive().isOneColumn()) {
+		clearSectionStack(SectionShow::Way::ClearStack);
+	}
 	closeForum();
 	_openedFolder = folder.get();
 }
@@ -1074,12 +1427,8 @@ void SessionController::setupPremiumToast() {
 		session().mtp().requestConfig();
 		return premium;
 	}) | rpl::start_with_next([=] {
-		Ui::Toast::Show(
-			Window::Show(this).toastParent(),
-			{
-				.text = { tr::lng_premium_success(tr::now) },
-				.st = &st::defaultToast,
-			});
+		MainWindowShow(this).showToast(
+			{ tr::lng_premium_success(tr::now) });
 	}, _lifetime);
 }
 
@@ -1203,13 +1552,16 @@ bool SessionController::switchInlineQuery(
 		'@' + bot->username() + ' ' + query,
 		TextWithTags::Tags(),
 	};
-	MessageCursor cursor = { int(textWithTags.text.size()), int(textWithTags.text.size()), QFIXED_MAX };
+	MessageCursor cursor = {
+		int(textWithTags.text.size()),
+		int(textWithTags.text.size()),
+		Ui::kQFixedMax
+	};
 	auto draft = std::make_unique<Data::Draft>(
 		textWithTags,
-		to.currentReplyToId,
-		to.rootId,
+		to.currentReplyTo,
 		cursor,
-		Data::PreviewState::Allowed);
+		Data::WebPageDraft());
 
 	auto params = Window::SectionShow();
 	params.reapplyLocalDraft = true;
@@ -1219,11 +1571,12 @@ bool SessionController::switchInlineQuery(
 			std::make_shared<HistoryView::ScheduledMemento>(history),
 			params);
 	} else {
+		const auto topicRootId = to.currentReplyTo.topicRootId;
 		history->setLocalDraft(std::move(draft));
-		history->clearLocalEditDraft(to.rootId);
+		history->clearLocalEditDraft(topicRootId);
 		if (to.section == Section::Replies) {
 			const auto commentId = MsgId();
-			showRepliesForMessage(history, to.rootId, commentId, params);
+			showRepliesForMessage(history, topicRootId, commentId, params);
 		} else {
 			showPeerHistory(history->peer, params);
 		}
@@ -1240,7 +1593,7 @@ bool SessionController::switchInlineQuery(
 		.section = (thread->asTopic()
 			? Dialogs::EntryState::Section::Replies
 			: Dialogs::EntryState::Section::History),
-		.rootId = thread->topicRootId(),
+		.currentReplyTo = { .topicRootId = thread->topicRootId() },
 	};
 	return switchInlineQuery(entryState, bot, query);
 }
@@ -1334,14 +1687,6 @@ void SessionController::floatPlayerAreaUpdated() {
 	if (const auto main = widget()->sessionContent()) {
 		main->floatPlayerAreaUpdated();
 	}
-}
-
-void SessionController::materializeLocalDrafts() {
-	_materializeLocalDraftsRequests.fire({});
-}
-
-rpl::producer<> SessionController::materializeLocalDraftsRequests() const {
-	return _materializeLocalDraftsRequests.events();
 }
 
 int SessionController::dialogsSmallColumnWidth() const {
@@ -1567,14 +1912,9 @@ void SessionController::showPeer(not_null<PeerData*> peer, MsgId msgId) {
 			&& (!currentPeer->isChannel()
 				|| currentPeer->asChannel()->linkedChat()
 					!= clickedChannel)) {
-			Ui::ShowMultilineToast({
-				.parentOverride = Window::Show(this).toastParent(),
-				.text = {
-					.text = peer->isMegagroup()
-						? tr::lng_group_not_accessible(tr::now)
-						: tr::lng_channel_not_accessible(tr::now)
-				},
-			});
+			MainWindowShow(this).showToast(peer->isMegagroup()
+				? tr::lng_group_not_accessible(tr::now)
+				: tr::lng_channel_not_accessible(tr::now));
 		} else {
 			showPeerHistory(peer->id, SectionShow(), msgId);
 		}
@@ -1590,10 +1930,7 @@ void SessionController::startOrJoinGroupCall(not_null<PeerData*> peer) {
 void SessionController::startOrJoinGroupCall(
 		not_null<PeerData*> peer,
 		Calls::StartGroupCallArgs args) {
-	Core::App().calls().startOrJoinGroupCall(
-		std::make_shared<Show>(this),
-		peer,
-		args);
+	Core::App().calls().startOrJoinGroupCall(uiShow(), peer, args);
 }
 
 void SessionController::showCalendar(Dialogs::Key chat, QDate requestedDate) {
@@ -1777,11 +2114,11 @@ void SessionController::clearPassportForm() {
 void SessionController::showChooseReportMessages(
 		not_null<PeerData*> peer,
 		Ui::ReportReason reason,
-		Fn<void(MessageIdsList)> done) {
+		Fn<void(MessageIdsList)> done) const {
 	content()->showChooseReportMessages(peer, reason, std::move(done));
 }
 
-void SessionController::clearChooseReportMessages() {
+void SessionController::clearChooseReportMessages() const {
 	content()->clearChooseReportMessages();
 }
 
@@ -1812,11 +2149,25 @@ void SessionController::showInNewWindow(
 	}
 }
 
-void SessionController::toggleChooseChatTheme(not_null<PeerData*> peer) {
-	content()->toggleChooseChatTheme(peer);
+void SessionController::toggleChooseChatTheme(
+		not_null<PeerData*> peer,
+		std::optional<bool> show) const {
+	content()->toggleChooseChatTheme(peer, show);
 }
 
-void SessionController::updateColumnLayout() {
+void SessionController::finishChatThemeEdit(not_null<PeerData*> peer) {
+	toggleChooseChatTheme(peer, false);
+	const auto weak = base::make_weak(this);
+	const auto history = activeChatCurrent().history();
+	if (!history || history->peer != peer) {
+		showPeerHistory(peer);
+	}
+	if (weak) {
+		hideLayer();
+	}
+}
+
+void SessionController::updateColumnLayout() const {
 	content()->updateColumnLayout();
 }
 
@@ -1943,11 +2294,12 @@ FilterId SessionController::activeChatsFilterCurrent() const {
 void SessionController::setActiveChatsFilter(
 		FilterId id,
 		const SectionShow &params) {
-	if (activeChatsFilterCurrent() != id) {
+	const auto changed = (activeChatsFilterCurrent() != id);
+	if (changed) {
 		resetFakeUnreadWhileOpened();
 	}
 	_activeChatsFilter.force_assign(id);
-	if (id) {
+	if (id || !changed) {
 		closeForum();
 		closeFolder();
 	}
@@ -1957,21 +2309,15 @@ void SessionController::setActiveChatsFilter(
 }
 
 void SessionController::showAddContact() {
-	_window->show(
-		Box<AddContactBox>(&session()),
-		Ui::LayerOption::KeepOther);
+	_window->show(Box<AddContactBox>(&session()));
 }
 
 void SessionController::showNewGroup() {
-	_window->show(
-		Box<GroupInfoBox>(this, GroupInfoBox::Type::Group),
-		Ui::LayerOption::KeepOther);
+	_window->show(Box<GroupInfoBox>(this, GroupInfoBox::Type::Group));
 }
 
 void SessionController::showNewChannel() {
-	_window->show(
-		Box<GroupInfoBox>(this, GroupInfoBox::Type::Channel),
-		Ui::LayerOption::KeepOther);
+	_window->show(Box<GroupInfoBox>(this, GroupInfoBox::Type::Channel));
 }
 
 Window::Adaptive &SessionController::adaptive() const {
@@ -2006,22 +2352,16 @@ void SessionController::hideLayer(anim::type animated) {
 	_window->hideLayer(animated);
 }
 
-void SessionController::showToast(TextWithEntities &&text) {
-	Ui::ShowMultilineToast({
-		.parentOverride = Window::Show(this).toastParent(),
-		.text = std::move(text),
-	});
-}
-
 void SessionController::openPhoto(
 		not_null<PhotoData*> photo,
-		FullMsgId contextId,
-		MsgId topicRootId) {
-	_window->openInMediaView(Media::View::OpenRequest(
-		this,
-		photo,
-		session().data().message(contextId),
-		topicRootId));
+		MessageContext message,
+		const Data::StoriesContext *stories) {
+	const auto item = session().data().message(message.id);
+	if (openSharedStory(item) || openFakeItemStory(message.id, stories)) {
+		return;
+	}
+	_window->openInMediaView(
+		Media::View::OpenRequest(this, photo, item, message.topicRootId));
 }
 
 void SessionController::openPhoto(
@@ -2032,39 +2372,87 @@ void SessionController::openPhoto(
 
 void SessionController::openDocument(
 		not_null<DocumentData*> document,
-		FullMsgId contextId,
-		MsgId topicRootId,
-		bool showInMediaView) {
-	if (showInMediaView) {
+		bool showInMediaView,
+		MessageContext message,
+		const Data::StoriesContext *stories) {
+	const auto item = session().data().message(message.id);
+	if (openSharedStory(item) || openFakeItemStory(message.id, stories)) {
+		return;
+	} else if (showInMediaView) {
 		_window->openInMediaView(Media::View::OpenRequest(
 			this,
 			document,
-			session().data().message(contextId),
-			topicRootId));
+			item,
+			message.topicRootId));
 		return;
 	}
-	Data::ResolveDocument(
-		this,
-		document,
-		session().data().message(contextId),
-		topicRootId);
+	Data::ResolveDocument(this, document, item, message.topicRootId);
+}
+
+bool SessionController::openSharedStory(HistoryItem *item) {
+	if (const auto media = item ? item->media() : nullptr) {
+		if (const auto storyId = media->storyId()) {
+			const auto story = session().data().stories().lookup(storyId);
+			if (story) {
+				_window->openInMediaView(::Media::View::OpenRequest(
+					this,
+					*story,
+					Data::StoriesContext{ Data::StoriesContextSingle() }));
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SessionController::openFakeItemStory(
+		FullMsgId fakeItemId,
+		const Data::StoriesContext *stories) {
+	if (peerIsChat(fakeItemId.peer)
+		|| !IsStoryMsgId(fakeItemId.msg)) {
+		return false;
+	}
+	const auto maybeStory = session().data().stories().lookup({
+		fakeItemId.peer,
+		StoryIdFromMsgId(fakeItemId.msg),
+	});
+	if (maybeStory) {
+		using namespace Data;
+		const auto story = *maybeStory;
+		const auto context = stories
+			? *stories
+			: StoriesContext{ StoriesContextSingle() };
+		_window->openInMediaView(
+			::Media::View::OpenRequest(this, story, context));
+	}
+	return true;
 }
 
 auto SessionController::cachedChatThemeValue(
 	const Data::CloudTheme &data,
+	const Data::WallPaper &paper,
 	Data::CloudThemeType type)
 -> rpl::producer<std::shared_ptr<Ui::ChatTheme>> {
-	const auto key = Ui::ChatThemeKey{
+	const auto themeKey = Ui::ChatThemeKey{
 		data.id,
 		(type == Data::CloudThemeType::Dark),
 	};
-	const auto settings = data.settings.find(type);
-	if (!key
-		|| (settings == end(data.settings))
-		|| !settings->second.paper
-		|| settings->second.paper->backgroundColors().empty()) {
+	if (!themeKey && paper.isNull()) {
 		return rpl::single(_defaultChatTheme);
 	}
+	const auto settings = data.settings.find(type);
+	if (data.id && settings == end(data.settings)) {
+		return rpl::single(_defaultChatTheme);
+	}
+	if (paper.isNull()
+		&& (!settings->second.paper
+			|| settings->second.paper->backgroundColors().empty())) {
+		return rpl::single(_defaultChatTheme);
+	}
+	const auto key = CachedThemeKey{
+		themeKey,
+		!paper.isNull() ? paper.key() : settings->second.paper->key(),
+	};
 	const auto i = _customChatThemes.find(key);
 	if (i != end(_customChatThemes)) {
 		if (auto strong = i->second.theme.lock()) {
@@ -2073,7 +2461,7 @@ auto SessionController::cachedChatThemeValue(
 		}
 	}
 	if (i == end(_customChatThemes) || !i->second.caching) {
-		cacheChatTheme(data, type);
+		cacheChatTheme(key, data, paper, type);
 	}
 	const auto limit = Data::CloudThemes::TestingColors() ? (1 << 20) : 1;
 	using namespace rpl::mappers;
@@ -2081,12 +2469,31 @@ auto SessionController::cachedChatThemeValue(
 		_defaultChatTheme
 	) | rpl::then(_cachedThemesStream.events(
 	) | rpl::filter([=](const std::shared_ptr<Ui::ChatTheme> &theme) {
-		if (theme->key() != key) {
+		if (theme->key() != key.theme
+			|| theme->background().key != key.paper) {
 			return false;
 		}
 		pushLastUsedChatTheme(theme);
 		return true;
 	}) | rpl::take(limit));
+}
+
+bool SessionController::chatThemeAlreadyCached(
+		const Data::CloudTheme &data,
+		const Data::WallPaper &paper,
+		Data::CloudThemeType type) {
+	Expects(paper.document() != nullptr);
+
+	const auto key = CachedThemeKey{
+		Ui::ChatThemeKey{
+			data.id,
+			(type == Data::CloudThemeType::Dark),
+		},
+		paper.key(),
+	};
+	const auto i = _customChatThemes.find(key);
+	return (i != end(_customChatThemes))
+		&& (i->second.theme.lock() != nullptr);
 }
 
 void SessionController::pushLastUsedChatTheme(
@@ -2124,10 +2531,12 @@ void SessionController::clearCachedChatThemes() {
 
 void SessionController::overridePeerTheme(
 		not_null<PeerData*> peer,
-		std::shared_ptr<Ui::ChatTheme> theme) {
+		std::shared_ptr<Ui::ChatTheme> theme,
+		EmojiPtr emoji) {
 	_peerThemeOverride = PeerThemeOverride{
 		peer,
 		theme ? theme : _defaultChatTheme,
+		emoji,
 	};
 }
 
@@ -2154,25 +2563,28 @@ void SessionController::pushDefaultChatBackground() {
 }
 
 void SessionController::cacheChatTheme(
+		CachedThemeKey key,
 		const Data::CloudTheme &data,
+		const Data::WallPaper &paper,
 		Data::CloudThemeType type) {
-	Expects(data.id != 0);
+	Expects(data.id != 0 || !paper.isNull());
 
 	const auto dark = (type == Data::CloudThemeType::Dark);
-	const auto key = Ui::ChatThemeKey{ data.id, dark };
 	const auto i = data.settings.find(type);
-	Assert(i != end(data.settings));
-	const auto &paper = i->second.paper;
-	Assert(paper.has_value());
-	Assert(!paper->backgroundColors().empty());
-	const auto document = paper->document();
+	Assert((!data.id || (i != end(data.settings)))
+		&& (!paper.isNull()
+			|| (i->second.paper.has_value()
+				&& !i->second.paper->backgroundColors().empty())));
+	const auto &use = !paper.isNull() ? paper : *i->second.paper;
+	const auto document = use.document();
 	const auto media = document ? document->createMediaView() : nullptr;
-	paper->loadDocument();
+	use.loadDocument();
 	auto &theme = [&]() -> CachedTheme& {
 		const auto i = _customChatThemes.find(key);
 		if (i != end(_customChatThemes)) {
 			i->second.media = media;
-			i->second.paper = *paper;
+			i->second.paper = use;
+			i->second.basedOnDark = dark;
 			i->second.caching = true;
 			return i->second;
 		}
@@ -2180,15 +2592,16 @@ void SessionController::cacheChatTheme(
 			key,
 			CachedTheme{
 				.media = media,
-				.paper = *paper,
+				.paper = use,
+				.basedOnDark = dark,
 				.caching = true,
 			}).first->second;
 	}();
 	auto descriptor = Ui::ChatThemeDescriptor{
-		.key = key,
-		.preparePalette = PreparePaletteCallback(
-			dark,
-			i->second.accentColor),
+		.key = key.theme,
+		.preparePalette = (data.id
+			? Theme::PreparePaletteCallback(dark, i->second.accentColor)
+			: Theme::PrepareCurrentPaletteCallback()),
 		.backgroundData = backgroundData(theme),
 		.bubblesData = PrepareBubblesData(data, type),
 		.basedOnDark = dark,
@@ -2215,7 +2628,10 @@ void SessionController::cacheChatThemeDone(
 		std::shared_ptr<Ui::ChatTheme> result) {
 	Expects(result != nullptr);
 
-	const auto key = result->key();
+	const auto key = CachedThemeKey{
+		result->key(),
+		result->background().key,
+	};
 	const auto i = _customChatThemes.find(key);
 	if (i == end(_customChatThemes)) {
 		return;
@@ -2257,7 +2673,8 @@ void SessionController::updateCustomThemeBackground(CachedTheme &theme) {
 			=,
 			result = Ui::PrepareBackgroundImage(data)
 		]() mutable {
-			const auto i = _customChatThemes.find(key);
+			const auto cacheKey = CachedThemeKey{ key, result.key };
+			const auto i = _customChatThemes.find(cacheKey);
 			if (i != end(_customChatThemes)) {
 				if (const auto strong = i->second.theme.lock()) {
 					strong->updateBackgroundImageFrom(std::move(result));
@@ -2280,23 +2697,74 @@ Ui::ChatThemeBackgroundData SessionController::backgroundData(
 	const auto patternOpacity = paper.patternOpacity();
 	const auto isBlurred = paper.isBlurred();
 	const auto gradientRotation = paper.gradientRotation();
+	const auto darkModeDimming = isPattern
+		? 100
+		: std::clamp(paper.patternIntensity(), 0, 100);
 	return {
+		.key = paper.key(),
 		.path = paperPath,
 		.bytes = paperBytes,
 		.gzipSvg = gzipSvg,
 		.colors = colors,
 		.isPattern = isPattern,
 		.patternOpacity = patternOpacity,
+		.darkModeDimming = darkModeDimming,
 		.isBlurred = isBlurred,
+		.forDarkMode = theme.basedOnDark,
 		.generateGradient = generateGradient,
 		.gradientRotation = gradientRotation,
 	};
 }
 
+void SessionController::openPeerStory(
+		not_null<PeerData*> peer,
+		StoryId storyId,
+		Data::StoriesContext context) {
+	using namespace Media::View;
+	using namespace Data;
+
+	invalidate_weak_ptrs(&_storyOpenGuard);
+	auto &stories = session().data().stories();
+	const auto from = stories.lookup({ peer->id, storyId });
+	if (from) {
+		window().openInMediaView(OpenRequest(this, *from, context));
+	} else if (from.error() == Data::NoStory::Unknown) {
+		const auto done = crl::guard(&_storyOpenGuard, [=] {
+			openPeerStory(peer, storyId, context);
+		});
+		stories.resolve({ peer->id, storyId }, done);
+	}
+}
+
+void SessionController::openPeerStories(
+		PeerId peerId,
+		std::optional<Data::StorySourcesList> list) {
+	using namespace Media::View;
+	using namespace Data;
+
+	invalidate_weak_ptrs(&_storyOpenGuard);
+	auto &stories = session().data().stories();
+	if (const auto source = stories.source(peerId)) {
+		if (const auto idDates = source->toOpen()) {
+			openPeerStory(
+				source->peer,
+				idDates.id,
+				(list
+					? StoriesContext{ *list }
+					: StoriesContext{ StoriesContextPeer() }));
+		}
+	} else if (const auto peer = session().data().peerLoaded(peerId)) {
+		const auto done = crl::guard(&_storyOpenGuard, [=] {
+			openPeerStories(peerId, list);
+		});
+		stories.requestPeerStories(peer, done);
+	}
+}
+
 HistoryView::PaintContext SessionController::preparePaintContext(
 		PaintContextArgs &&args) {
 	const auto visibleAreaTopLocal = content()->mapFromGlobal(
-		QPoint(0, args.visibleAreaTopGlobal)).y();
+		args.visibleAreaPositionGlobal).y();
 	const auto viewport = QRect(
 		0,
 		args.visibleAreaTop - visibleAreaTopLocal,
@@ -2317,52 +2785,19 @@ QString SessionController::premiumRef() const {
 	return _premiumRef;
 }
 
-bool SessionController::contentOverlapped(QWidget *w, QPaintEvent *e) {
+bool SessionController::contentOverlapped(QWidget *w, QPaintEvent *e) const {
 	return widget()->contentOverlapped(w, e);
+}
+
+std::shared_ptr<ChatHelpers::Show> SessionController::uiShow() {
+	if (!_cachedShow) {
+		_cachedShow = std::make_shared<MainWindowShow>(this);
+	}
+	return _cachedShow;
 }
 
 SessionController::~SessionController() {
 	resetFakeUnreadWhileOpened();
-}
-
-Show::Show(not_null<SessionNavigation*> navigation)
-: Show(&navigation->parentController()->window()) {
-}
-
-Show::Show(Controller *window)
-: _window(base::make_weak(window)) {
-}
-
-Show::~Show() = default;
-
-void Show::showBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options) const {
-	if (const auto window = _window.get()) {
-		window->show(std::move(content), options);
-	}
-}
-
-void Show::hideLayer() const {
-	if (const auto window = _window.get()) {
-		window->show(
-			object_ptr<Ui::BoxContent>{ nullptr },
-			Ui::LayerOption::CloseOther);
-	}
-}
-
-not_null<QWidget*> Show::toastParent() const {
-	const auto window = _window.get();
-	Assert(window != nullptr);
-	return window->widget()->bodyWidget();
-}
-
-bool Show::valid() const {
-	return !_window.empty();
-}
-
-Show::operator bool() const {
-	return valid();
 }
 
 } // namespace Window

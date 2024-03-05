@@ -403,8 +403,7 @@ bool Sticker::mirrorHorizontal() const {
 	if (!hasPremiumEffect()) {
 		return false;
 	}
-	const auto rightAligned = _parent->hasOutLayout()
-		&& !_parent->delegate()->elementIsChatWide();
+	const auto rightAligned = _parent->hasRightLayout();
 	return !rightAligned;
 }
 
@@ -412,7 +411,7 @@ ClickHandlerPtr Sticker::ShowSetHandler(not_null<DocumentData*> document) {
 	return std::make_shared<LambdaClickHandler>([=](ClickContext context) {
 		const auto my = context.other.value<ClickHandlerContext>();
 		if (const auto window = my.sessionWindow.get()) {
-			StickerSetBox::Show(window, document);
+			StickerSetBox::Show(window->uiShow(), document);
 		}
 	});
 }

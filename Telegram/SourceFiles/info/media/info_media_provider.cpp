@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h"
 #include "data/data_document.h"
 #include "styles/style_info.h"
+#include "styles/style_overview.h"
 
 namespace Info::Media {
 namespace {
@@ -421,19 +422,21 @@ std::unique_ptr<BaseLayout> Provider::createLayout(
 		}
 		return nullptr;
 	};
-	const auto spoiler = [&] {
-		if (const auto media = item->media()) {
-			return media->hasSpoiler();
-		}
-		return false;
-	};
 
 	const auto &songSt = st::overviewFileLayout;
 	using namespace Overview::Layout;
+	const auto options = [&] {
+		const auto media = item->media();
+		return MediaOptions{ .spoiler = media && media->hasSpoiler() };
+	};
 	switch (type) {
 	case Type::Photo:
 		if (const auto photo = getPhoto()) {
-			return std::make_unique<Photo>(delegate, item, photo, spoiler());
+			return std::make_unique<Photo>(
+				delegate,
+				item,
+				photo,
+				options());
 		}
 		return nullptr;
 	case Type::GIF:
@@ -443,7 +446,7 @@ std::unique_ptr<BaseLayout> Provider::createLayout(
 		return nullptr;
 	case Type::Video:
 		if (const auto file = getFile()) {
-			return std::make_unique<Video>(delegate, item, file, spoiler());
+			return std::make_unique<Video>(delegate, item, file, options());
 		}
 		return nullptr;
 	case Type::File:

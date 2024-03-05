@@ -6,54 +6,65 @@
 //
 #include "base/platform/linux/base_linux_xdp_utilities.h"
 
-#include "base/platform/linux/base_linux_glibmm_helper.h"
-#include "base/platform/linux/base_linux_wayland_integration.h"
 #include "base/platform/base_platform_info.h"
 
-#include <glibmm.h>
 #include <giomm.h>
 
+#include <QtGui/QGuiApplication>
 #include <QtGui/QWindow>
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <qpa/qplatformintegration.h>
+#include <private/qguiapplication_p.h>
+#include <private/qgenericunixservices_p.h>
+#endif // Qt >= 6.5.0
 
 namespace base::Platform::XDP {
 
+Glib::ustring ParentWindowID() {
+	return ParentWindowID(QGuiApplication::focusWindow());
+}
+
 Glib::ustring ParentWindowID(QWindow *window) {
-	std::stringstream result;
 	if (!window) {
+		return {};
+	}
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	if (const auto services = dynamic_cast<QGenericUnixServices*>(
+			QGuiApplicationPrivate::platformIntegration()->services())) {
+		return services->portalWindowIdentifier(window).toStdString();
+	}
+#endif // Qt >= 6.5.0
+
+	if (::Platform::IsX11()) {
+		std::stringstream result;
+		result << "x11:" << std::hex << window->winId();
 		return result.str();
 	}
 
-	if (const auto integration = WaylandIntegration::Instance()) {
-		if (const auto handle = integration->nativeHandle(window)
-			; !handle.isEmpty()) {
-			result << "wayland:" << handle.toStdString();
-		}
-	} else if (::Platform::IsX11()) {
-		result << "x11:" << std::hex << window->winId();
-	}
-
-	return result.str();
+	return {};
 }
 
 std::optional<Glib::VariantBase> ReadSetting(
 		const Glib::ustring &group,
 		const Glib::ustring &key) {
 	try {
-		const auto connection = Gio::DBus::Connection::get_sync(
-			Gio::DBus::BusType::SESSION);
-
-		auto reply = connection->call_sync(
+		return Gio::DBus::Connection::get_sync(
+			Gio::DBus::BusType::SESSION
+		)->call_sync(
 			std::string(kObjectPath),
 			std::string(kSettingsInterface),
 			"Read",
-			MakeGlibVariant(std::tuple{
+			Glib::create_variant(std::tuple{
 				group,
 				key,
 			}),
-			std::string(kService));
-
-		return GlibVariantCast<Glib::VariantBase>(
-			GlibVariantCast<Glib::VariantBase>(reply.get_child(0)));
+			std::string(kService)
+		).get_child(
+			0
+		).get_dynamic<Glib::Variant<Glib::VariantBase>>(
+		).get();
 	} catch (...) {
 	}
 
@@ -75,9 +86,6 @@ SettingWatcher::SettingWatcher(
 	try {
 		_private->dbusConnection = Gio::DBus::Connection::get_sync(
 			Gio::DBus::BusType::SESSION);
-		if (!_private->dbusConnection) {
-			return;
-		}
 
 		_private->signalId = _private->dbusConnection->signal_subscribe(
 			[=](
@@ -86,16 +94,19 @@ SettingWatcher::SettingWatcher(
 				const Glib::ustring &object_path,
 				const Glib::ustring &interface_name,
 				const Glib::ustring &signal_name,
-				Glib::VariantContainerBase parameters) {
+				const Glib::VariantContainerBase &parameters) {
 				try {
-					const auto group = GlibVariantCast<Glib::ustring>(
-						parameters.get_child(0));
+					const auto group = parameters.get_child(
+						0
+					).get_dynamic<Glib::ustring>();
 
-					const auto key = GlibVariantCast<Glib::ustring>(
-						parameters.get_child(1));
+					const auto key = parameters.get_child(
+						1
+					).get_dynamic<Glib::ustring>();
 
-					const auto value = GlibVariantCast<Glib::VariantBase>(
-						parameters.get_child(2));
+					const auto value = parameters.get_child(
+						2
+					).get_dynamic<Glib::VariantBase>();
 
 					callback(group, key, value);
 				} catch (...) {

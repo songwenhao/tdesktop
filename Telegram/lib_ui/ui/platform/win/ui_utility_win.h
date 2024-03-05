@@ -32,6 +32,9 @@ inline void ReInitOnTopPanel(not_null<QWidget*> panel) {
 inline void ShowOverAll(not_null<QWidget*> widget, bool canFocus) {
 }
 
+inline void AcceptAllMouseInput(not_null<QWidget*> widget) {
+}
+
 inline void ClearTransientParent(not_null<QWidget*> widget) {
 }
 
@@ -42,14 +45,14 @@ inline constexpr bool UseMainQueueGeneric() {
 	return true;
 }
 
-inline bool WindowExtentsSupported() {
+inline bool WindowMarginsSupported() {
 	return false;
 }
 
-inline void SetWindowExtents(not_null<QWidget*> widget, const QMargins &extents) {
+inline void SetWindowMargins(not_null<QWidget*> widget, const QMargins &margins) {
 }
 
-inline void UnsetWindowExtents(not_null<QWidget*> widget) {
+inline void UnsetWindowMargins(not_null<QWidget*> widget) {
 }
 
 } // namespace Platform

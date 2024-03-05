@@ -15,7 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/box_content_divider.h"
 #include "ui/layers/generic_box.h"
 #include "ui/toast/toast.h"
@@ -143,7 +143,7 @@ void EditParticipantBox::Inner::paintEvent(QPaintEvent *e) {
 				? tr::lng_status_bot_reads_all
 				: tr::lng_status_bot_not_reads_all)(tr::now);
 		}
-		return Data::OnlineText(_user->onlineTill, base::unixtime::now());
+		return Data::OnlineText(_user->lastseen(), base::unixtime::now());
 	}();
 	p.setFont(st::contactsStatusFont);
 	p.setPen(st::contactsStatusFg);
@@ -203,7 +203,6 @@ EditAdminBox::EditAdminBox(
 	peer,
 	user,
 	(rights.flags != 0))
-, _show(this)
 , _oldRights(rights)
 , _oldRank(rank)
 , _addingBot(std::move(addingBot)) {
@@ -385,8 +384,11 @@ void EditAdminBox::prepare() {
 			if (!_saveCallback) {
 				return;
 			} else if (_addAsAdmin && !_addAsAdmin->checked()) {
+				const auto weak = Ui::MakeWeak(this);
 				AddBotToGroup(user(), peer(), _addingBot->token);
-				getDelegate()->hideLayer();
+				if (const auto strong = weak.data()) {
+					strong->closeBox();
+				}
 				return;
 			} else if (_addingBot && !_addingBot->existing) {
 				const auto phrase = peer()->isBroadcast()
@@ -399,7 +401,7 @@ void EditAdminBox::prepare() {
 						Ui::Text::Bold(peer()->name()),
 						Ui::Text::WithEntities),
 					crl::guard(this, [=] { finishAddAdmin(); })
-				}), Ui::LayerOption::KeepOther);
+				}));
 			} else {
 				_finishSave();
 			}
@@ -462,13 +464,14 @@ not_null<Ui::InputField*> EditAdminBox::addRankInput(
 		st::rightsAboutMargin);
 	result->setMaxLength(kAdminRoleLimit);
 	result->setInstantReplaces(Ui::InstantReplaces::TextOnly());
-	connect(result, &Ui::InputField::changed, [=] {
+	result->changes(
+	) | rpl::start_with_next([=] {
 		const auto text = result->getLastText();
 		const auto removed = TextUtilities::RemoveEmoji(text);
 		if (removed != text) {
 			result->setText(removed);
 		}
-	});
+	}, result->lifetime());
 
 	container->add(
 		object_ptr<Ui::FlatLabel>(
@@ -623,16 +626,15 @@ void EditAdminBox::sendTransferRequestFrom(
 		if (!box && !weak) {
 			return;
 		}
-
-		Ui::Toast::Show(
-			(box ? Ui::BoxShow(box) : weak->_show).toastParent(),
+		const auto show = box ? box->uiShow() : weak->uiShow();
+		show->showToast(
 			(channel->isBroadcast()
 				? tr::lng_rights_transfer_done_channel
 				: tr::lng_rights_transfer_done_group)(
 					tr::now,
 					lt_user,
 					user->shortName()));
-		(box ? Ui::BoxShow(box) : weak->_show).hideLayer();
+		show->hideLayer();
 	}).fail(crl::guard(this, [=](const MTP::Error &error) {
 		if (weak) {
 			_transferRequestId = 0;
@@ -694,7 +696,6 @@ EditRestrictedBox::EditRestrictedBox(
 	bool hasAdminRights,
 	ChatRestrictionsInfo rights)
 : EditParticipantBox(nullptr, peer, user, hasAdminRights)
-, _show(this)
 , _oldRights(rights) {
 }
 
@@ -788,7 +789,7 @@ ChatRestrictionsInfo EditRestrictedBox::defaultRights() const {
 }
 
 void EditRestrictedBox::showRestrictUntil() {
-	_show.showBox(Box([=](not_null<Ui::GenericBox*> box) {
+	uiShow()->showBox(Box([=](not_null<Ui::GenericBox*> box) {
 		const auto save = [=](TimeId result) {
 			if (!result) {
 				return;

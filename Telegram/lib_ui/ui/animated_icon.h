@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #pragma once
 
 #include "ui/style/style_core_types.h"
@@ -22,6 +21,7 @@ class FrameGenerator;
 struct AnimatedIconDescriptor {
 	FnMut<std::unique_ptr<FrameGenerator>()> generator;
 	QSize sizeOverride;
+	bool colorized = false;
 };
 
 class AnimatedIcon final : public base::has_weak_ptr {
@@ -35,7 +35,9 @@ public:
 	[[nodiscard]] bool valid() const;
 	[[nodiscard]] int frameIndex() const;
 	[[nodiscard]] int framesCount() const;
-	[[nodiscard]] QImage frame() const;
+	[[nodiscard]] double frameRate() const;
+	[[nodiscard]] QImage frame(const QColor &textColor) const;
+	[[nodiscard]] QImage notColorizedFrame() const;
 	[[nodiscard]] int width() const;
 	[[nodiscard]] int height() const;
 	[[nodiscard]] QSize size() const;
@@ -45,6 +47,10 @@ public:
 		bool scaled = false;
 	};
 	[[nodiscard]] ResizedFrame frame(
+		const QColor &textColor,
+		QSize desiredSize,
+		Fn<void()> updateWithPerfect) const;
+	[[nodiscard]] ResizedFrame notColorizedFrame(
 		QSize desiredSize,
 		Fn<void()> updateWithPerfect) const;
 
@@ -81,6 +87,7 @@ private:
 	mutable crl::time _animationCurrentStart = 0;
 	mutable crl::time _animationNextStart = 0;
 	mutable int _animationCurrentIndex = 0;
+	bool _colorized = false;
 
 };
 

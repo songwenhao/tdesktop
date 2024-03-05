@@ -17,7 +17,10 @@
 #include <QtGui/QFontInfo>
 #include <QtGui/QFontDatabase>
 #include <QtWidgets/QApplication>
-#include <private/qfontengine_p.h>
+
+#if __has_include(<glib.h>)
+#include <glib.h>
+#endif
 
 void style_InitFontsResource() {
 #ifdef Q_OS_MAC // Use resources from the .app bundle on macOS.
@@ -26,9 +29,9 @@ void style_InitFontsResource() {
 
 #else // Q_OS_MAC
 
-#ifndef DESKTOP_APP_USE_PACKAGED_FONTS
+#ifndef LIB_UI_USE_PACKAGED_FONTS
 	Q_INIT_RESOURCE(fonts);
-#endif // !DESKTOP_APP_USE_PACKAGED_FONTS
+#endif // !LIB_UI_USE_PACKAGED_FONTS
 #ifdef Q_OS_WIN
 	Q_INIT_RESOURCE(win);
 #endif // Q_OS_WIN
@@ -68,6 +71,7 @@ bool ValidateFont(const QString &familyName, int flags = 0) {
 	return true;
 }
 
+#ifndef LIB_UI_USE_PACKAGED_FONTS
 bool LoadCustomFont(const QString &filePath, const QString &familyName, int flags = 0) {
 	auto regularId = QFontDatabase::addApplicationFont(filePath);
 	if (regularId < 0) {
@@ -91,6 +95,7 @@ bool LoadCustomFont(const QString &filePath, const QString &familyName, int flag
 
 	return ValidateFont(familyName, flags);
 }
+#endif // !LIB_UI_USE_PACKAGED_FONTS
 
 [[nodiscard]] QString SystemMonospaceFont() {
 	const auto type = QFontDatabase::FixedFont;
@@ -124,7 +129,7 @@ enum {
 
 	FontTypesCount,
 };
-#ifndef DESKTOP_APP_USE_PACKAGED_FONTS
+#ifndef LIB_UI_USE_PACKAGED_FONTS
 QString FontTypeFiles[FontTypesCount] = {
 	"DAOpenSansRegular",
 	"DAOpenSansRegularItalic",
@@ -157,7 +162,6 @@ QString FontTypePersianFallback[FontTypesCount] = {
 	"DAVazirMedium",
 	"DAVazirMedium",
 };
-#endif // !DESKTOP_APP_USE_PACKAGED_FONTS
 int32 FontTypeFlags[FontTypesCount] = {
 	0,
 	FontItalic,
@@ -166,6 +170,7 @@ int32 FontTypeFlags[FontTypesCount] = {
 	FontSemibold,
 	FontSemibold | FontItalic,
 };
+#endif // !LIB_UI_USE_PACKAGED_FONTS
 
 bool Started = false;
 QString Overrides[FontTypesCount];
@@ -180,7 +185,7 @@ void StartFonts() {
 
 	style_InitFontsResource();
 
-#ifndef DESKTOP_APP_USE_PACKAGED_FONTS
+#ifndef LIB_UI_USE_PACKAGED_FONTS
 	[[maybe_unused]] bool areGood[FontTypesCount] = { false };
 	for (auto i = 0; i != FontTypesCount; ++i) {
 		const auto file = FontTypeFiles[i];
@@ -224,7 +229,11 @@ void StartFonts() {
 		QFont::insertSubstitutions(name, list);
 	}
 #endif // Q_OS_MAC
-#endif // !DESKTOP_APP_USE_PACKAGED_FONTS
+#elif __has_include(<glib.h>) // !LIB_UI_USE_PACKAGED_FONTS
+	g_warning(
+		"Unable to load patched fonts with Qt workarounds, "
+		"expect font issues.");
+#endif // LIB_UI_USE_PACKAGED_FONTS
 
 	auto appFont = QApplication::font();
 	appFont.setStyleStrategy(QFont::PreferQuality);
@@ -293,14 +302,8 @@ int registerFontFamily(const QString &family) {
 	return result;
 }
 
-int CeilTextWidth(const QFont &font, const QString &text) {
-	return text.isEmpty()
-		? 0
-		: QStackTextEngine(text, font).width(0, text.size()).ceil().toInt();
-}
-
 FontData::FontData(int size, uint32 flags, int family, Font *other)
-: f(ResolveFont(flags, size))
+: f(ResolveFont(family ? fontFamilies[family] : QString(), flags, size))
 , _m(f)
 , _size(size)
 , _flags(flags)

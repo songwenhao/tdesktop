@@ -9,9 +9,10 @@
 #define QFCITXPLATFORMINPUTCONTEXT_H
 
 #include "fcitxcandidatewindow.h"
-#include "fcitxqtinputcontextproxy.h"
 #include "fcitxqtwatcher.h"
+#include "hybridinputcontext.h"
 #include <QDBusConnection>
+#include <QDBusPendingCallWatcher>
 #include <QDBusServiceWatcher>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -26,72 +27,33 @@
 namespace fcitx {
 
 class FcitxQtConnection;
-class FcitxTheme;
+class QFcitxPlatformInputContext;
 
-struct FcitxQtICData {
-    FcitxQtICData(FcitxQtWatcher *watcher, QWindow *window)
-        : proxy(new FcitxQtInputContextProxy(watcher, watcher)),
-          watcher_(watcher), window_(window) {
-        proxy->setProperty("icData",
-                           QVariant::fromValue(static_cast<void *>(this)));
-        QObject::connect(window, &QWindow::visibilityChanged, proxy,
-                         [this](bool visible) {
-                             if (!visible) {
-                                 resetCandidateWindow();
-                             }
-                         });
-        QObject::connect(watcher, &FcitxQtWatcher::availabilityChanged, proxy,
-                         [this](bool avail) {
-                             if (!avail) {
-                                 resetCandidateWindow();
-                             }
-                         });
-    }
+class FcitxQtICData : public QObject {
+public:
+    FcitxQtICData(QFcitxPlatformInputContext *context, QWindow *window);
     FcitxQtICData(const FcitxQtICData &that) = delete;
-    ~FcitxQtICData() {
-        delete proxy;
-        resetCandidateWindow();
-    }
+    ~FcitxQtICData();
 
-    FcitxCandidateWindow *candidateWindow(FcitxTheme *theme) {
-        if (!candidateWindow_) {
-            candidateWindow_ = new FcitxCandidateWindow(window(), theme);
-            QObject::connect(
-                candidateWindow_, &FcitxCandidateWindow::candidateSelected,
-                proxy,
-                [proxy = proxy](int index) { proxy->selectCandidate(index); });
-            QObject::connect(candidateWindow_,
-                             &FcitxCandidateWindow::prevClicked, proxy,
-                             [proxy = proxy]() { proxy->prevPage(); });
-            QObject::connect(candidateWindow_,
-                             &FcitxCandidateWindow::nextClicked, proxy,
-                             [proxy = proxy]() { proxy->nextPage(); });
-        }
-        return candidateWindow_;
-    }
+    FcitxCandidateWindow *candidateWindow();
 
     QWindow *window() { return window_.data(); }
-    auto *watcher() { return watcher_; }
 
-    void resetCandidateWindow() {
-        if (auto *w = candidateWindow_.data()) {
-            candidateWindow_ = nullptr;
-            w->deleteLater();
-            return;
-        }
-    }
+    void resetCandidateWindow();
 
     quint64 capability = 0;
-    FcitxQtInputContextProxy *proxy;
+    HybridInputContext *proxy;
     QRect rect;
     // Last key event forwarded.
     std::unique_ptr<QKeyEvent> event;
     QString surroundingText;
     int surroundingAnchor = -1;
     int surroundingCursor = -1;
+    bool expectingMicroFocusChange = false;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    FcitxQtWatcher *watcher_;
+    QFcitxPlatformInputContext *context_;
     QPointer<QWindow> window_;
     QPointer<FcitxCandidateWindow> candidateWindow_;
 };
@@ -155,6 +117,21 @@ public:
     bool filterEvent(const QEvent *event) override;
     QLocale locale() const override;
     bool hasCapability(Capability capability) const override;
+    void showInputPanel() override;
+    void hideInputPanel() override;
+    bool isInputPanelVisible() const override;
+
+    auto *watcher() { return watcher_; }
+    auto *fcitx4Watcher() { return fcitx4Watcher_; }
+
+    // Use Wrapper as suffix to avoid upstream add function with same name.
+    QObject *focusObjectWrapper() const;
+    QWindow *focusWindowWrapper() const;
+    QRect cursorRectangleWrapper() const;
+
+    // Initialize theme object on demand.
+    FcitxTheme *theme();
+    bool hasPreedit() const { return !preeditList_.isEmpty(); }
 
 public Q_SLOTS:
     void cursorRectChanged();
@@ -175,6 +152,8 @@ public Q_SLOTS:
                             const FcitxQtStringKeyValueList &candidates,
                             int candidateIndex, int layoutHint, bool hasPrev,
                             bool hasNext);
+    void serverSideFocusOut();
+    bool commitPreedit(QPointer<QObject> input = qApp->focusObject());
 private Q_SLOTS:
     void processKeyEventFinished(QDBusPendingCallWatcher *);
 
@@ -204,16 +183,20 @@ private:
     }
 
     void updateCapability(const FcitxQtICData &data);
-    void commitPreedit(QPointer<QObject> input = qApp->focusObject());
     void createICData(QWindow *w);
-    FcitxQtInputContextProxy *validIC();
-    FcitxQtInputContextProxy *validICByWindow(QWindow *window);
+    HybridInputContext *validIC() const;
+    HybridInputContext *validICByWindow(QWindow *window) const;
     bool filterEventFallback(unsigned int keyval, unsigned int keycode,
                              unsigned int state, bool isRelaese);
 
-    Q_INVOKABLE void updateCursorRect(QPointer<QWindow> window);
+    void updateCursorRect();
+    bool objectAcceptsInputMethod() const;
+    bool shouldDisableInputMethod() const;
+
+    void updateInputPanelVisible();
 
     FcitxQtWatcher *watcher_;
+    Fcitx4Watcher *fcitx4Watcher_;
     QString preedit_;
     QString commitPreedit_;
     FcitxQtFormattedPreeditList preeditList_;
@@ -224,6 +207,7 @@ private:
     QPointer<QWindow> lastWindow_;
     QPointer<QObject> lastObject_;
     bool destroy_;
+    bool virtualKeyboardVisible_;
     QScopedPointer<struct xkb_context, XkbContextDeleter> xkbContext_;
     QScopedPointer<struct xkb_compose_table, XkbComposeTableDeleter>
         xkbComposeTable_;
@@ -231,6 +215,7 @@ private:
         xkbComposeState_;
     QLocale locale_;
     FcitxTheme *theme_ = nullptr;
+    bool inputPanelVisible_ = false;
 };
 } // namespace fcitx
 

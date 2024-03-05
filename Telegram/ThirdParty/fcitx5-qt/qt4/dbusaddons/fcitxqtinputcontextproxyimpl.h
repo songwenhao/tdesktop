@@ -106,6 +106,13 @@ public Q_SLOTS: // METHODS
                                          argumentList);
     }
 
+    inline QDBusPendingReply<> SetSupportedCapability(qulonglong caps)
+    {
+        QList<QVariant> argumentList;
+        argumentList << QVariant::fromValue(caps);
+        return asyncCallWithArgumentList(QLatin1String("SetSupportedCapability"), argumentList);
+    }
+    
     inline QDBusPendingReply<> SetCapability(qulonglong caps) {
         QList<QVariant> argumentList;
         argumentList << QVariant::fromValue(caps);
@@ -155,6 +162,7 @@ Q_SIGNALS: // SIGNALS
                    const QString &langCode);
     void DeleteSurroundingText(int offset, unsigned int nchar);
     void ForwardKey(unsigned int keyval, unsigned int state, bool type);
+    void NotifyFocusOut();
     void UpdateClientSideUI(FcitxQtFormattedPreeditList preedit, int cursorpos,
                             FcitxQtFormattedPreeditList auxUp,
                             FcitxQtFormattedPreeditList auxDown,

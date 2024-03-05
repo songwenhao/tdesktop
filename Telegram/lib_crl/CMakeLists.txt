@@ -23,6 +23,7 @@ PRIVATE
     crl/common/crl_common_on_main_guarded.h
     crl/common/crl_common_queue.cpp
     crl/common/crl_common_queue.h
+    crl/common/crl_common_semaphore.h
     crl/common/crl_common_sync.h
     crl/common/crl_common_utils.h
     crl/dispatch/crl_dispatch_async.cpp
@@ -34,11 +35,8 @@ PRIVATE
     crl/dispatch/crl_dispatch_semaphore.h
     crl/mac/crl_mac_time.cpp
     crl/linux/crl_linux_time.cpp
-    crl/qt/crl_qt_async.cpp
     crl/qt/crl_qt_async.h
     crl/qt/crl_qt_guards.h
-    crl/qt/crl_qt_semaphore.cpp
-    crl/qt/crl_qt_semaphore.h
     crl/winapi/crl_winapi_async.cpp
     crl/winapi/crl_winapi_async.h
     crl/winapi/crl_winapi_dll.h
@@ -77,11 +75,13 @@ endif()
 if (build_macstore OR TARGET desktop-app::external_dispatch)
     target_compile_definitions(lib_crl
     PUBLIC
-        CRL_USE_COMMON_QUEUE
+        CRL_FORCE_COMMON_QUEUE
     )
 endif()
 
-target_link_libraries(lib_crl
-PUBLIC
-    desktop-app::external_qt
-)
+if (TARGET desktop-app::external_qt)
+    target_link_libraries(lib_crl
+    PUBLIC
+        desktop-app::external_qt
+    )
+endif()

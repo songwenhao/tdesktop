@@ -27,7 +27,7 @@ import setuptools
 setuptools.setup(
 	name = "qrcodegen",
 	description = "High quality QR Code generator library for Python",
-	version = "1.7.0",
+	version = "1.8.0",
 	platforms = "OS Independent",
 	python_requires = '>=3',
 	license = "MIT License",
@@ -66,12 +66,12 @@ Features
 
 Core features:
 
-* Available in 6 programming languages, all with nearly equal functionality: Java, TypeScript/JavaScript, Python, Rust, C++, C
 * Significantly shorter code but more documentation comments compared to competing libraries
 * Supports encoding all 40 versions (sizes) and all 4 error correction levels, as per the QR Code Model 2 standard
 * Output format: Raw modules/pixels of the QR symbol
+* Detects finder-like penalty patterns more accurately than other implementations
 * Encodes numeric and special-alphanumeric text in less space than general text
-* Open source code under the permissive MIT License
+* Open-source code under the permissive MIT License
 
 Manual parameters:
 
@@ -80,13 +80,11 @@ Manual parameters:
 * User can specify absolute error correction level, or allow the library to boost it if it doesn't increase the version number
 * User can create a list of data segments manually and add ECI segments
 
+More information about QR Code technology and this library's design can be found on the project home page.
 
-Usage
------
 
-Install this package by downloading the source code ZIP file from PyPI_, or by running ``pip install qrcodegen``.
-
-Examples:
+Examples
+--------
 
 ::
 
@@ -103,11 +101,7 @@ Examples:
         for x in range(qr1.get_size()):
             (... paint qr1.get_module(x, y) ...)
 
-More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/python/qrcodegen-demo.py .
-
-API documentation is in the source file itself, with a summary comment at the top: https://github.com/nayuki/QR-Code-generator/blob/master/python/qrcodegen.py .
-
-.. _PyPI: https://pypi.python.org/pypi/qrcodegen""",
+More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/python/qrcodegen-demo.py .""",
 	
 	py_modules = ["qrcodegen"],
 )

@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include <catch.hpp>
 
 #include "storage/storage_encrypted_file.h"
@@ -21,9 +20,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <thread>
 #ifdef Q_OS_MAC
 #include <mach-o/dyld.h>
-#elif defined Q_OS_UNIX // Q_OS_MAC
+#elif !defined Q_OS_WIN // Q_OS_MAC
 #include <unistd.h>
-#endif // Q_OS_MAC || Q_OS_UNIX
+#endif // Q_OS_MAC || !Q_OS_WIN
 
 extern int (*TestForkedMethod)();
 

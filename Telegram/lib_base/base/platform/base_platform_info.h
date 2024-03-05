@@ -62,6 +62,7 @@ enum class OutdateReason {
 [[nodiscard]] constexpr bool IsLinux();
 [[nodiscard]] bool IsX11();
 [[nodiscard]] bool IsWayland();
+[[nodiscard]] bool IsXwayland();
 
 [[nodiscard]] QString GetLibcName();
 [[nodiscard]] QString GetLibcVersion();
@@ -72,10 +73,10 @@ void Finish();
 
 } // namespace Platform
 
-#ifdef Q_OS_MAC
-#include "base/platform/mac/base_info_mac.h"
-#elif defined Q_OS_UNIX // Q_OS_MAC
-#include "base/platform/linux/base_info_linux.h"
-#elif defined Q_OS_WIN // Q_OS_MAC || Q_OS_UNIX
+#ifdef Q_OS_WIN
 #include "base/platform/win/base_info_win.h"
-#endif // Q_OS_MAC || Q_OS_UNIX || Q_OS_WIN
+#elif defined Q_OS_MAC // Q_OS_WIN
+#include "base/platform/mac/base_info_mac.h"
+#else // Q_OS_WIN || Q_OS_MAC
+#include "base/platform/linux/base_info_linux.h"
+#endif // else for Q_OS_WIN || Q_OS_MAC

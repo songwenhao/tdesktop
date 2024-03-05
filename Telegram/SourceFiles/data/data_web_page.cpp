@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
+#include "lang/lang_keys.h"
 #include "ui/image/image.h"
 #include "ui/text/text_entity.h"
 
@@ -140,7 +141,7 @@ WebPageType ParseWebPageType(
 		const QString &type,
 		const QString &embedUrl,
 		bool hasIV) {
-	if (type == u"video"_q || !embedUrl.isEmpty()) {
+	if (type == u"video"_q || type == u"gif"_q || !embedUrl.isEmpty()) {
 		return WebPageType::Video;
 	} else if (type == u"photo"_q) {
 		return WebPageType::Photo;
@@ -152,6 +153,8 @@ WebPageType ParseWebPageType(
 		return WebPageType::WallPaper;
 	} else if (type == u"telegram_theme"_q) {
 		return WebPageType::Theme;
+	} else if (type == u"telegram_story"_q) {
+		return WebPageType::Story;
 	} else if (type == u"telegram_channel"_q) {
 		return WebPageType::Channel;
 	} else if (type == u"telegram_channel_request"_q) {
@@ -174,6 +177,10 @@ WebPageType ParseWebPageType(
 		return WebPageType::User;
 	} else if (type == u"telegram_botapp"_q) {
 		return WebPageType::BotApp;
+	} else if (type == u"telegram_channel_boost"_q) {
+		return WebPageType::ChannelBoost;
+	} else if (type == u"telegram_giftcode"_q) {
+		return WebPageType::Giftcode;
 	} else if (hasIV) {
 		return WebPageType::ArticleWithIV;
 	} else {
@@ -214,14 +221,16 @@ bool WebPageData::applyChanges(
 		const QString &newSiteName,
 		const QString &newTitle,
 		const TextWithEntities &newDescription,
+		FullStoryId newStoryId,
 		PhotoData *newPhoto,
 		DocumentData *newDocument,
 		WebPageCollage &&newCollage,
 		int newDuration,
 		const QString &newAuthor,
+		bool newHasLargeMedia,
 		int newPendingTill) {
 	if (newPendingTill != 0
-		&& (!url.isEmpty() || pendingTill < 0)
+		&& (!url.isEmpty() || failed)
 		&& (!pendingTill
 			|| pendingTill == newPendingTill
 			|| newPendingTill < -1)) {
@@ -247,6 +256,15 @@ bool WebPageData::applyChanges(
 		}
 		return QString();
 	}();
+	const auto hasSiteName = !resultSiteName.isEmpty() ? 1 : 0;
+	const auto hasTitle = !resultTitle.isEmpty() ? 1 : 0;
+	const auto hasDescription = !newDescription.text.isEmpty() ? 1 : 0;
+	if (newDocument
+		|| !newCollage.items.empty()
+		|| !newPhoto
+		|| (hasSiteName + hasTitle + hasDescription < 2)) {
+		newHasLargeMedia = false;
+	}
 
 	if (type == newType
 		&& url == resultUrl
@@ -254,11 +272,13 @@ bool WebPageData::applyChanges(
 		&& siteName == resultSiteName
 		&& title == resultTitle
 		&& description.text == newDescription.text
+		&& storyId == newStoryId
 		&& photo == newPhoto
 		&& document == newDocument
 		&& collage.items == newCollage.items
 		&& duration == newDuration
 		&& author == resultAuthor
+		&& hasLargeMedia == (newHasLargeMedia ? 1 : 0)
 		&& pendingTill == newPendingTill) {
 		return false;
 	}
@@ -266,11 +286,13 @@ bool WebPageData::applyChanges(
 		_owner->session().api().clearWebPageRequest(this);
 	}
 	type = newType;
+	hasLargeMedia = newHasLargeMedia ? 1 : 0;
 	url = resultUrl;
 	displayUrl = resultDisplayUrl;
 	siteName = resultSiteName;
 	title = resultTitle;
 	description = newDescription;
+	storyId = newStoryId;
 	photo = newPhoto;
 	document = newDocument;
 	collage = std::move(newCollage);
@@ -335,4 +357,43 @@ void WebPageData::ApplyChanges(
 		});
 	}
 	session->data().sendWebPageGamePollNotifications();
+}
+
+QString WebPageData::displayedSiteName() const {
+	return (document && document->isWallPaper())
+		? tr::lng_media_chat_background(tr::now)
+		: (document && document->isTheme())
+		? tr::lng_media_color_theme(tr::now)
+		: siteName;
+}
+
+bool WebPageData::computeDefaultSmallMedia() const {
+	if (!collage.items.empty()) {
+		return false;
+	} else if (siteName.isEmpty()
+		&& title.isEmpty()
+		&& description.empty()
+		&& author.isEmpty()) {
+		return false;
+	} else if (!document
+		&& photo
+		&& type != WebPageType::Photo
+		&& type != WebPageType::Document
+		&& type != WebPageType::Story
+		&& type != WebPageType::Video) {
+		if (type == WebPageType::Profile) {
+			return true;
+		} else if (siteName == u"Twitter"_q
+			|| siteName == u"Facebook"_q
+			|| type == WebPageType::ArticleWithIV) {
+			return false;
+		} else {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool WebPageData::suggestEnlargePhoto() const {
+	return !siteName.isEmpty() || !title.isEmpty() || !description.empty();
 }

@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/win/windows_autostart_task.h"
 #include "base/platform/base_platform_info.h"
 #include "base/platform/win/base_windows_co_task_mem.h"
+#include "base/platform/win/base_windows_shlobj_h.h"
 #include "base/platform/win/base_windows_winrt.h"
 #include "base/call_delayed.h"
 #include "ui/boxes/confirm_box.h"
@@ -41,7 +42,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <openssl/err.h>
 
 #include <dbghelp.h>
-#include <shlobj.h>
 #include <Shlwapi.h>
 #include <Strsafe.h>
 #include <Windowsx.h>
@@ -195,8 +195,7 @@ bool ManageAppLink(
 		return true;
 	}
 	const auto shellLink = base::WinRT::TryCreateInstance<IShellLink>(
-		CLSID_ShellLink,
-		CLSCTX_INPROC_SERVER);
+		CLSID_ShellLink);
 	if (!shellLink) {
 		if (!silent) LOG(("App Error: could not create instance of IID_IShellLink %1").arg(hr));
 		return false;
@@ -209,9 +208,9 @@ bool ManageAppLink(
 
 	if (const auto propertyStore = shellLink.try_as<IPropertyStore>()) {
 		PROPVARIANT appIdPropVar;
-		hr = InitPropVariantFromString(AppUserModelId::getId(), &appIdPropVar);
+		hr = InitPropVariantFromString(AppUserModelId::Id().c_str(), &appIdPropVar);
 		if (SUCCEEDED(hr)) {
-			hr = propertyStore->SetValue(AppUserModelId::getKey(), appIdPropVar);
+			hr = propertyStore->SetValue(AppUserModelId::Key(), appIdPropVar);
 			PropVariantClear(&appIdPropVar);
 			if (SUCCEEDED(hr)) {
 				hr = propertyStore->Commit();
@@ -262,7 +261,7 @@ void psDoCleanup() {
 	try {
 		Platform::AutostartToggle(false);
 		psSendToMenu(false, true);
-		AppUserModelId::cleanupShortcut();
+		AppUserModelId::CleanupShortcut();
 		DeleteMyModules();
 	} catch (...) {
 	}
@@ -370,6 +369,10 @@ void start() {
 void start() {
 	// https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/setlocale-wsetlocale#utf-8-support
 	setlocale(LC_ALL, ".UTF8");
+
+	const auto appUserModelId = AppUserModelId::Id();
+	SetCurrentProcessExplicitAppUserModelID(appUserModelId.c_str());
+	LOG(("AppUserModelID: %1").arg(appUserModelId));
 }
 
 void finish() {
@@ -383,6 +386,7 @@ QString SingleInstanceLocalServerName(const QString &hash) {
 	return u"Global\\"_q + hash + '-' + cGUIDStr();
 }
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 std::optional<bool> IsDarkMode() {
 	static const auto kSystemVersion = QOperatingSystemVersion::current();
 	static const auto kDarkModeAddedVersion = QOperatingSystemVersion(
@@ -413,6 +417,7 @@ std::optional<bool> IsDarkMode() {
 
 	return (value == 0);
 }
+#endif // Qt < 6.5.0
 
 bool AutostartSupported() {
 	return true;
@@ -476,7 +481,7 @@ bool AutostartSkip() {
 }
 
 void WriteCrashDumpDetails() {
-#ifndef DESKTOP_APP_DISABLE_CRASH_REPORTS
+#ifndef TDESKTOP_DISABLE_CRASH_REPORTS
 	PROCESS_MEMORY_COUNTERS data = { 0 };
 	if (Dlls::GetProcessMemoryInfo
 		&& Dlls::GetProcessMemoryInfo(
@@ -497,7 +502,7 @@ void WriteCrashDumpDetails() {
 			<< (data.PagefileUsage / mb)
 			<< " MB (current)\n";
 	}
-#endif // DESKTOP_APP_DISABLE_CRASH_REPORTS
+#endif // TDESKTOP_DISABLE_CRASH_REPORTS
 }
 
 void SetWindowPriority(not_null<QWidget*> window, uint32 priority) {
@@ -636,8 +641,8 @@ bool OpenSystemSettings(SystemSettingsType type) {
 }
 
 void NewVersionLaunched(int oldVersion) {
-	if (oldVersion < 8051) {
-		AppUserModelId::checkPinned();
+	if (oldVersion <= 4009009) {
+		AppUserModelId::CheckPinned();
 	}
 	if (oldVersion > 0 && oldVersion < 2008012) {
 		// Reset icons cache, because we've changed the application icon.
@@ -681,7 +686,10 @@ bool psLaunchMaps(const Data::LocationPoint &point) {
 		AT_URLPROTOCOL,
 		AL_EFFECTIVE,
 		handler.put());
-	if (FAILED(result) || !handler) {
+	if (FAILED(result)
+		|| !handler
+		|| !handler.data()
+		|| std::wstring(handler.data()) == L"bingmaps") {
 		return false;
 	}
 

@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #pragma once
 
 #include "ui/text/text_custom_emoji.h"
@@ -18,6 +17,7 @@ class QColor;
 class QPainter;
 
 namespace Ui {
+class DynamicImage;
 class FrameGenerator;
 } // namespace Ui
 
@@ -258,6 +258,7 @@ public:
 	Object(not_null<Instance*> instance, Fn<void()> repaint);
 	~Object();
 
+	int width() override;
 	QString entityData() override;
 	void paint(QPainter &p, const Context &context) override;
 	void unload() override;
@@ -270,6 +271,55 @@ private:
 	const not_null<Instance*> _instance;
 	Fn<void()> _repaint;
 	bool _using = false;
+
+};
+
+class Internal final : public Text::CustomEmoji {
+public:
+	Internal(
+		QString entityData,
+		QImage image,
+		QMargins padding,
+		bool colored);
+
+	int width() override;
+	QString entityData() override;
+	void paint(QPainter &p, const Context &context) override;
+	void unload() override;
+	bool ready() override;
+	bool readyInDefaultState() override;
+
+private:
+	const QString _entityData;
+	const QImage _image;
+	const QMargins _padding;
+	const bool _colored = false;
+
+};
+
+class DynamicImageEmoji final : public Ui::Text::CustomEmoji {
+public:
+	DynamicImageEmoji(
+		QString entityData,
+		std::shared_ptr<DynamicImage> image,
+		Fn<void()> repaint,
+		QMargins padding,
+		int size);
+
+	int width() override;
+	QString entityData() override;
+	void paint(QPainter &p, const Context &context) override;
+	void unload() override;
+	bool ready() override;
+	bool readyInDefaultState() override;
+
+private:
+	const QString _entityData;
+	const std::shared_ptr<DynamicImage> _image;
+	const Fn<void()> _repaint;
+	const QMargins _padding;
+	const int _size = 0;
+	bool _subscribed = false;
 
 };
 

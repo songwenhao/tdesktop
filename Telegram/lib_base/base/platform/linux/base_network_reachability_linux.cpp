@@ -6,39 +6,10 @@
 //
 #include "base/platform/base_platform_network_reachability.h"
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-#include <giomm.h>
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-
 namespace base::Platform {
 
-// glib is better on linux due to portal support
-std::optional<bool> NetworkAvailable() {
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-	// crashes on 2.46.0...2.60.0, but not on >=2.56.3, >=2.58.1 (fix backported)
-	if ((!glib_check_version(2, 56, 0) && glib_check_version(2, 56, 3))
-		|| (!glib_check_version(2, 58, 0) && glib_check_version(2, 58, 1))
-		|| (glib_check_version(2, 60, 0)
-			&& glib_check_version(2, 58, 0)
-			&& glib_check_version(2, 56, 0)
-			&& !glib_check_version(2, 46, 0))) {
-		return std::nullopt;
-	}
-
-	[[maybe_unused]] static const auto Inited = [] {
-		Gio::NetworkMonitor::get_default(
-		)->property_network_available(
-		).signal_changed(
-		).connect([] {
-			NotifyNetworkAvailableChanged();
-		});
-		return true;
-	}();
-
-	return Gio::NetworkMonitor::get_default()->get_network_available();
-#else // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-	return std::nullopt;
-#endif // DESKTOP_APP_DISABLE_DBUS_INTEGRATION
+std::unique_ptr<NetworkReachability> NetworkReachability::Create() {
+	return nullptr;
 }
 
 } // namespace base::Platform

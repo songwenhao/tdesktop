@@ -73,10 +73,16 @@ public:
     const auto &next() const { return next_; }
     const auto &font() const { return font_; }
     const auto &fontMetrics() const { return fontMetrics_; }
+    const auto &highlightBackgroundColor() const {
+        return highlightBackgroundColor_;
+    }
+    const auto &highlightColor() const { return highlightColor_; }
+    const auto &buttonAlignment() const { return buttonAlignment_; }
     auto contentMargin() const { return contentMargin_; }
     auto textMargin() const { return textMargin_; }
     auto highlightClickMargin() const { return highlightClickMargin_; }
     QMargins highlightMargin() const;
+    auto shadowMargin() const { return shadowMargin_; }
     auto normalColor() const { return normalColor_; }
     auto highlightCandidateColor() const { return highlightCandidateColor_; }
     auto vertical() const { return vertical_; }
@@ -106,9 +112,11 @@ private:
     bool fullWidthHighlight_ = true;
     QColor highlightColor_{Qt::white};
     QColor highlightBackgroundColor_{0xa5, 0xa5, 0xa5};
+    QString buttonAlignment_;
     QMargins highlightClickMargin_;
     QMargins contentMargin_;
     QMargins textMargin_;
+    QMargins shadowMargin_;
 };
 
 } // namespace fcitx

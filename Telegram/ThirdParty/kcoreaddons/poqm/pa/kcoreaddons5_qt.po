@@ -4,7 +4,7 @@
 #
 # Amanpreet Singh Alam <amanlinux@netscape.net>, 2004.
 # Amanpreet Singh Alam <amanlinux@netscpe.net>, 2004.
-# A S Alam <aalam@users.sf.net>, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2022.
+# A S Alam <aalam@users.sf.net>, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2022, 2023.
 # ASB <aalam@users.sf.net>, 2007.
 # Amanpreet Singh Alam <apreet.alam@gmail.com>, 2008.
 # Amanpreet Singh <aalam@users.sf.net>, 2008.
@@ -14,58 +14,58 @@ msgstr ""
 "Project-Id-Version: kdelibs4\n"
 "Report-Msgid-Bugs-To: http://bugs.kde.org\n"
 "POT-Creation-Date: 2014-03-23 01:50+0000\n"
-"PO-Revision-Date: 2022-11-19 05:09-0800\n"
+"PO-Revision-Date: 2023-01-25 07:36-0800\n"
 "Last-Translator: A S Alam <aalam@satluj.org>\n"
 "Language-Team: Punjabi <punjabi-users@lists.sf.net>\n"
 "Language: pa\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Lokalize 22.08.2\n"
+"X-Generator: Lokalize 22.12.1\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Qt-Contexts: true\n"
 
-#: lib/io/kfilesystemtype.cpp:236
+#: lib/io/kfilesystemtype.cpp:243
 msgctxt "KFileSystemType|"
 msgid "NFS"
 msgstr "NFS"
 
-#: lib/io/kfilesystemtype.cpp:238
+#: lib/io/kfilesystemtype.cpp:245
 msgctxt "KFileSystemType|"
 msgid "SMB"
 msgstr "SMB"
 
-#: lib/io/kfilesystemtype.cpp:240
+#: lib/io/kfilesystemtype.cpp:247
 msgctxt "KFileSystemType|"
 msgid "FAT"
 msgstr "FAT"
 
-#: lib/io/kfilesystemtype.cpp:242
+#: lib/io/kfilesystemtype.cpp:249
 msgctxt "KFileSystemType|"
 msgid "RAMFS"
 msgstr "RAMFS"
 
-#: lib/io/kfilesystemtype.cpp:244
+#: lib/io/kfilesystemtype.cpp:251
 msgctxt "KFileSystemType|"
 msgid "Other"
 msgstr "ਹੋਰ"
 
-#: lib/io/kfilesystemtype.cpp:246
+#: lib/io/kfilesystemtype.cpp:253
 msgctxt "KFileSystemType|"
 msgid "NTFS"
 msgstr "NTFS"
 
-#: lib/io/kfilesystemtype.cpp:248
+#: lib/io/kfilesystemtype.cpp:255
 msgctxt "KFileSystemType|"
 msgid "ExFAT"
 msgstr "ExFAT"
 
-#: lib/io/kfilesystemtype.cpp:250
+#: lib/io/kfilesystemtype.cpp:257
 msgctxt "KFileSystemType|"
 msgid "FUSE"
 msgstr "FUSE"
 
-#: lib/io/kfilesystemtype.cpp:252
+#: lib/io/kfilesystemtype.cpp:259
 msgctxt "KFileSystemType|"
 msgid "Unknown"
 msgstr "ਅਣਜਾਣ"
@@ -793,14 +793,19 @@ msgctxt "KFormat|"
 msgid "Just now"
 msgstr "ਹੁਣੇ ਹੀ"
 
-#: lib/util/kformatprivate.cpp:512
-#, qt-format
+#. @item:intext %1 is a whole number
+#: lib/util/kformatprivate.cpp:515
+#, fuzzy, qt-format
+#| msgctxt "KFormat|"
+#| msgid "%1 minutes ago"
 msgctxt "KFormat|"
-msgid "%1 minutes ago"
-msgstr "%1 ਮਿੰਟ ਪਹਿਲਾਂ"
+msgid "%n minute(s) ago"
+msgid_plural "%n minute(s) ago"
+msgstr[0] "%n ਮਿੰਟ ਪਹਿਲਾਂ"
+msgstr[1] "%1 ਮਿੰਟ ਪਹਿਲਾਂ"
 
 #. relative datetime with %1 result of QLocale.toString(date, format) or formatRelativeDate and %2 result of QLocale.toString(time, timeformatType) If this does not fit the grammar of your language please contact the i18n team to solve the problem
-#: lib/util/kformatprivate.cpp:528
+#: lib/util/kformatprivate.cpp:531
 #, qt-format
 msgctxt "KFormat|"
 msgid "%1 at %2"

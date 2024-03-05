@@ -54,9 +54,9 @@ void reedSolomonComputeRemainder(const uint8_t data[], int dataLen, const uint8_
 uint8_t reedSolomonMultiply(uint8_t x, uint8_t y);
 void initializeFunctionModules(int version, uint8_t qrcode[]);
 int getAlignmentPatternPositions(int version, uint8_t result[7]);
-bool getModule(const uint8_t qrcode[], int x, int y);
-void setModule(uint8_t qrcode[], int x, int y, bool isDark);
+bool getModuleBounded(const uint8_t qrcode[], int x, int y);
 void setModuleBounded(uint8_t qrcode[], int x, int y, bool isDark);
+void setModuleUnbounded(uint8_t qrcode[], int x, int y, bool isDark);
 int calcSegmentBitLength(enum qrcodegen_Mode mode, size_t numChars);
 int getTotalBits(const struct qrcodegen_Segment segs[], size_t len, int version);
 
@@ -116,9 +116,17 @@ static uint8_t *addEccAndInterleaveReference(const uint8_t *data, int version, e
 	// Split data into blocks and append ECC to each block
 	uint8_t **blocks = malloc(numBlocks * sizeof(uint8_t*));
 	uint8_t *generator = malloc(blockEccLen * sizeof(uint8_t));
+	if (blocks == NULL || generator == NULL) {
+		perror("malloc");
+		exit(EXIT_FAILURE);
+	}
 	reedSolomonComputeDivisor((int)blockEccLen, generator);
 	for (size_t i = 0, k = 0; i < numBlocks; i++) {
 		uint8_t *block = malloc((shortBlockLen + 1) * sizeof(uint8_t));
+		if (block == NULL) {
+			perror("malloc");
+			exit(EXIT_FAILURE);
+		}
 		size_t datLen = shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1);
 		memcpy(block, &data[k], datLen * sizeof(uint8_t));
 		reedSolomonComputeRemainder(&data[k], (int)datLen, generator, (int)blockEccLen, &block[shortBlockLen + 1 - blockEccLen]);
@@ -129,6 +137,10 @@ static uint8_t *addEccAndInterleaveReference(const uint8_t *data, int version, e
 	
 	// Interleave (not concatenate) the bytes from every block into a single sequence
 	uint8_t *result = malloc(rawCodewords * sizeof(uint8_t));
+	if (result == NULL) {
+		perror("malloc");
+		exit(EXIT_FAILURE);
+	}
 	for (size_t i = 0, k = 0; i < shortBlockLen + 1; i++) {
 		for (size_t j = 0; j < numBlocks; j++) {
 			// Skip the padding byte in short blocks
@@ -150,14 +162,26 @@ static void testAddEccAndInterleave(void) {
 		for (int ecl = 0; ecl < 4; ecl++) {
 			size_t dataLen = (size_t)getNumDataCodewords(version, (enum qrcodegen_Ecc)ecl);
 			uint8_t *pureData = malloc(dataLen * sizeof(uint8_t));
+			if (pureData == NULL) {
+				perror("malloc");
+				exit(EXIT_FAILURE);
+			}
 			for (size_t i = 0; i < dataLen; i++)
 				pureData[i] = (uint8_t)(rand() % 256);
 			uint8_t *expectOutput = addEccAndInterleaveReference(pureData, version, (enum qrcodegen_Ecc)ecl);
 			
 			size_t dataAndEccLen = (size_t)getNumRawDataModules(version) / 8;
 			uint8_t *paddedData = malloc(dataAndEccLen * sizeof(uint8_t));
+			if (paddedData == NULL) {
+				perror("malloc");
+				exit(EXIT_FAILURE);
+			}
 			memcpy(paddedData, pureData, dataLen * sizeof(uint8_t));
 			uint8_t *actualOutput = malloc(dataAndEccLen * sizeof(uint8_t));
+			if (actualOutput == NULL) {
+				perror("malloc");
+				exit(EXIT_FAILURE);
+			}
 			addEccAndInterleave(paddedData, version, (enum qrcodegen_Ecc)ecl, actualOutput);
 			
 			assert(memcmp(actualOutput, expectOutput, dataAndEccLen * sizeof(uint8_t)) == 0);
@@ -363,7 +387,10 @@ static void testReedSolomonMultiply(void) {
 static void testInitializeFunctionModulesEtc(void) {
 	for (int ver = 1; ver <= 40; ver++) {
 		uint8_t *qrcode = malloc((size_t)qrcodegen_BUFFER_LEN_FOR_VERSION(ver) * sizeof(uint8_t));
-		assert(qrcode != NULL);
+		if (qrcode == NULL) {
+			perror("malloc");
+			exit(EXIT_FAILURE);
+		}
 		initializeFunctionModules(ver, qrcode);
 		
 		int size = qrcodegen_getSize(qrcode);
@@ -426,7 +453,7 @@ static void testGetSetModule(void) {
 	
 	for (int y = 0; y < size; y++) {  // Clear all to light
 		for (int x = 0; x < size; x++)
-			setModule(qrcode, x, y, false);
+			setModuleBounded(qrcode, x, y, false);
 	}
 	for (int y = 0; y < size; y++) {  // Check all light
 		for (int x = 0; x < size; x++)
@@ -434,7 +461,7 @@ static void testGetSetModule(void) {
 	}
 	for (int y = 0; y < size; y++) {  // Set all to dark
 		for (int x = 0; x < size; x++)
-			setModule(qrcode, x, y, true);
+			setModuleBounded(qrcode, x, y, true);
 	}
 	for (int y = 0; y < size; y++) {  // Check all dark
 		for (int x = 0; x < size; x++)
@@ -442,20 +469,20 @@ static void testGetSetModule(void) {
 	}
 	
 	// Set some out of bounds modules to light
-	setModuleBounded(qrcode, -1, -1, false);
-	setModuleBounded(qrcode, -1, 0, false);
-	setModuleBounded(qrcode, 0, -1, false);
-	setModuleBounded(qrcode, size, 5, false);
-	setModuleBounded(qrcode, 72, size, false);
-	setModuleBounded(qrcode, size, size, false);
+	setModuleUnbounded(qrcode, -1, -1, false);
+	setModuleUnbounded(qrcode, -1, 0, false);
+	setModuleUnbounded(qrcode, 0, -1, false);
+	setModuleUnbounded(qrcode, size, 5, false);
+	setModuleUnbounded(qrcode, 72, size, false);
+	setModuleUnbounded(qrcode, size, size, false);
 	for (int y = 0; y < size; y++) {  // Check all dark
 		for (int x = 0; x < size; x++)
 			assert(qrcodegen_getModule(qrcode, x, y) == true);
 	}
 	
 	// Set some modules to light
-	setModule(qrcode, 3, 8, false);
-	setModule(qrcode, 61, 49, false);
+	setModuleBounded(qrcode, 3, 8, false);
+	setModuleBounded(qrcode, 61, 49, false);
 	for (int y = 0; y < size; y++) {  // Check most dark
 		for (int x = 0; x < size; x++) {
 			bool light = (x == 3 && y == 8) || (x == 61 && y == 49);
@@ -484,16 +511,16 @@ static void testGetSetModuleRandomly(void) {
 		bool isInBounds = 0 <= x && x < size && 0 <= y && y < size;
 		bool oldColor = isInBounds && modules[y][x];
 		if (isInBounds)
-			assert(getModule(qrcode, x, y) == oldColor);
+			assert(getModuleBounded(qrcode, x, y) == oldColor);
 		assert(qrcodegen_getModule(qrcode, x, y) == oldColor);
 		
 		bool newColor = rand() % 2 == 0;
 		if (isInBounds)
 			modules[y][x] = newColor;
 		if (isInBounds && rand() % 2 == 0)
-			setModule(qrcode, x, y, newColor);
-		else
 			setModuleBounded(qrcode, x, y, newColor);
+		else
+			setModuleUnbounded(qrcode, x, y, newColor);
 	}
 	numTestCases++;
 }

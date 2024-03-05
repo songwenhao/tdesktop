@@ -10,6 +10,7 @@
 #include "ui/basic_click_handlers.h"
 #include "ui/ui_utility.h"
 #include "ui/painter.h"
+#include "styles/palette.h"
 
 #include <QtGui/QtEvents>
 #include <QtCore/QtMath>
@@ -290,6 +291,47 @@ void CheckView::setUntoggledOverride(
 	update();
 }
 
+Fn<void()> CheckView::PrepareNonToggledError(
+		not_null<CheckView*> view,
+		rpl::lifetime &lifetime) {
+	struct State {
+		bool error = false;
+		Ui::Animations::Simple errorAnimation;
+	};
+	const auto state = lifetime.make_state<State>();
+
+	view->checkedChanges(
+	) | rpl::filter([=](bool checked) {
+		return checked;
+	}) | rpl::start_with_next([=] {
+		state->error = false;
+		view->setUntoggledOverride(std::nullopt);
+	}, lifetime);
+
+	return [=] {
+		const auto callback = [=] {
+			const auto error = state->errorAnimation.value(
+				state->error ? 1. : 0.);
+			if (error == 0.) {
+				view->setUntoggledOverride(std::nullopt);
+			} else {
+				const auto color = anim::color(
+					st::defaultCheck.untoggledFg,
+					st::boxTextFgError,
+					error);
+				view->setUntoggledOverride(color);
+			}
+		};
+		state->error = true;
+		state->errorAnimation.stop();
+		state->errorAnimation.start(
+			callback,
+			0.,
+			1.,
+			st::defaultCheck.duration);
+	};
+}
+
 RadioView::RadioView(
 	const style::Radio &st,
 	bool checked,
@@ -502,7 +544,7 @@ int Checkbox::countTextMinWidth() const {
 		+ _st.textPosition.x();
 	return (_st.width > 0)
 		? std::max(_st.width - leftSkip, 1)
-		: QFIXED_MAX;
+		: kQFixedMax;
 }
 
 QRect Checkbox::checkRect() const {
@@ -545,8 +587,8 @@ void Checkbox::setTextBreakEverywhere(bool allow) {
 	_textBreakEverywhere = allow;
 }
 
-void Checkbox::setLink(uint16 lnkIndex, const ClickHandlerPtr &lnk) {
-	_text.setLink(lnkIndex, lnk);
+void Checkbox::setLink(uint16 index, const ClickHandlerPtr &lnk) {
+	_text.setLink(index, lnk);
 }
 
 void Checkbox::setLinksTrusted() {
@@ -765,8 +807,10 @@ Text::StateResult Checkbox::getTextState(const QPoint &m) const {
 		+ _st.textPosition.x();
 	const auto availableTextWidth = std::max(width() - textSkip, 1);
 	const auto textTop = _st.margin.top() + _st.textPosition.y();
+	auto request = Ui::Text::StateRequestElided();
+	request.lines = _allowTextLines;
 	return !_allowTextLines
-		? _text.getStateElided(
+		? _text.getState(
 			m - QPoint(textSkip, textTop),
 			availableTextWidth,
 			{})
@@ -774,7 +818,7 @@ Text::StateResult Checkbox::getTextState(const QPoint &m) const {
 			m - QPoint(textSkip, textTop),
 			availableTextWidth,
 			width(),
-			{});
+			request);
 }
 
 QPixmap Checkbox::grabCheckCache() const {

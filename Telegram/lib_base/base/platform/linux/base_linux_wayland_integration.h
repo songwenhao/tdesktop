@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #pragma once
 
 class QWindow;
@@ -14,16 +13,14 @@ namespace Platform {
 
 class WaylandIntegration {
 public:
-	[[nodiscard]] static WaylandIntegration *Instance();
-
-	[[nodiscard]] QString nativeHandle(QWindow *window);
-	[[nodiscard]] QString activationToken();
-	void preventDisplaySleep(bool prevent, QWindow *window);
-
-private:
 	WaylandIntegration();
 	~WaylandIntegration();
 
+	[[nodiscard]] static WaylandIntegration *Instance();
+
+	void preventDisplaySleep(not_null<QWindow*> window, bool prevent);
+
+private:
 	struct Private;
 	const std::unique_ptr<Private> _private;
 };

@@ -41,6 +41,7 @@ public Q_SLOTS:
                                             unsigned int state, bool type,
                                             unsigned int time);
     QDBusPendingReply<> reset();
+    QDBusPendingReply<> setSupportedCapability(qulonglong caps);
     QDBusPendingReply<> setCapability(qulonglong caps);
     QDBusPendingReply<> setCursorRect(int x, int y, int w, int h);
     QDBusPendingReply<> setCursorRectV2(int x, int y, int w, int h,
@@ -73,6 +74,7 @@ Q_SIGNALS:
                             int candidateIndex, int layoutHint, bool hasPrev,
                             bool hasNext);
     void inputContextCreated(const QByteArray &uuid);
+    void notifyFocusOut();
 
 private:
     Q_PRIVATE_SLOT(d_func(), void availabilityChanged());

@@ -13,12 +13,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/radial_animation.h"
-#include "styles/style_overview.h"
 
 class Image;
 
 namespace style {
 struct RoundCheckbox;
+struct OverviewFileLayout;
 } // namespace style
 
 namespace Data {
@@ -183,13 +183,19 @@ struct Info : public RuntimeComponent<Info, LayoutItemBase> {
 	int top = 0;
 };
 
+struct MediaOptions {
+	bool spoiler = false;
+	bool story = false;
+};
+
 class Photo final : public ItemBase {
 public:
 	Photo(
 		not_null<Delegate*> delegate,
 		not_null<HistoryItem*> parent,
 		not_null<PhotoData*> photo,
-		bool spoiler);
+		MediaOptions options);
+	~Photo();
 
 	void initDimensions() override;
 	int32 resizeGetHeight(int32 width) override;
@@ -212,6 +218,7 @@ private:
 
 	QPixmap _pix;
 	bool _goodLoaded = false;
+	bool _story = false;
 
 };
 
@@ -279,7 +286,7 @@ public:
 		not_null<Delegate*> delegate,
 		not_null<HistoryItem*> parent,
 		not_null<DocumentData*> video,
-		bool spoiler);
+		MediaOptions options);
 	~Video();
 
 	void initDimensions() override;
@@ -311,6 +318,7 @@ private:
 
 	QPixmap _pix;
 	bool _pixBlurred = true;
+	bool _story = false;
 
 };
 
@@ -339,9 +347,8 @@ protected:
 
 private:
 	void ensureDataMediaCreated() const;
-	int duration() const;
 
-	not_null<DocumentData*> _data;
+	const not_null<DocumentData*> _data;
 	mutable std::shared_ptr<Data::DocumentMedia> _dataMedia;
 	StatusText _status;
 	ClickHandlerPtr _namel;
@@ -361,6 +368,7 @@ struct DocumentFields {
 	TimeId dateOverride = 0;
 	bool forceFileLayout = false;
 };
+
 class Document final : public RadialProgressItem {
 public:
 	Document(

@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "apiwrap.h"
 #include "window/window_session_controller.h"
+#include "info/profile/info_profile_badge.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/empty_userpic.h"
@@ -22,9 +23,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_file_origin.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/toasts/common_toasts.h"
+#include "ui/toast/toast.h"
 #include "boxes/premium_limits_box.h"
 #include "styles/style_boxes.h"
+#include "styles/style_info.h"
 #include "styles/style_layers.h"
 
 namespace Api {
@@ -85,20 +87,17 @@ void SubmitChatInvite(
 		}
 
 		strongController->hideLayer();
-		Ui::ShowMultilineToast({
-			.parentOverride = Window::Show(strongController).toastParent(),
-			.text = { [&] {
-				if (type == u"INVITE_REQUEST_SENT"_q) {
-					return isGroup
-						? tr::lng_group_request_sent(tr::now)
-						: tr::lng_group_request_sent_channel(tr::now);
-				} else if (type == u"USERS_TOO_MUCH"_q) {
-					return tr::lng_group_invite_no_room(tr::now);
-				} else {
-					return tr::lng_group_invite_bad_link(tr::now);
-				}
-			}() },
-			.duration = ApiWrap::kJoinErrorDuration });
+		strongController->showToast([&] {
+			if (type == u"INVITE_REQUEST_SENT"_q) {
+				return isGroup
+					? tr::lng_group_request_sent(tr::now)
+					: tr::lng_group_request_sent_channel(tr::now);
+			} else if (type == u"USERS_TOO_MUCH"_q) {
+				return tr::lng_group_invite_no_room(tr::now);
+			} else {
+				return tr::lng_group_invite_bad_link(tr::now);
+			}
+		}(), ApiWrap::kJoinErrorDuration);
 	}).send();
 }
 
@@ -198,6 +197,13 @@ ConfirmInviteBox::ConfirmInviteBox(
 : _session(session)
 , _submit(std::move(submit))
 , _title(this, st::confirmInviteTitle)
+, _badge(std::make_unique<Info::Profile::Badge>(
+	this,
+	st::infoPeerBadge,
+	_session,
+	rpl::single(Info::Profile::Badge::Content{ BadgeForInvite(invite) }),
+	nullptr,
+	[=] { return false; }))
 , _status(this, st::confirmInviteStatus)
 , _about(this, st::confirmInviteAbout)
 , _aboutRequests(this, st::confirmInviteStatus)
@@ -278,7 +284,22 @@ ConfirmInviteBox::ChatInvite ConfirmInviteBox::Parse(
 		.isMegagroup = data.is_megagroup(),
 		.isBroadcast = data.is_broadcast(),
 		.isRequestNeeded = data.is_request_needed(),
+		.isFake = data.is_fake(),
+		.isScam = data.is_scam(),
+		.isVerified = data.is_verified(),
 	};
+}
+
+[[nodiscard]] Info::Profile::BadgeType ConfirmInviteBox::BadgeForInvite(
+		const ChatInvite &invite) {
+	using Type = Info::Profile::BadgeType;
+	return invite.isVerified
+		? Type::Verified
+		: invite.isScam
+		? Type::Scam
+		: invite.isFake
+		? Type::Fake
+		: Type::None;
 }
 
 void ConfirmInviteBox::prepare() {
@@ -329,8 +350,26 @@ void ConfirmInviteBox::prepare() {
 
 void ConfirmInviteBox::resizeEvent(QResizeEvent *e) {
 	BoxContent::resizeEvent(e);
-	_title->move((width() - _title->width()) / 2, st::confirmInviteTitleTop);
-	_status->move((width() - _status->width()) / 2, st::confirmInviteStatusTop);
+
+	const auto padding = st::boxRowPadding;
+	auto nameWidth = width() - padding.left() - padding.right();
+	auto badgeWidth = 0;
+	if (const auto widget = _badge->widget()) {
+		badgeWidth = st::infoVerifiedCheckPosition.x() + widget->width();
+		nameWidth -= badgeWidth;
+	}
+	_title->resizeToWidth(std::min(nameWidth, _title->textMaxWidth()));
+	_title->moveToLeft(
+		(width() - _title->width() - badgeWidth) / 2,
+		st::confirmInviteTitleTop);
+	const auto badgeLeft = _title->x() + _title->width();
+	const auto badgeTop = _title->y();
+	const auto badgeBottom = _title->y() + _title->height();
+	_badge->move(badgeLeft, badgeTop, badgeBottom);
+
+	_status->move(
+		(width() - _status->width()) / 2,
+		st::confirmInviteStatusTop);
 	auto bottom = _status->y()
 		+ _status->height()
 		+ st::boxPadding.bottom()

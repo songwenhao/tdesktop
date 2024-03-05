@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_main.h"
 
-#include "settings/settings_common.h"
 #include "settings/settings_codes.h"
 #include "settings/settings_chat.h"
 #include "settings/settings_information.h"
@@ -33,6 +32,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
+#include "ui/new_badges.h"
+#include "ui/vertical_list.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "data/data_user.h"
@@ -40,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_cloud_themes.h"
 #include "data/data_chat_filters.h"
 #include "data/data_peer_values.h" // Data::AmPremiumValue
+#include "lang/lang_cloud_manager.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
 #include "storage/localstorage.h"
@@ -59,10 +61,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/application.h"
 #include "base/call_delayed.h"
+#include "base/unixtime.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/style_settings.h"
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
+#include "styles/style_menu_icons.h"
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
@@ -209,13 +213,11 @@ void Cover::initViewers() {
 	_username->overrideLinkClickHandler([=] {
 		const auto username = _user->userName();
 		if (username.isEmpty()) {
-			_controller->show(Box(UsernamesBox, &_user->session()));
+			_controller->show(Box(UsernamesBox, _user));
 		} else {
 			QGuiApplication::clipboard()->setText(
 				_user->session().createInternalLinkFull(username));
-			Ui::Toast::Show(
-				Window::Show(_controller).toastParent(),
-				tr::lng_username_copied(tr::now));
+			_controller->showToast(tr::lng_username_copied(tr::now));
 		}
 	});
 }
@@ -261,11 +263,11 @@ void Cover::refreshUsernameGeometry(int newWidth) {
 void SetupPowerSavingButton(
 		not_null<Window::Controller*> window,
 		not_null<Ui::VerticalLayout*> container) {
-	const auto button = AddButton(
+	const auto button = AddButtonWithIcon(
 		container,
 		tr::lng_settings_power_menu(),
 		st::settingsButton,
-		{ &st::settingsIconBattery, kIconDarkOrange });
+		{ &st::menuIconPowerUsage });
 	button->setClickedCallback([=] {
 		window->show(Box(PowerSavingBox));
 	});
@@ -273,8 +275,7 @@ void SetupPowerSavingButton(
 
 void SetupLanguageButton(
 		not_null<Window::Controller*> window,
-		not_null<Ui::VerticalLayout*> container,
-		bool icon) {
+		not_null<Ui::VerticalLayout*> container) {
 	const auto button = AddButtonWithLabel(
 		container,
 		tr::lng_settings_language(),
@@ -283,8 +284,8 @@ void SetupLanguageButton(
 		) | rpl::then(
 			Lang::GetInstance().idChanges()
 		) | rpl::map([] { return Lang::GetInstance().nativeName(); }),
-		icon ? st::settingsButton : st::settingsButtonNoIcon,
-		{ icon ? &st::settingsIconLanguage : nullptr, kIconLightBlue });
+		st::settingsButton,
+		{ &st::menuIconTranslate });
 	const auto guard = Ui::CreateChild<base::binary_guard>(button.get());
 	button->addClickHandler([=] {
 		const auto m = button->clickModifiers();
@@ -300,48 +301,46 @@ void SetupSections(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::VerticalLayout*> container,
 		Fn<void(Type)> showOther) {
-	AddDivider(container);
-	AddSkip(container);
+	Ui::AddDivider(container);
+	Ui::AddSkip(container);
 
 	const auto addSection = [&](
 			rpl::producer<QString> label,
 			Type type,
 			IconDescriptor &&descriptor) {
-		AddButton(
+		AddButtonWithIcon(
 			container,
 			std::move(label),
 			st::settingsButton,
 			std::move(descriptor)
 		)->addClickHandler([=] {
-			if (type == PremiumId()) {
-				controller->setPremiumRef("settings");
-			}
 			showOther(type);
 		});
 	};
 	if (controller->session().supportMode()) {
 		SetupSupport(controller, container);
 
-		AddDivider(container);
-		AddSkip(container);
+		Ui::AddDivider(container);
+		Ui::AddSkip(container);
 	} else {
 		addSection(
-			tr::lng_settings_information(),
+			tr::lng_settings_my_account(),
 			Information::Id(),
-			{ &st::settingsIconAccount, kIconLightOrange });
+			{ &st::menuIconProfile });
 	}
+
 	addSection(
 		tr::lng_settings_section_notify(),
 		Notifications::Id(),
-		{ &st::settingsIconNotifications, kIconRed });
+		{ &st::menuIconNotifications });
 	addSection(
 		tr::lng_settings_section_privacy(),
 		PrivacySecurity::Id(),
-		{ &st::settingsIconLock, kIconGreen });
+		{ &st::menuIconLock });
 	addSection(
 		tr::lng_settings_section_chat_settings(),
 		Chat::Id(),
-		{ &st::settingsIconChat, kIconLightBlue });
+		{ &st::menuIconChatBubble });
 
 	const auto preload = [=] {
 		controller->session().data().chatsFilters().requestSuggested();
@@ -350,11 +349,11 @@ void SetupSections(
 	const auto slided = container->add(
 		object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
 			container,
-			CreateButton(
+			CreateButtonWithIcon(
 				container,
 				tr::lng_settings_section_filters(),
 				st::settingsButton,
-				{ &st::settingsIconFolders, kIconDarkBlue }))
+				{ &st::menuIconShowInFolder }))
 	)->setDuration(0);
 	if (controller->session().data().chatsFilters().has()
 		|| controller->session().settings().dialogsFiltersEnabled()) {
@@ -389,37 +388,53 @@ void SetupSections(
 	addSection(
 		tr::lng_settings_advanced(),
 		Advanced::Id(),
-		{ &st::settingsIconGeneral, kIconPurple });
+		{ &st::menuIconManage });
 	addSection(
-		tr::lng_settings_section_call_settings(),
+		tr::lng_settings_section_devices(),
 		Calls::Id(),
-		{ &st::settingsIconCalls, kIconGreen });
+		{ &st::menuIconUnmute });
 
 	SetupPowerSavingButton(&controller->window(), container);
 	SetupLanguageButton(&controller->window(), container);
 
-	if (controller->session().premiumPossible()) {
-		AddSkip(container);
-		AddDivider(container);
-		AddSkip(container);
+	Ui::AddSkip(container);
+}
 
-		const auto icon = &st::settingsPremiumIconStar;
-		auto gradient = QLinearGradient(
-			0,
-			icon->height(),
-			icon->width() + icon->width() / 3,
-			0 - icon->height() / 3);
-		gradient.setStops(QGradientStops{
-			{ 0.0, st::premiumButtonBg1->c },
-			{ 1.0, st::premiumButtonBg3->c },
-		});
-		addSection(
-			tr::lng_premium_summary_title(),
-			PremiumId(),
-			{ .icon = icon, .backgroundBrush = QBrush(gradient) });
+void SetupPremium(
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::VerticalLayout*> container,
+		Fn<void(Type)> showOther) {
+	if (!controller->session().premiumPossible()) {
+		return;
 	}
+	Ui::AddDivider(container);
+	Ui::AddSkip(container);
 
-	AddSkip(container);
+	AddButtonWithIcon(
+		container,
+		tr::lng_premium_summary_title(),
+		st::settingsButton,
+		{ .icon = &st::menuIconPremium }
+	)->addClickHandler([=] {
+		controller->setPremiumRef("settings");
+		showOther(PremiumId());
+	});
+	if (controller->session().premiumCanBuy()) {
+		const auto button = AddButtonWithIcon(
+			container,
+			tr::lng_settings_gift_premium(),
+			st::settingsButton,
+			{ .icon = &st::menuIconGiftPremium }
+		);
+		button->addClickHandler([=] {
+			controller->showGiftPremiumsBox(u"gift"_q);
+		});
+		constexpr auto kNewExpiresAt = int(1735689600);
+		if (base::unixtime::now() < kNewExpiresAt) {
+			Ui::NewBadge::AddToRight(button);
+		}
+	}
+	Ui::AddSkip(container);
 }
 
 bool HasInterfaceScale() {
@@ -438,11 +453,11 @@ void SetupInterfaceScale(
 		container.get());
 
 	const auto switched = (cConfigScale() == style::kScaleAuto);
-	const auto button = AddButton(
+	const auto button = AddButtonWithIcon(
 		container,
 		tr::lng_settings_default_scale(),
 		icon ? st::settingsButton : st::settingsButtonNoIcon,
-		{ icon ? &st::settingsIconInterfaceScale : nullptr, kIconLightOrange }
+		{ icon ? &st::menuIconShowInChat : nullptr }
 	)->toggleOn(toggled->events_starting_with_copy(switched));
 
 	const auto ratio = style::DevicePixelRatio();
@@ -573,7 +588,7 @@ void SetupInterfaceScale(
 	}, button->lifetime());
 
 	if (!icon) {
-		AddSkip(container, st::settingsThumbSkip);
+		Ui::AddSkip(container, st::settingsThumbSkip);
 	}
 }
 
@@ -582,36 +597,36 @@ void OpenFaq() {
 }
 
 void SetupFaq(not_null<Ui::VerticalLayout*> container, bool icon) {
-	AddButton(
+	AddButtonWithIcon(
 		container,
 		tr::lng_settings_faq(),
 		icon ? st::settingsButton : st::settingsButtonNoIcon,
-		{ icon ? &st::settingsIconFaq : nullptr, kIconLightBlue }
+		{ icon ? &st::menuIconFaq : nullptr }
 	)->addClickHandler(OpenFaq);
 }
 
 void SetupHelp(
 		not_null<Window::SessionController*> controller,
 		not_null<Ui::VerticalLayout*> container) {
-	AddDivider(container);
-	AddSkip(container);
+	Ui::AddDivider(container);
+	Ui::AddSkip(container);
 
 	SetupFaq(container);
 
-	AddButton(
+	AddButtonWithIcon(
 		container,
 		tr::lng_settings_features(),
 		st::settingsButton,
-		{ &st::settingsIconTips, kIconLightOrange }
+		{ &st::menuIconEmojiObjects }
 	)->setClickedCallback([=] {
 		UrlClickHandler::Open(tr::lng_telegram_features_url(tr::now));
 	});
 
-	const auto button = AddButton(
+	const auto button = AddButtonWithIcon(
 		container,
 		tr::lng_settings_ask_question(),
 		st::settingsButton,
-		{ &st::settingsIconAskQuestion, kIconGreen });
+		{ &st::menuIconDiscussion });
 	const auto requestId = button->lifetime().make_state<mtpRequestId>();
 	button->lifetime().add([=] {
 		if (*requestId) {
@@ -681,11 +696,14 @@ void Main::setupContent(not_null<Window::SessionController*> controller) {
 		_showOther.fire_copy(type);
 	});
 	if (HasInterfaceScale()) {
-		AddDivider(content);
-		AddSkip(content);
+		Ui::AddDivider(content);
+		Ui::AddSkip(content);
 		SetupInterfaceScale(&controller->window(), content);
-		AddSkip(content);
+		Ui::AddSkip(content);
 	}
+	SetupPremium(controller, content, [=](Type type) {
+		_showOther.fire_copy(type);
+	});
 	SetupHelp(controller, content);
 
 	Ui::ResizeFitChild(this, content);

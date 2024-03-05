@@ -13,6 +13,7 @@
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "ui/round_rect.h"
+#include "base/qt/qt_tab_key.h"
 #include "base/integration.h"
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
@@ -71,6 +72,7 @@ private:
 
 	bool _wasAnimating = false;
 	bool _inPaintEvent = false;
+	bool _repaintIssued = false;
 	Ui::Animations::Simple _a_shown;
 	Ui::Animations::Simple _a_mainMenuShown;
 	Ui::Animations::Simple _a_specialLayerShown;
@@ -97,6 +99,7 @@ void LayerStackWidget::BackgroundWidget::setCacheImages(
 	_layerCache = std::move(layerCache);
 	_specialLayerCacheBox = _specialLayerBox;
 	_layerCacheBox = _layerBox;
+	_repaintIssued = false;
 	setAttribute(Qt::WA_OpaquePaintEvent, !_bodyCache.isNull());
 }
 
@@ -142,6 +145,7 @@ void LayerStackWidget::BackgroundWidget::startAnimation(Action action) {
 }
 
 void LayerStackWidget::BackgroundWidget::skipAnimation(Action action) {
+	_repaintIssued = false;
 	startAnimation(action);
 	finishAnimating();
 }
@@ -309,6 +313,10 @@ void LayerStackWidget::BackgroundWidget::paintEvent(QPaintEvent *e) {
 		auto sourceRect = style::rtlrect(_mainMenuCache.width() - sourceWidth, 0, sourceWidth, _mainMenuCache.height(), _mainMenuCache.width());
 		p.drawPixmapLeft(0, 0, shownWidth, height(), width(), _mainMenuCache, sourceRect);
 	}
+	if (!_repaintIssued && !_a_shown.animating()) {
+		_repaintIssued = true;
+		update();
+	}
 }
 
 void LayerStackWidget::BackgroundWidget::finishAnimating() {
@@ -364,6 +372,10 @@ void LayerWidget::resizeEvent(QResizeEvent *e) {
 	if (_resizedCallback) {
 		_resizedCallback();
 	}
+}
+
+bool LayerWidget::focusNextPrevChild(bool next) {
+	return base::FocusNextPrevChildBlocked(this, next);
 }
 
 void LayerStackWidget::setHideByBackgroundClick(bool hide) {

@@ -35,13 +35,12 @@
 //! 
 //! Core features:
 //! 
-//! - Available in 6 programming languages, all with nearly equal functionality: Java, TypeScript/JavaScript, Python, Rust, C++, C
 //! - Significantly shorter code but more documentation comments compared to competing libraries
 //! - Supports encoding all 40 versions (sizes) and all 4 error correction levels, as per the QR Code Model 2 standard
 //! - Output format: Raw modules/pixels of the QR symbol
 //! - Detects finder-like penalty patterns more accurately than other implementations
 //! - Encodes numeric and special-alphanumeric text in less space than general text
-//! - Open source code under the permissive MIT License
+//! - Open-source code under the permissive MIT License
 //! 
 //! Manual parameters:
 //! 
@@ -49,6 +48,8 @@
 //! - User can specify mask pattern manually, otherwise library will automatically evaluate all 8 masks and select the optimal one
 //! - User can specify absolute error correction level, or allow the library to boost it if it doesn't increase the version number
 //! - User can create a list of data segments manually and add ECI segments
+//! 
+//! More information about QR Code technology and this library's design can be found on the project home page.
 //! 
 //! # Examples
 //! 
@@ -72,8 +73,8 @@
 //! Manual operation:
 //! 
 //! ```
-//! let chrs: Vec<char> = "3141592653589793238462643383".chars().collect();
-//! let segs = QrSegment::make_segments(&chrs);
+//! let text: &str = "3141592653589793238462643383";
+//! let segs = QrSegment::make_segments(text);
 //! let qr = QrCode::encode_segments_advanced(&segs, QrCodeEcc::High,
 //!     Version::new(5), Version::new(5), Some(Mask::new(2)), false).unwrap();
 //! for y in 0 .. qr.size() {
@@ -82,6 +83,10 @@
 //!     }
 //! }
 //! ```
+
+
+#![forbid(unsafe_code)]
+use std::convert::TryFrom;
 
 
 /*---- QrCode functionality ----*/
@@ -152,8 +157,7 @@ impl QrCode {
 	/// Returns a wrapped `QrCode` if successful, or `Err` if the
 	/// data is too long to fit in any version at the given ECC level.
 	pub fn encode_text(text: &str, ecl: QrCodeEcc) -> Result<Self,DataTooLong> {
-		let chrs: Vec<char> = text.chars().collect();
-		let segs: Vec<QrSegment> = QrSegment::make_segments(&chrs);
+		let segs: Vec<QrSegment> = QrSegment::make_segments(text);
 		QrCode::encode_segments(&segs, ecl)
 	}
 	
@@ -205,24 +209,23 @@ impl QrCode {
 	/// Returns a wrapped `QrCode` if successful, or `Err` if the data is too
 	/// long to fit in any version in the given range at the given ECC level.
 	pub fn encode_segments_advanced(segs: &[QrSegment], mut ecl: QrCodeEcc,
-			minversion: Version, maxversion: Version, mask: Option<Mask>, boostecl: bool) -> Result<Self,DataTooLong> {
-		assert!(minversion.value() <= maxversion.value(), "Invalid value");
+			minversion: Version, maxversion: Version, mask: Option<Mask>, boostecl: bool)
+			-> Result<Self,DataTooLong> {
+		
+		assert!(minversion <= maxversion, "Invalid value");
 		
 		// Find the minimal version number to use
 		let mut version: Version = minversion;
 		let datausedbits: usize = loop {
-			// Number of data bits available
-			let datacapacitybits: usize = QrCode::get_num_data_codewords(version, ecl) * 8;
+			let datacapacitybits: usize = QrCode::get_num_data_codewords(version, ecl) * 8;  // Number of data bits available
 			let dataused: Option<usize> = QrSegment::get_total_bits(segs, version);
 			if dataused.map_or(false, |n| n <= datacapacitybits) {
 				break dataused.unwrap();  // This version number is found to be suitable
-			} else if version.value() >= maxversion.value() {  // All versions in the range could not fit the given data
-				let msg: String = match dataused {
-					None => String::from("Segment too long"),
-					Some(n) => format!("Data length = {} bits, Max capacity = {} bits",
-						n, datacapacitybits),
-				};
-				return Err(DataTooLong(msg));
+			} else if version >= maxversion {  // All versions in the range could not fit the given data
+				return Err(match dataused {
+					None => DataTooLong::SegmentTooLong,
+					Some(n) => DataTooLong::DataOverCapacity(n, datacapacitybits),
+				});
 			} else {
 				version = Version::new(version.value() + 1);
 			}
@@ -239,19 +242,19 @@ impl QrCode {
 		let mut bb = BitBuffer(Vec::new());
 		for seg in segs {
 			bb.append_bits(seg.mode.mode_bits(), 4);
-			bb.append_bits(seg.numchars as u32, seg.mode.num_char_count_bits(version));
+			bb.append_bits(u32::try_from(seg.numchars).unwrap(), seg.mode.num_char_count_bits(version));
 			bb.0.extend_from_slice(&seg.data);
 		}
-		assert_eq!(bb.0.len(), datausedbits);
+		debug_assert_eq!(bb.0.len(), datausedbits);
 		
 		// Add terminator and pad up to a byte if applicable
 		let datacapacitybits: usize = QrCode::get_num_data_codewords(version, ecl) * 8;
-		assert!(bb.0.len() <= datacapacitybits);
+		debug_assert!(bb.0.len() <= datacapacitybits);
 		let numzerobits: usize = std::cmp::min(4, datacapacitybits - bb.0.len());
-		bb.append_bits(0, numzerobits as u8);
+		bb.append_bits(0, u8::try_from(numzerobits).unwrap());
 		let numzerobits: usize = bb.0.len().wrapping_neg() & 7;
-		bb.append_bits(0, numzerobits as u8);
-		assert_eq!(bb.0.len() % 8, 0, "Assertion error");
+		bb.append_bits(0, u8::try_from(numzerobits).unwrap());
+		debug_assert_eq!(bb.0.len() % 8, 0);
 		
 		// Pad with alternating bytes until data capacity is reached
 		for &padbyte in [0xEC, 0x11].iter().cycle() {
@@ -279,7 +282,7 @@ impl QrCode {
 	/// 
 	/// This is a low-level API that most users should not use directly.
 	/// A mid-level API is the `encode_segments()` function.
-	pub fn encode_codewords(ver: Version, ecl: QrCodeEcc, datacodewords: &[u8], mut mask: Option<Mask>) -> Self {
+	pub fn encode_codewords(ver: Version, ecl: QrCodeEcc, datacodewords: &[u8], mut msk: Option<Mask>) -> Self {
 		// Initialize fields
 		let size = usize::from(ver.value()) * 4 + 17;
 		let mut result = Self {
@@ -297,24 +300,24 @@ impl QrCode {
 		result.draw_codewords(&allcodewords);
 		
 		// Do masking
-		if mask.is_none() {  // Automatically choose best mask
+		if msk.is_none() {  // Automatically choose best mask
 			let mut minpenalty = std::i32::MAX;
 			for i in 0u8 .. 8 {
-				let newmask = Mask::new(i);
-				result.apply_mask(newmask);
-				result.draw_format_bits(newmask);
+				let i = Mask::new(i);
+				result.apply_mask(i);
+				result.draw_format_bits(i);
 				let penalty: i32 = result.get_penalty_score();
 				if penalty < minpenalty {
-					mask = Some(newmask);
+					msk = Some(i);
 					minpenalty = penalty;
 				}
-				result.apply_mask(newmask);  // Undoes the mask due to XOR
+				result.apply_mask(i);  // Undoes the mask due to XOR
 			}
 		}
-		let mask: Mask = mask.unwrap();
-		result.mask = mask;
-		result.apply_mask(mask);  // Apply the final choice of mask
-		result.draw_format_bits(mask);  // Overwrite old format bits
+		let msk: Mask = msk.unwrap();
+		result.mask = msk;
+		result.apply_mask(msk);  // Apply the final choice of mask
+		result.draw_format_bits(msk);  // Overwrite old format bits
 		
 		result.isfunction.clear();
 		result.isfunction.shrink_to_fit();
@@ -354,7 +357,7 @@ impl QrCode {
 	/// The top left corner has the coordinates (x=0, y=0). If the given
 	/// coordinates are out of bounds, then `false` (light) is returned.
 	pub fn get_module(&self, x: i32, y: i32) -> bool {
-		0 <= x && x < self.size && 0 <= y && y < self.size && self.module(x, y)
+		(0 .. self.size).contains(&x) && (0 .. self.size).contains(&y) && self.module(x, y)
 	}
 	
 	
@@ -417,7 +420,7 @@ impl QrCode {
 			}
 			(data << 10 | rem) ^ 0x5412  // uint15
 		};
-		assert_eq!(bits >> 15, 0, "Assertion error");
+		debug_assert_eq!(bits >> 15, 0);
 		
 		// Draw first copy
 		for i in 0 .. 6 {
@@ -458,7 +461,7 @@ impl QrCode {
 			}
 			data << 12 | rem  // uint18
 		};
-		assert!(bits >> 18 == 0, "Assertion error");
+		debug_assert_eq!(bits >> 18, 0);
 		
 		// Draw two copies
 		for i in 0 .. 18 {
@@ -478,7 +481,7 @@ impl QrCode {
 			for dx in -4 ..= 4 {
 				let xx: i32 = x + dx;
 				let yy: i32 = y + dy;
-				if 0 <= xx && xx < self.size && 0 <= yy && yy < self.size {
+				if (0 .. self.size).contains(&xx) && (0 .. self.size).contains(&yy) {
 					let dist: i32 = std::cmp::max(dx.abs(), dy.abs());  // Chebyshev/infinity norm
 					self.set_function_module(xx, yy, dist != 2 && dist != 4);
 				}
@@ -528,7 +531,7 @@ impl QrCode {
 		let mut k: usize = 0;
 		for i in 0 .. numblocks {
 			let datlen: usize = shortblocklen - blockecclen + usize::from(i >= numshortblocks);
-			let mut dat = data[k .. k + datlen].to_vec();
+			let mut dat = data[k .. k+datlen].to_vec();
 			k += datlen;
 			let ecc: Vec<u8> = QrCode::reed_solomon_compute_remainder(&dat, &rsdiv);
 			if i < numshortblocks {
@@ -570,7 +573,7 @@ impl QrCode {
 					let upward: bool = (right + 1) & 2 == 0;
 					let y: i32 = if upward { self.size - 1 - vert } else { vert };  // Actual y coordinate
 					if !self.isfunction[(y * self.size + x) as usize] && i < data.len() * 8 {
-						*self.module_mut(x, y) = get_bit(u32::from(data[i >> 3]), 7 - ((i & 7) as i32));
+						*self.module_mut(x, y) = get_bit(u32::from(data[i >> 3]), 7 - ((i as i32) & 7));
 						i += 1;
 					}
 					// If this QR Code has any remainder bits (0 to 7), they were assigned as
@@ -579,7 +582,7 @@ impl QrCode {
 			}
 			right -= 2;
 		}
-		assert_eq!(i, data.len() * 8, "Assertion error");
+		debug_assert_eq!(i, data.len() * 8);
 	}
 	
 	
@@ -664,8 +667,8 @@ impl QrCode {
 		}
 		
 		// 2*2 blocks of modules having same color
-		for y in 0 .. size - 1 {
-			for x in 0 .. size - 1 {
+		for y in 0 .. size-1 {
+			for x in 0 .. size-1 {
 				let color: bool = self.module(x, y);
 				if color == self.module(x + 1, y) &&
 				   color == self.module(x, y + 1) &&
@@ -680,7 +683,9 @@ impl QrCode {
 		let total: i32 = size * size;  // Note that size is odd, so dark/total != 1/2
 		// Compute the smallest integer k >= 0 such that (45-5k)% <= dark/total <= (55+5k)%
 		let k: i32 = ((dark * 20 - total * 10).abs() + total - 1) / total - 1;
+		debug_assert!(0 <= k && k <= 9);
 		result += k * PENALTY_N4;
+		debug_assert!(0 <= result && result <= 2568888);  // Non-tight upper bound based on default values of PENALTY_N1, ..., N4
 		result
 	}
 	
@@ -698,7 +703,7 @@ impl QrCode {
 			let numalign = i32::from(ver) / 7 + 2;
 			let step: i32 = if ver == 32 { 26 } else
 				{(i32::from(ver) * 4 + numalign * 2 + 1) / (numalign * 2 - 2) * 2};
-			let mut result: Vec<i32> = (0 .. numalign - 1).map(
+			let mut result: Vec<i32> = (0 .. numalign-1).map(
 				|i| self.size - 7 - i * step).collect();
 			result.push(6);
 			result.reverse();
@@ -720,7 +725,7 @@ impl QrCode {
 				result -= 36;
 			}
 		}
-		assert!(208 <= result && result <= 29648);
+		debug_assert!((208 ..= 29648).contains(&result));
 		result
 	}
 	
@@ -744,7 +749,7 @@ impl QrCode {
 	// Returns a Reed-Solomon ECC generator polynomial for the given degree. This could be
 	// implemented as a lookup table over all possible parameter values, instead of as an algorithm.
 	fn reed_solomon_compute_divisor(degree: usize) -> Vec<u8> {
-		assert!(1 <= degree && degree <= 255, "Degree out of range");
+		assert!((1 ..= 255).contains(&degree), "Degree out of range");
 		// Polynomial coefficients are stored from highest to lowest power, excluding the leading term which is always 1.
 		// For example the polynomial x^3 + 255x^2 + 8x + 93 is stored as the uint8 array [255, 8, 93].
 		let mut result = vec![0u8; degree - 1];
@@ -832,7 +837,7 @@ impl FinderPenalty {
 	pub fn count_patterns(&self) -> i32 {
 		let rh = &self.run_history;
 		let n = rh[1];
-		assert!(n <= self.qr_size * 3);
+		debug_assert!(n <= self.qr_size * 3);
 		let core = n > 0 && rh[2] == n && rh[3] == n * 3 && rh[4] == n && rh[5] == n;
 		( i32::from(core && rh[0] >= n * 4 && rh[6] >= n)
 		+ i32::from(core && rh[6] >= n * 4 && rh[0] >= n))
@@ -979,13 +984,13 @@ impl QrSegment {
 	/// Returns a segment representing the given string of decimal digits encoded in numeric mode.
 	/// 
 	/// Panics if the string contains non-digit characters.
-	pub fn make_numeric(text: &[char]) -> Self {
+	pub fn make_numeric(text: &str) -> Self {
 		let mut bb = BitBuffer(Vec::with_capacity(text.len() * 3 + (text.len() + 2) / 3));
 		let mut accumdata: u32 = 0;
 		let mut accumcount: u8 = 0;
-		for &c in text {
-			assert!('0' <= c && c <= '9', "String contains non-numeric characters");
-			accumdata = accumdata * 10 + (u32::from(c) - u32::from('0'));
+		for b in text.bytes() {
+			assert!((b'0' ..= b'9').contains(&b), "String contains non-numeric characters");
+			accumdata = accumdata * 10 + u32::from(b - b'0');
 			accumcount += 1;
 			if accumcount == 3 {
 				bb.append_bits(accumdata, 10);
@@ -1006,14 +1011,14 @@ impl QrSegment {
 	/// dollar, percent, asterisk, plus, hyphen, period, slash, colon.
 	/// 
 	/// Panics if the string contains non-encodable characters.
-	pub fn make_alphanumeric(text: &[char]) -> Self {
+	pub fn make_alphanumeric(text: &str) -> Self {
 		let mut bb = BitBuffer(Vec::with_capacity(text.len() * 5 + (text.len() + 1) / 2));
 		let mut accumdata: u32 = 0;
 		let mut accumcount: u32 = 0;
-		for &c in text {
-			let i: usize = ALPHANUMERIC_CHARSET.iter().position(|&x| x == c)
+		for c in text.chars() {
+			let i: usize = ALPHANUMERIC_CHARSET.find(c)
 				.expect("String contains unencodable characters in alphanumeric mode");
-			accumdata = accumdata * 45 + (i as u32);
+			accumdata = accumdata * 45 + u32::try_from(i).unwrap();
 			accumcount += 1;
 			if accumcount == 2 {
 				bb.append_bits(accumdata, 11);
@@ -1032,16 +1037,19 @@ impl QrSegment {
 	/// 
 	/// The result may use various segment modes and switch
 	/// modes to optimize the length of the bit stream.
-	pub fn make_segments(text: &[char]) -> Vec<Self> {
+	pub fn make_segments(text: &str) -> Vec<Self> {
 		if text.is_empty() {
 			vec![]
-		} else if QrSegment::is_numeric(text) {
-			vec![QrSegment::make_numeric(text)]
-		} else if QrSegment::is_alphanumeric(text) {
-			vec![QrSegment::make_alphanumeric(text)]
 		} else {
-			let s: String = text.iter().cloned().collect();
-			vec![QrSegment::make_bytes(s.as_bytes())]
+			vec![
+				if QrSegment::is_numeric(text) {
+					QrSegment::make_numeric(text)
+				} else if QrSegment::is_alphanumeric(text) {
+					QrSegment::make_alphanumeric(text)
+				} else {
+					QrSegment::make_bytes(text.as_bytes())
+				}
+			]
 		}
 	}
 	
@@ -1053,10 +1061,10 @@ impl QrSegment {
 		if assignval < (1 << 7) {
 			bb.append_bits(assignval, 8);
 		} else if assignval < (1 << 14) {
-			bb.append_bits(2, 2);
+			bb.append_bits(0b10, 2);
 			bb.append_bits(assignval, 14);
 		} else if assignval < 1_000_000 {
-			bb.append_bits(6, 3);
+			bb.append_bits(0b110, 3);
 			bb.append_bits(assignval, 21);
 		} else {
 			panic!("ECI assignment value out of range");
@@ -1106,7 +1114,7 @@ impl QrSegment {
 		for seg in segs {
 			let ccbits: u8 = seg.mode.num_char_count_bits(version);
 			// ccbits can be as large as 16, but usize can be as small as 16
-			if let Some(limit) = 1usize.checked_shl(u32::from(ccbits)) {
+			if let Some(limit) = 1usize.checked_shl(ccbits.into()) {
 				if seg.numchars >= limit {
 					return None;  // The segment's length doesn't fit the field's bit width
 				}
@@ -1121,8 +1129,8 @@ impl QrSegment {
 	/// Tests whether the given string can be encoded as a segment in numeric mode.
 	/// 
 	/// A string is encodable iff each character is in the range 0 to 9.
-	pub fn is_numeric(text: &[char]) -> bool {
-		text.iter().all(|&c| '0' <= c && c <= '9')
+	pub fn is_numeric(text: &str) -> bool {
+		text.chars().all(|c| ('0' ..= '9').contains(&c))
 	}
 	
 	
@@ -1130,8 +1138,8 @@ impl QrSegment {
 	/// 
 	/// A string is encodable iff each character is in the following set: 0 to 9, A to Z
 	/// (uppercase only), space, dollar, percent, asterisk, plus, hyphen, period, slash, colon.
-	pub fn is_alphanumeric(text: &[char]) -> bool {
-		text.iter().all(|c| ALPHANUMERIC_CHARSET.contains(c))
+	pub fn is_alphanumeric(text: &str) -> bool {
+		text.chars().all(|c| ALPHANUMERIC_CHARSET.contains(c))
 	}
 	
 }
@@ -1139,9 +1147,7 @@ impl QrSegment {
 
 // The set of all legal characters in alphanumeric mode,
 // where each character value maps to the index in the string.
-static ALPHANUMERIC_CHARSET: [char; 45] = ['0','1','2','3','4','5','6','7','8','9',
-	'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-	' ','$','%','*','+','-','.','/',':'];
+static ALPHANUMERIC_CHARSET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 
 
 
@@ -1204,7 +1210,7 @@ impl BitBuffer {
 	/// 
 	/// Requires len &#x2264; 31 and val &lt; 2<sup>len</sup>.
 	pub fn append_bits(&mut self, val: u32, len: u8) {
-		assert!(len <= 31 && (val >> len) == 0, "Value out of range");
+		assert!(len <= 31 && val >> len == 0, "Value out of range");
 		self.0.extend((0 .. i32::from(len)).rev().map(|i| get_bit(val, i)));  // Append bit by bit
 	}
 }
@@ -1226,17 +1232,20 @@ impl BitBuffer {
 /// - Change the text to fit the character set of a particular segment mode (e.g. alphanumeric).
 /// - Propagate the error upward to the caller/user.
 #[derive(Debug, Clone)]
-pub struct DataTooLong(String);
-
-impl std::error::Error for DataTooLong {
-	fn description(&self) -> &str {
-		&self.0
-	}
+pub enum DataTooLong {
+	SegmentTooLong,
+	DataOverCapacity(usize, usize),
 }
+
+impl std::error::Error for DataTooLong {}
 
 impl std::fmt::Display for DataTooLong {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-		f.write_str(&self.0)
+		match *self {
+			Self::SegmentTooLong => write!(f, "Segment too long"),
+			Self::DataOverCapacity(datalen, maxcapacity) =>
+				write!(f, "Data length = {} bits, Max capacity = {} bits", datalen, maxcapacity),
+		}
 	}
 }
 
@@ -1256,7 +1265,7 @@ impl Version {
 	/// 
 	/// Panics if the number is outside the range [1, 40].
 	pub fn new(ver: u8) -> Self {
-		assert!(Version::MIN.value() <= ver && ver <= Version::MAX.value(), "Version number out of range");
+		assert!((Version::MIN.value() ..= Version::MAX.value()).contains(&ver), "Version number out of range");
 		Self(ver)
 	}
 	

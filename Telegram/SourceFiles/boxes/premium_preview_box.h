@@ -11,6 +11,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class DocumentData;
 
+namespace ChatHelpers {
+class Show;
+} // namespace ChatHelpers
+
 namespace Data {
 struct ReactionId;
 } // namespace Data
@@ -30,14 +34,20 @@ class Session;
 } // namespace Main
 
 void ShowStickerPreviewBox(
-	not_null<Window::SessionController*> controller,
+	std::shared_ptr<ChatHelpers::Show> show,
 	not_null<DocumentData*> document);
 
 void DoubledLimitsPreviewBox(
 	not_null<Ui::GenericBox*> box,
 	not_null<Main::Session*> session);
 
+void UpgradedStoriesPreviewBox(
+	not_null<Ui::GenericBox*> box,
+	not_null<Main::Session*> session);
+
 enum class PremiumPreview {
+	Stories,
+	DoubleLimits,
 	MoreUpload,
 	FasterDownload,
 	VoiceToText,
@@ -50,6 +60,10 @@ enum class PremiumPreview {
 	ProfileBadge,
 	AnimatedUserpics,
 	RealTimeTranslation,
+	Wallpapers,
+	TagsForMessages,
+	LastSeen,
+	MessagePrivacy,
 
 	kCount,
 };
@@ -58,6 +72,12 @@ void ShowPremiumPreviewBox(
 	not_null<Window::SessionController*> controller,
 	PremiumPreview section,
 	Fn<void(not_null<Ui::BoxContent*>)> shown = nullptr);
+
+void ShowPremiumPreviewBox(
+	std::shared_ptr<ChatHelpers::Show> show,
+	PremiumPreview section,
+	Fn<void(not_null<Ui::BoxContent*>)> shown = nullptr,
+	bool hideSubscriptionButton = false);
 
 void ShowPremiumPreviewToBuy(
 	not_null<Window::SessionController*> controller,

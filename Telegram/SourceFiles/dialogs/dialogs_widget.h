@@ -11,7 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_key.h"
 #include "window/section_widget.h"
 #include "ui/effects/animations.h"
-#include "ui/widgets/scroll_area.h"
+#include "ui/userpic_view.h"
 #include "mtproto/sender.h"
 #include "api/api_single_message_search.h"
 
@@ -21,6 +21,8 @@ class Error;
 
 namespace Data {
 class Forum;
+enum class StorySourcesList : uchar;
+struct ReactionId;
 } // namespace Data
 
 namespace Main {
@@ -44,7 +46,9 @@ class PlainShadow;
 class DownloadBar;
 class GroupCallBar;
 class RequestsBar;
+class MoreChatsBar;
 class JumpDownButton;
+class ElasticScroll;
 template <typename Widget>
 class FadeWrapScaled;
 } // namespace Ui
@@ -55,7 +59,14 @@ class ConnectionState;
 struct SectionShow;
 } // namespace Window
 
+namespace Dialogs::Stories {
+class List;
+struct Content;
+} // namespace Dialogs::Stories
+
 namespace Dialogs {
+
+extern const char kOptionForumHideChatsList[];
 
 struct RowDescriptor;
 class Row;
@@ -90,6 +101,7 @@ public:
 	void setInnerFocus();
 
 	void jumpToTop(bool belowPinned = false);
+	void raiseWithTooltip();
 
 	void startWidthAnimation();
 	void stopWidthAnimation();
@@ -105,7 +117,7 @@ public:
 
 	void scrollToEntry(const RowDescriptor &entry);
 
-	void searchMessages(const QString &query, Key inChat = {});
+	void searchMessages(QString query, Key inChat = {});
 	void searchTopics();
 	void searchMore();
 
@@ -158,19 +170,33 @@ private:
 	void setupSupportMode();
 	void setupConnectingWidget();
 	void setupMainMenuToggle();
+	void setupMoreChatsBar();
 	void setupDownloadBar();
 	void setupShortcuts();
+	void setupStories();
+	void storiesExplicitCollapse();
+	void collectStoriesUserpicsViews(Data::StorySourcesList list);
+	void storiesToggleExplicitExpand(bool expand);
+	void trackScroll(not_null<Ui::RpWidget*> widget);
 	[[nodiscard]] bool searchForPeersRequired(const QString &query) const;
 	[[nodiscard]] bool searchForTopicsRequired(const QString &query) const;
-	bool setSearchInChat(Key chat, PeerData *from = nullptr);
+	bool setSearchInChat(
+		Key chat,
+		PeerData *from,
+		std::vector<Data::ReactionId> tags);
+	bool setSearchInChat(
+		Key chat,
+		PeerData *from = nullptr);
 	void showCalendar();
 	void showSearchFrom();
 	void showMainMenu();
 	void clearSearchCache();
 	void setSearchQuery(const QString &query);
 	void updateControlsVisibility(bool fast = false);
-	void updateLockUnlockVisibility();
+	void updateLockUnlockVisibility(
+		anim::type animated = anim::type::instant);
 	void updateLoadMoreChatsVisibility();
+	void updateStoriesVisibility();
 	void updateJumpToDateVisibility(bool fast = false);
 	void updateSearchFromVisibility(bool fast = false);
 	void updateControlsGeometry();
@@ -207,11 +233,13 @@ private:
 		mtpRequestId requestId);
 	void peopleFailed(const MTP::Error &error, mtpRequestId requestId);
 
-	void scrollToTop();
+	void scrollToDefault(bool verytop = false);
+	void scrollToDefaultChecked(bool verytop = false);
 	void setupScrollUpButton();
 	void updateScrollUpVisibility();
 	void startScrollUpButtonAnimation(bool shown);
 	void updateScrollUpPosition();
+	void updateLockUnlockPosition();
 
 	MTP::Sender _api;
 
@@ -232,14 +260,16 @@ private:
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
-	object_ptr<Ui::IconButton> _lockUnlock;
+	object_ptr< Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;
+
+	std::unique_ptr<Ui::MoreChatsBar> _moreChatsBar;
 
 	std::unique_ptr<Ui::PlainShadow> _forumTopShadow;
 	std::unique_ptr<Ui::GroupCallBar> _forumGroupCallBar;
 	std::unique_ptr<Ui::RequestsBar> _forumRequestsBar;
 	std::unique_ptr<HistoryView::ContactStatus> _forumReportBar;
 
-	object_ptr<Ui::ScrollArea> _scroll;
+	object_ptr<Ui::ElasticScroll> _scroll;
 	QPointer<InnerWidget> _inner;
 	class BottomButton;
 	object_ptr<BottomButton> _updateTelegram = { nullptr };
@@ -248,6 +278,7 @@ private:
 	std::unique_ptr<Window::ConnectionState> _connecting;
 
 	Ui::Animations::Simple _scrollToAnimation;
+	int _scrollAnimationTo = 0;
 	std::unique_ptr<Window::SlideAnimation> _showAnimation;
 	rpl::variable<float64> _shownProgressValue;
 
@@ -261,7 +292,20 @@ private:
 	Dialogs::Key _searchInChat;
 	History *_searchInMigrated = nullptr;
 	PeerData *_searchFromAuthor = nullptr;
+	std::vector<Data::ReactionId> _searchTags;
+	rpl::lifetime _searchTagsLifetime;
 	QString _lastFilterText;
+
+	rpl::event_stream<rpl::producer<Stories::Content>> _storiesContents;
+	base::flat_map<PeerId, Ui::PeerUserpicView> _storiesUserpicsViewsHidden;
+	base::flat_map<PeerId, Ui::PeerUserpicView> _storiesUserpicsViewsShown;
+	Fn<void()> _updateScrollGeometryCached;
+	std::unique_ptr<Stories::List> _stories;
+	Ui::Animations::Simple _storiesExplicitExpandAnimation;
+	rpl::variable<int> _storiesExplicitExpandValue = 0;
+	int _storiesExplicitExpandScrollTop = 0;
+	int _aboveScrollAdded = 0;
+	bool _storiesExplicitExpand = false;
 
 	base::Timer _searchTimer;
 
@@ -278,6 +322,7 @@ private:
 
 	QString _searchQuery;
 	PeerData *_searchQueryFrom = nullptr;
+	std::vector<Data::ReactionId> _searchQueryTags;
 	int32 _searchNextRate = 0;
 	bool _searchFull = false;
 	bool _searchFullMigrated = false;

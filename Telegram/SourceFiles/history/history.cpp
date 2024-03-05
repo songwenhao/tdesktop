@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/notify/data_notify_settings.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_drafts.h"
+#include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_media_types.h"
 #include "data/data_channel_admins.h"
@@ -54,8 +55,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "support/support_helper.h"
 #include "ui/image/image.h"
 #include "ui/text/text_options.h"
-#include "ui/toasts/common_toasts.h"
 #include "ui/text/text_utilities.h"
+#include "ui/toast/toast.h"
 #include "payments/payments_checkout_process.h"
 #include "core/crash_reports.h"
 #include "core/application.h"
@@ -177,8 +178,7 @@ void History::takeLocalDraft(not_null<History*> from) {
 		&& !_drafts.contains(Data::DraftKey::Local(topicRootId))) {
 		// Edit and reply to drafts can't migrate.
 		// Cloud drafts do not migrate automatically.
-		draft->msgId = 0;
-
+		draft->reply = FullReplyTo();
 		setLocalDraft(std::move(draft));
 	}
 	from->clearLocalDraft(topicRootId);
@@ -194,6 +194,7 @@ void History::createLocalDraftFromCloud(MsgId topicRootId) {
 		return;
 	}
 
+	draft->reply.topicRootId = topicRootId;
 	auto existing = localDraft(topicRootId);
 	if (Data::DraftIsNull(existing)
 		|| !existing->date
@@ -201,17 +202,15 @@ void History::createLocalDraftFromCloud(MsgId topicRootId) {
 		if (!existing) {
 			setLocalDraft(std::make_unique<Data::Draft>(
 				draft->textWithTags,
-				draft->msgId,
-				topicRootId,
+				draft->reply,
 				draft->cursor,
-				draft->previewState));
+				draft->webpage));
 			existing = localDraft(topicRootId);
 		} else if (existing != draft) {
 			existing->textWithTags = draft->textWithTags;
-			existing->msgId = draft->msgId;
-			existing->topicRootId = draft->topicRootId;
+			existing->reply = draft->reply;
 			existing->cursor = draft->cursor;
-			existing->previewState = draft->previewState;
+			existing->webpage = draft->webpage;
 		}
 		existing->date = draft->date;
 	}
@@ -277,28 +276,29 @@ Data::Draft *History::createCloudDraft(
 	if (Data::DraftIsNull(fromDraft)) {
 		setCloudDraft(std::make_unique<Data::Draft>(
 			TextWithTags(),
-			0,
-			topicRootId,
+			FullReplyTo{ .topicRootId = topicRootId },
 			MessageCursor(),
-			Data::PreviewState::Allowed));
+			Data::WebPageDraft()));
 		cloudDraft(topicRootId)->date = TimeId(0);
 	} else {
 		auto existing = cloudDraft(topicRootId);
 		if (!existing) {
+			auto reply = fromDraft->reply;
+			reply.topicRootId = topicRootId;
 			setCloudDraft(std::make_unique<Data::Draft>(
 				fromDraft->textWithTags,
-				fromDraft->msgId,
-				topicRootId,
+				reply,
 				fromDraft->cursor,
-				fromDraft->previewState));
+				fromDraft->webpage));
 			existing = cloudDraft(topicRootId);
 		} else if (existing != fromDraft) {
 			existing->textWithTags = fromDraft->textWithTags;
-			existing->msgId = fromDraft->msgId;
+			existing->reply = fromDraft->reply;
 			existing->cursor = fromDraft->cursor;
-			existing->previewState = fromDraft->previewState;
+			existing->webpage = fromDraft->webpage;
 		}
 		existing->date = base::unixtime::now();
+		existing->reply.topicRootId = topicRootId;
 	}
 
 	if (const auto thread = threadFor(topicRootId)) {
@@ -465,7 +465,7 @@ not_null<HistoryItem*> History::insertItem(
 		std::unique_ptr<HistoryItem> item) {
 	Expects(item != nullptr);
 
-	const auto [i, ok] = _messages.insert(std::move(item));
+	const auto &[i, ok] = _messages.insert(std::move(item));
 
 	const auto result = i->get();
 	owner().registerMessage(result);
@@ -495,8 +495,10 @@ void History::destroyMessage(not_null<HistoryItem*> item) {
 		session().api().cancelLocalItem(item);
 	}
 
-	const auto document = [&] {
-		const auto media = item->media();
+	const auto documentToCancel = [&] {
+		const auto media = item->isAdminLogEntry()
+			? nullptr
+			: item->media();
 		return media ? media->document() : nullptr;
 	}();
 
@@ -510,8 +512,8 @@ void History::destroyMessage(not_null<HistoryItem*> item) {
 	Assert(i != end(_messages));
 	_messages.erase(i);
 
-	if (document) {
-		session().data().documentMessageRemoved(document);
+	if (documentToCancel) {
+		session().data().documentMessageRemoved(documentToCancel);
 	}
 }
 
@@ -608,6 +610,11 @@ not_null<HistoryItem*> History::addNewItem(
 		addNewToBack(item, unread);
 		checkForLoadedAtTop(item);
 	}
+
+	if (const auto sublist = item->savedSublist()) {
+		sublist->applyMaybeLast(item, unread);
+	}
+
 	return item;
 }
 
@@ -631,7 +638,7 @@ not_null<HistoryItem*> History::addNewLocalMessage(
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -679,7 +686,7 @@ not_null<HistoryItem*> History::addNewLocalMessage(
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -705,7 +712,7 @@ not_null<HistoryItem*> History::addNewLocalMessage(
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -731,7 +738,7 @@ not_null<HistoryItem*> History::addNewLocalMessage(
 		MsgId id,
 		MessageFlags flags,
 		UserId viaBotId,
-		MsgId replyTo,
+		FullReplyTo replyTo,
 		TimeId date,
 		PeerId from,
 		const QString &postAuthor,
@@ -1125,8 +1132,8 @@ void History::applyServiceChanges(
 	}, [&](const MTPDmessageActionPinMessage &data) {
 		if (replyTo) {
 			replyTo->match([&](const MTPDmessageReplyHeader &data) {
-				const auto id = data.vreply_to_msg_id().v;
-				if (item) {
+				const auto id = data.vreply_to_msg_id().value_or_empty();
+				if (id && item) {
 					session().storage().add(Storage::SharedMediaAddSlice(
 						peer->id,
 						MsgId(0),
@@ -1144,6 +1151,8 @@ void History::applyServiceChanges(
 						topic->setHasPinnedMessages(true);
 					}
 				}
+			}, [&](const MTPDmessageReplyStoryHeader &data) {
+				LOG(("API Error: story reply in messageActionPinMessage."));
 			});
 		}
 	}, [&](const MTPDmessageActionGroupCall &data) {
@@ -1176,7 +1185,7 @@ void History::applyServiceChanges(
 			}
 			if (paid) {
 				// Toast on a current active window.
-				Ui::ShowMultilineToast({
+				Ui::Toast::Show({
 					.text = tr::lng_payments_success(
 						tr::now,
 						lt_amount,
@@ -1189,6 +1198,12 @@ void History::applyServiceChanges(
 		}
 	}, [&](const MTPDmessageActionSetChatTheme &data) {
 		peer->setThemeEmoji(qs(data.vemoticon()));
+	}, [&](const MTPDmessageActionSetChatWallPaper &data) {
+		if (item->out() || data.is_for_both()) {
+			peer->setWallPaper(
+				Data::WallPaper::Create(&session(), data.vwallpaper()),
+				!item->out() && data.is_for_both());
+		}
 	}, [&](const MTPDmessageActionChatJoinedByRequest &data) {
 		processJoinedPeer(item->from());
 	}, [&](const MTPDmessageActionTopicCreate &data) {
@@ -1260,9 +1275,20 @@ void History::newItemAdded(not_null<HistoryItem*> item) {
 		Core::App().notifications().schedule(notification);
 	}
 	if (item->out()) {
-		destroyUnreadBar();
+		if (item->isFromScheduled() && unreadCountRefreshNeeded(item->id)) {
+			if (unreadCountKnown()) {
+				setUnreadCount(unreadCount() + 1);
+			} else if (!isForum()) {
+				owner().histories().requestDialogEntry(this);
+			}
+		} else {
+			destroyUnreadBar();
+		}
 		if (!item->unread(this)) {
 			outboxRead(item);
+		}
+		if (item->changesWallPaper()) {
+			peer->updateFullForced();
 		}
 	} else {
 		if (item->unread(this)) {
@@ -1407,6 +1433,12 @@ void History::addCreatedOlderSlice(
 	if (loadedAtBottom()) {
 		// Add photos to overview and authors to lastAuthors.
 		addItemsToLists(items);
+
+		for (const auto &item : items) {
+			if (const auto sublist = item->savedSublist()) {
+				sublist->applyMaybeLast(item);
+			}
+		}
 	}
 	addToSharedMedia(items);
 }
@@ -2794,6 +2826,7 @@ void History::applyDialog(
 				}
 			}
 		}
+		channel->setViewAsMessagesFlag(data.is_view_forum_as_messages());
 	}
 	owner().notifySettings().apply(
 		MTP_notifyPeer(data.vpeer()),
@@ -3175,6 +3208,7 @@ void History::insertMessageToBlocks(not_null<HistoryItem*> item) {
 				const auto lastDate = chatListTimeId();
 				if (!lastDate || itemDate >= lastDate) {
 					setLastMessage(item);
+					owner().notifyHistoryChangeDelayed(this);
 				}
 				return;
 			}
@@ -3210,6 +3244,10 @@ void History::checkLocalMessages() {
 		&& goodDate(peer->asChannel()->inviteDate)) {
 		insertJoinedMessage();
 	}
+}
+
+HistoryItem *History::joinedMessageInstance() const {
+	return _joinedMessage;
 }
 
 void History::removeJoinedMessage() {

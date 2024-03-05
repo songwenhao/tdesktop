@@ -29,6 +29,8 @@ struct HistoryMessageEdition {
 	bool useSameReplies = false;
 	bool useSameMarkup = false;
 	bool useSameReactions = false;
+	bool savePreviousMedia = false;
+	bool invertMedia = false;
 	TextWithEntities textWithEntities;
 	HistoryMessageMarkupData replyMarkup;
 	HistoryMessageRepliesData replies;

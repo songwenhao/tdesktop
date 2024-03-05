@@ -11,7 +11,6 @@
 #include <QtCore/QUrl>
 #include <QtGui/QDesktopServices>
 
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <objbase.h>
 
@@ -35,6 +34,7 @@ public:
 	bool finishEmbedding() override;
 
 	void navigate(std::string url) override;
+	void navigateToData(std::string id) override;
 	void reload() override;
 
 	void resizeToWindow() override;
@@ -42,7 +42,12 @@ public:
 	void init(std::string js) override;
 	void eval(std::string js) override;
 
+	void focus() override;
+
+	QWidget *widget() override;
 	void *winId() override;
+
+	void setOpaqueBg(QColor opaqueBg) override;
 
 private:
 	HWND _window = nullptr;
@@ -54,6 +59,7 @@ private:
 Instance::Instance(Config config, WebViewControl webview)
 : _window(static_cast<HWND>(config.window))
 , _webview(std::move(webview)) {
+	setOpaqueBg(config.opaqueBg);
 	_webview.Settings().IsScriptNotifyAllowed(true);
 	_webview.IsVisible(true);
 	_webview.ScriptNotify([handler = config.messageHandler](
@@ -87,6 +93,14 @@ Instance::Instance(Config config, WebViewControl webview)
 			QDesktopServices::openUrl(QString::fromStdString(url));
 		}
 	});
+	using UnsupportedUriSchemeIdentifiedEventArgs
+		= WebViewControlUnsupportedUriSchemeIdentifiedEventArgs;
+	_webview.UnsupportedUriSchemeIdentified([=](
+			const auto &sender,
+			const UnsupportedUriSchemeIdentifiedEventArgs &args) {
+		const auto url = winrt::to_string(args.Uri().AbsoluteUri());
+		int a = url.size();;
+	});
 	init("window.external.invoke = s => window.external.notify(s)");
 }
 
@@ -96,6 +110,10 @@ bool Instance::finishEmbedding() {
 
 void Instance::navigate(std::string url) {
 	_webview.Navigate(Uri(winrt::to_hstring(url)));
+}
+
+void Instance::navigateToData(std::string id) {
+	navigate("http://desktop-app-resource/" + id);
 }
 
 void Instance::reload() {
@@ -110,10 +128,35 @@ void Instance::eval(std::string js) {
 	_webview.InvokeScriptAsync(
 		L"eval",
 		single_threaded_vector<hstring>({ winrt::to_hstring(js) }));
+	_webview.InvokeScriptAsync(
+		L"eval",
+		single_threaded_vector<hstring>({ winrt::to_hstring("document.body.style.backgroundColor='transparent';")}));
+	_webview.InvokeScriptAsync(
+		L"eval",
+		single_threaded_vector<hstring>({ winrt::to_hstring("document.getElementsByTagName('html')[0].style.backgroundColor='transparent';") }));
+}
+
+void Instance::focus() {
+	SetForegroundWindow(_window);
+	SetFocus(_window);
+	_webview.MoveFocus(WebViewControlMoveFocusReason::Programmatic);
+}
+
+QWidget *Instance::widget() {
+	return nullptr;
 }
 
 void *Instance::winId() {
 	return nullptr;
+}
+
+void Instance::setOpaqueBg(QColor opaqueBg) {
+	_webview.DefaultBackgroundColor({
+		uchar(opaqueBg.alpha()),
+		uchar(opaqueBg.red()),
+		uchar(opaqueBg.green()),
+		uchar(opaqueBg.blue())
+	});
 }
 
 void Instance::resizeToWindow() {

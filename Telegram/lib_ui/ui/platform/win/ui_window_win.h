@@ -9,14 +9,14 @@
 #include "ui/platform/ui_platform_window.h"
 #include "ui/platform/win/ui_window_shadow_win.h"
 
-#include <windef.h>
-
 namespace Ui {
 namespace Platform {
 
 class TitleWidget;
 struct HitTestRequest;
 enum class HitTestResult;
+class DirectManipulation;
+struct DirectManipulationEvent;
 
 class WindowHelper final : public BasicWindowHelper {
 public:
@@ -43,6 +43,8 @@ public:
 		-> rpl::producer<HitTestResult> override;
 	[[nodiscard]] auto systemButtonDown() const
 		-> rpl::producer<HitTestResult> override;
+	void overrideSystemButtonOver(HitTestResult button) override;
+	void overrideSystemButtonDown(HitTestResult button) override;
 
 private:
 	class NativeFilter;
@@ -50,11 +52,14 @@ private:
 
 	void init();
 	void updateMargins();
+	void updateCloaking();
 	void updateWindowFrameColors();
 	void updateWindowFrameColors(bool active);
 	void initialShadowUpdate();
 	void updateCornersRounding();
 	void fixMaximizedWindow();
+	void handleDirectManipulationEvent(
+		const DirectManipulationEvent &event);
 	[[nodiscard]] bool handleNativeEvent(
 		UINT msg,
 		WPARAM wParam,
@@ -75,6 +80,7 @@ private:
 	const HWND _handle = nullptr;
 	const not_null<TitleWidget*> _title;
 	const not_null<RpWidget*> _body;
+	std::unique_ptr<DirectManipulation> _directManipulation;
 	rpl::event_stream<not_null<HitTestRequest*>> _hitTestRequests;
 	rpl::event_stream<HitTestResult> _systemButtonOver;
 	rpl::event_stream<HitTestResult> _systemButtonDown;

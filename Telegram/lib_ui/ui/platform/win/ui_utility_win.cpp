@@ -6,15 +6,19 @@
 //
 #include "ui/platform/win/ui_utility_win.h"
 
-#include "base/platform/win/base_windows_h.h"
 #include "ui/widgets/popup_menu.h"
 
 #include <QtWidgets/QApplication>
 #include <QtGui/QWindow>
 #include <QtCore/QAbstractNativeEventFilter>
 
+#include <windows.h>
 #include <wrl/client.h>
 #include <Shobjidl.h>
+
+#include "base/event_filter.h"
+#include <QTimer>
+#include <QScreen>
 
 using namespace Microsoft::WRL;
 
@@ -22,18 +26,6 @@ namespace Ui::Platform {
 
 bool IsApplicationActive() {
 	return QApplication::activeWindow() != nullptr;
-}
-
-void UpdateOverlayed(not_null<QWidget*> widget) {
-	const auto wm = widget->testAttribute(Qt::WA_Mapped);
-	const auto wv = widget->testAttribute(Qt::WA_WState_Visible);
-	if (!wm) widget->setAttribute(Qt::WA_Mapped, true);
-	if (!wv) widget->setAttribute(Qt::WA_WState_Visible, true);
-	widget->update();
-	QEvent e(QEvent::UpdateRequest);
-	QGuiApplication::sendEvent(widget, &e);
-	if (!wm) widget->setAttribute(Qt::WA_Mapped, false);
-	if (!wv) widget->setAttribute(Qt::WA_WState_Visible, false);
 }
 
 void IgnoreAllActivation(not_null<QWidget*> widget) {
@@ -134,16 +126,6 @@ void ShowWindowMenu(not_null<QWidget*> widget, const QPoint &point) {
 		MAKELPARAM(p.x, p.y));
 }
 
-TitleControls::Layout TitleControlsLayout() {
-	return TitleControls::Layout{
-		.right = {
-			TitleControls::Control::Minimize,
-			TitleControls::Control::Maximize,
-			TitleControls::Control::Close,
-		}
-	};
-}
-
 void FixPopupMenuNativeEmojiPopup(not_null<PopupMenu*> menu) {
 	// Windows native emoji selector, that can be called by Win+. shortcut,
 	// is behaving strangely within an input field in a popup menu.
@@ -197,6 +179,22 @@ void FixPopupMenuNativeEmojiPopup(not_null<PopupMenu*> menu) {
 
 	QGuiApplication::instance()->installNativeEventFilter(
 		menu->lifetime().make_state<Filter>(menu));
+}
+
+void SetGeometryWithPossibleScreenChange(
+		not_null<QWidget*> widget,
+		QRect geometry) {
+	if (const auto screen = QGuiApplication::screenAt(geometry.center())) {
+		const auto window = widget->window();
+		window->createWinId();
+		const auto handle = window->windowHandle();
+		if (handle->screen() != screen) {
+			handle->setScreen(screen);
+			window->move(screen->availableGeometry().topLeft());
+			window->show();
+		}
+	}
+	widget->setGeometry(geometry);
 }
 
 } // namespace Ui::Platform

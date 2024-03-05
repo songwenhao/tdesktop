@@ -167,6 +167,9 @@ void FcitxTheme::configChanged() {
     watcher_->removePath(configPath_);
     watcher_->addPath(configPath_);
     QSettings settings(configPath_, QSettings::IniFormat);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    settings.setIniCodec("UTF-8");
+#endif
     settings.childGroups();
     font_ = parseFont(settings.value("Font", "Sans Serif 9").toString());
     fontMetrics_ = QFontMetrics(font_);
@@ -210,6 +213,7 @@ void FcitxTheme::themeChanged() {
         contentMargin_ = QMargins{2, 2, 2, 2};
         textMargin_ = QMargins{5, 5, 5, 5};
         highlightClickMargin_ = QMargins{0, 0, 0, 0};
+        shadowMargin_ = QMargins{0, 0, 0, 0};
         background_.loadFromValue(highlightBackgroundColor_, highlightColor_,
                                   contentMargin_, 2);
         highlight_.loadFromValue(highlightBackgroundColor_,
@@ -228,13 +232,18 @@ void FcitxTheme::themeChanged() {
     fullWidthHighlight_ = readBool(settings, "FullWidthHighlight", true);
     highlightColor_ = readColor(settings, "HighlightColor", "#ffffff");
     highlightBackgroundColor_ =
-        readColor(settings, "HighlightColor", "#a5a5a5");
+        readColor(settings, "HighlightBackgroundColor", "#a5a5a5");
+    buttonAlignment_ =
+        settings.value("PageButtonAlignment", "Bottom").toString();
 
     settings.beginGroup("ContentMargin");
     contentMargin_ = readMargin(settings);
     settings.endGroup();
     settings.beginGroup("TextMargin");
     textMargin_ = readMargin(settings);
+    settings.endGroup();
+    settings.beginGroup("ShadowMargin");
+    shadowMargin_ = readMargin(settings);
     settings.endGroup();
 
     settings.beginGroup("Background");

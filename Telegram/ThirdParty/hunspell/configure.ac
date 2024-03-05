@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.69])
-AC_INIT([hunspell],[1.7.0],[https://github.com/hunspell/hunspell/issues],,[https://hunspell.github.io])
+AC_INIT([hunspell],[1.7.2],[https://github.com/hunspell/hunspell/issues],,[https://hunspell.github.io])
 AC_CONFIG_SRCDIR([config.h.in])
 AC_CONFIG_HEADERS([config.h])
 AC_CANONICAL_HOST
@@ -21,6 +21,8 @@ AC_PROG_CXX
 AC_PROG_CC
 LT_INIT
 AC_PROG_AWK
+
+AX_CXX_COMPILE_STDCXX_11([noext], [optional])
 
 # Checks for libraries.
 AM_ICONV

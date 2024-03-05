@@ -10,14 +10,13 @@ add_library(desktop-app::external_openal ALIAS external_openal)
 if (DESKTOP_APP_USE_PACKAGED)
     find_package(OpenAL)
     if (OPENAL_FOUND)
-        target_include_directories(external_openal SYSTEM INTERFACE ${OPENAL_INCLUDE_DIR})
+        target_include_directories(external_openal INTERFACE ${OPENAL_INCLUDE_DIR})
         target_link_libraries(external_openal INTERFACE ${OPENAL_LIBRARY})
-        return()
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(OPENAL REQUIRED IMPORTED_TARGET openal)
+        target_link_libraries(external_openal INTERFACE PkgConfig::OPENAL)
     endif()
-
-    find_package(OpenAL REQUIRED CONFIG)
-    target_link_libraries(external_openal INTERFACE OpenAL::OpenAL)
-    return()
 elseif (WIN32)
     target_include_directories(external_openal SYSTEM
     INTERFACE
@@ -28,15 +27,15 @@ elseif (WIN32)
     INTERFACE
         ${libs_loc}/openal-soft/build/$<IF:$<CONFIG:Debug>,Debug,RelWithDebInfo>/OpenAL32.lib
     )
-elseif (APPLE)
+elseif(APPLE AND NOT build_osx)
     target_include_directories(external_openal SYSTEM
     INTERFACE
-        ${libs_loc}/local/include
-        ${libs_loc}/local/include/AL
+        /usr/local/macos/include
+        /usr/local/macos/include/AL
     )
     target_link_libraries(external_openal
     INTERFACE
-        ${libs_loc}/local/lib/libopenal.a
+        /usr/local/macos/lib/libopenal.a
     )
 else()
     target_include_directories(external_openal SYSTEM
@@ -48,9 +47,16 @@ else()
     INTERFACE
         openal
     )
+    target_link_libraries(external_openal
+    INTERFACE
+        ${CMAKE_DL_LIBS}
+        pthread
+    )
 endif()
 
-target_compile_definitions(external_openal
-INTERFACE
-    AL_LIBTYPE_STATIC
-)
+if (NOT DESKTOP_APP_USE_PACKAGED)
+    target_compile_definitions(external_openal
+    INTERFACE
+        AL_LIBTYPE_STATIC
+    )
+endif()

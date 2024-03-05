@@ -80,6 +80,13 @@ const auto CommandByName = base::flat_map<QString, Command>{
 	{ u"next_folder"_q       , Command::FolderNext },
 	{ u"all_chats"_q         , Command::ShowAllChats },
 
+	{ u"account1"_q          , Command::ShowAccount1 },
+	{ u"account2"_q          , Command::ShowAccount2 },
+	{ u"account3"_q          , Command::ShowAccount3 },
+	{ u"account4"_q          , Command::ShowAccount4 },
+	{ u"account5"_q          , Command::ShowAccount5 },
+	{ u"account6"_q          , Command::ShowAccount6 },
+
 	{ u"folder1"_q           , Command::ShowFolder1 },
 	{ u"folder2"_q           , Command::ShowFolder2 },
 	{ u"folder3"_q           , Command::ShowFolder3 },
@@ -94,9 +101,10 @@ const auto CommandByName = base::flat_map<QString, Command>{
 	{ u"read_chat"_q         , Command::ReadChat },
 
 	// Shortcuts that have no default values.
-	{ u"message"_q           , Command::JustSendMessage },
-	{ u"message_silently"_q  , Command::SendSilentMessage },
-	{ u"message_scheduled"_q , Command::ScheduleMessage },
+	{ u"message"_q                       , Command::JustSendMessage },
+	{ u"message_silently"_q              , Command::SendSilentMessage },
+	{ u"message_scheduled"_q             , Command::ScheduleMessage },
+	{ u"media_viewer_video_fullscreen"_q , Command::MediaViewerFullscreen },
 	//
 };
 
@@ -124,6 +132,13 @@ const auto CommandNames = base::flat_map<Command, QString>{
 	{ Command::FolderPrevious , u"previous_folder"_q },
 	{ Command::FolderNext     , u"next_folder"_q },
 	{ Command::ShowAllChats   , u"all_chats"_q },
+
+	{ Command::ShowAccount1   , u"account1"_q },
+	{ Command::ShowAccount2   , u"account2"_q },
+	{ Command::ShowAccount3   , u"account3"_q },
+	{ Command::ShowAccount4   , u"account4"_q },
+	{ Command::ShowAccount5   , u"account5"_q },
+	{ Command::ShowAccount6   , u"account6"_q },
 
 	{ Command::ShowFolder1    , u"folder1"_q },
 	{ Command::ShowFolder2    , u"folder2"_q },
@@ -387,9 +402,17 @@ void Manager::fillDefaults() {
 		kShowFolder,
 		ranges::views::ints(1, ranges::unreachable));
 
-	for (const auto [command, index] : folders) {
+	for (const auto &[command, index] : folders) {
 		set(u"%1+%2"_q.arg(ctrl).arg(index), command);
 	}
+
+	//auto &&accounts = ranges::views::zip(
+	//	kShowAccount,
+	//	ranges::views::ints(1, ranges::unreachable));
+
+	//for (const auto &[command, index] : accounts) {
+	//	set(u"%1+shift+%2"_q.arg(ctrl).arg(index), command);
+	//}
 
 	set(u"%1+shift+down"_q.arg(ctrl), Command::FolderNext);
 	set(u"%1+shift+up"_q.arg(ctrl), Command::FolderPrevious);
@@ -434,6 +457,18 @@ void Manager::writeDefaultFile() {
 			}
 		}
 	}
+
+	// Commands without a default value.
+	for (const auto command : kShowAccount) {
+		const auto j = CommandNames.find(command);
+		if (j != CommandNames.end()) {
+			QJsonObject entry;
+			entry.insert(u"keys"_q, QJsonValue());
+			entry.insert(u"command"_q, j->second);
+			shortcuts.append(entry);
+		}
+	}
+
 
 	auto document = QJsonDocument();
 	document.setArray(shortcuts);

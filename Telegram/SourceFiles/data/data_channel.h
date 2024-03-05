@@ -59,6 +59,12 @@ enum class ChannelDataFlag {
 	Forum = (1 << 23),
 	AntiSpam = (1 << 24),
 	ParticipantsHidden = (1 << 25),
+	StoriesHidden = (1 << 26),
+	HasActiveStories = (1 << 27),
+	HasUnreadStories = (1 << 28),
+	CanGetStatistics = (1 << 29),
+	ViewAsMessages = (1 << 30),
+	SimilarExpanded = (1 << 31),
 };
 inline constexpr bool is_flag_type(ChannelDataFlag) { return true; };
 using ChannelDataFlags = base::flags<ChannelDataFlag>;
@@ -108,6 +114,7 @@ public:
 	base::flat_map<not_null<UserData*>, Restricted> lastRestricted;
 	base::flat_set<not_null<PeerData*>> markupSenders;
 	base::flat_set<not_null<UserData*>> bots;
+	rpl::event_stream<bool> unrestrictedByBoostsChanges;
 
 	// For admin badges, full admins list with ranks.
 	base::flat_map<UserId, QString> admins;
@@ -116,7 +123,9 @@ public:
 	QString creatorRank;
 	int botStatus = 0; // -1 - no bots, 0 - unknown, 1 - one bot, that sees all history, 2 - other
 	bool joinedMessageFound = false;
+	bool adminsLoaded = false;
 	StickerSetIdentifier stickerSet;
+	StickerSetIdentifier emojiSet;
 
 	enum LastParticipantsStatus {
 		LastParticipantsUpToDate       = 0x00,
@@ -125,6 +134,11 @@ public:
 	};
 	mutable int lastParticipantsStatus = LastParticipantsUpToDate;
 	int lastParticipantsCount = 0;
+	int boostsApplied = 0;
+	int boostsUnrestrict = 0;
+
+	int slowmodeSeconds = 0;
+	TimeId slowmodeLastMessage = 0;
 
 private:
 	ChatData *_migratedFrom = nullptr;
@@ -225,6 +239,12 @@ public:
 	[[nodiscard]] bool isFake() const {
 		return flags() & Flag::Fake;
 	}
+	[[nodiscard]] bool hasStoriesHidden() const {
+		return flags() & Flag::StoriesHidden;
+	}
+	[[nodiscard]] bool viewForumAsMessages() const {
+		return flags() & Flag::ViewAsMessages;
+	}
 
 	[[nodiscard]] static ChatRestrictionsInfo KickedRestrictedRights(
 		not_null<PeerData*> participant);
@@ -241,6 +261,7 @@ public:
 		not_null<PeerData*> participant,
 		ChatRestrictionsInfo oldRights,
 		ChatRestrictionsInfo newRights);
+	void setViewAsMessagesFlag(bool enabled);
 
 	void markForbidden();
 
@@ -328,15 +349,19 @@ public:
 	[[nodiscard]] bool canBanMembers() const;
 	[[nodiscard]] bool anyoneCanAddMembers() const;
 
+	[[nodiscard]] bool canPostMessages() const;
 	[[nodiscard]] bool canEditMessages() const;
 	[[nodiscard]] bool canDeleteMessages() const;
+	[[nodiscard]] bool canPostStories() const;
+	[[nodiscard]] bool canEditStories() const;
+	[[nodiscard]] bool canDeleteStories() const;
 	[[nodiscard]] bool hiddenPreHistory() const;
-	[[nodiscard]] bool canPublish() const;
 	[[nodiscard]] bool canViewMembers() const;
 	[[nodiscard]] bool canViewAdmins() const;
 	[[nodiscard]] bool canViewBanned() const;
 	[[nodiscard]] bool canEditSignatures() const;
 	[[nodiscard]] bool canEditStickers() const;
+	[[nodiscard]] bool canEditEmoji() const;
 	[[nodiscard]] bool canDelete() const;
 	[[nodiscard]] bool canEditAdmin(not_null<UserData*> user) const;
 	[[nodiscard]] bool canRestrictParticipant(
@@ -415,6 +440,12 @@ public:
 	[[nodiscard]] TimeId slowmodeLastMessage() const;
 	void growSlowmodeLastMessage(TimeId when);
 
+	[[nodiscard]] int boostsApplied() const;
+	[[nodiscard]] int boostsUnrestrict() const;
+	[[nodiscard]] bool unrestrictedByBoosts() const;
+	[[nodiscard]] rpl::producer<bool> unrestrictedByBoostsValue() const;
+	void setBoostsUnrestrict(int applied, int unrestrict);
+
 	void setInvitePeek(const QString &hash, TimeId expires);
 	void clearInvitePeek();
 	[[nodiscard]] TimeId invitePeekExpires() const;
@@ -436,11 +467,18 @@ public:
 	void setAllowedReactions(Data::AllowedReactions value);
 	[[nodiscard]] const Data::AllowedReactions &allowedReactions() const;
 
+	[[nodiscard]] bool hasActiveStories() const;
+	[[nodiscard]] bool hasUnreadStories() const;
+	void setStoriesState(StoriesState state);
+
 	[[nodiscard]] Data::Forum *forum() const {
 		return mgInfo ? mgInfo->forum() : nullptr;
 	}
 
 	void processTopics(const MTPVector<MTPForumTopic> &topics);
+
+	[[nodiscard]] int levelHint() const;
+	void updateLevelHint(int levelHint);
 
 	// Still public data members.
 	uint64 access = 0;
@@ -476,6 +514,7 @@ private:
 	int _restrictedCount = 0;
 	int _kickedCount = 0;
 	int _pendingRequestsCount = 0;
+	int _levelHint = 0;
 	std::vector<UserId> _recentRequesters;
 	MsgId _availableMinId = 0;
 
@@ -493,9 +532,6 @@ private:
 
 	std::unique_ptr<Data::GroupCall> _call;
 	PeerId _callDefaultJoinAs = 0;
-
-	int _slowmodeSeconds = 0;
-	TimeId _slowmodeLastMessage = 0;
 
 };
 

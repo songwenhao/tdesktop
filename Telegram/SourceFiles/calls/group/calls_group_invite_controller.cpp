@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "lang/lang_keys.h"
 #include "styles/style_calls.h"
+#include "styles/style_dialogs.h" // searchedBarHeight
 
 namespace Calls::Group {
 namespace {
@@ -259,9 +260,7 @@ object_ptr<Ui::BoxContent> PrepareInviteBox(
 			finish();
 		};
 		const auto done = [=] {
-			const auto show = (*shared)
-				? std::make_shared<Ui::BoxShow>(*shared)
-				: nullptr;
+			const auto show = (*shared) ? (*shared)->uiShow() : nullptr;
 			inviteWithAdd(show, users, nonMembers, finishWithConfirm);
 		};
 		auto box = ConfirmBox({

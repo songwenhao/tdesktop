@@ -7,11 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_forum_topic_box.h"
 
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/shadow.h"
 #include "ui/effects/emoji_fly_animation.h"
 #include "ui/abstract_button.h"
-#include "ui/color_int_conversion.h"
+#include "ui/vertical_list.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
 #include "data/data_forum.h"
@@ -32,14 +32,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
-#include "settings/settings_common.h"
 #include "apiwrap.h"
 #include "mainwindow.h"
 #include "styles/style_layers.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_chat_helpers.h"
 
-namespace {
 namespace {
 
 constexpr auto kDefaultIconId = DocumentId(0x7FFF'FFFF'FFFF'FFFFULL);
@@ -55,6 +53,7 @@ public:
 		rpl::producer<DefaultIcon> value,
 		Fn<void()> repaint);
 
+	int width() override;
 	QString entityData() override;
 
 	void paint(QPainter &p, const Context &context) override;
@@ -78,6 +77,10 @@ DefaultIconEmoji::DefaultIconEmoji(
 		_image = QImage();
 		repaint();
 	}, _lifetime);
+}
+
+int DefaultIconEmoji::width() {
+	return st::emojiSize + 2 * st::emojiPadding;
 }
 
 QString DefaultIconEmoji::entityData() {
@@ -108,8 +111,6 @@ bool DefaultIconEmoji::ready() {
 bool DefaultIconEmoji::readyInDefaultState() {
 	return true;
 }
-
-} // namespace
 
 [[nodiscard]] int EditIconSize() {
 	const auto tag = Data::CustomEmojiManager::SizeTag::Large;
@@ -274,12 +275,9 @@ struct IconSelector {
 	};
 	const auto selector = body->add(
 		object_ptr<EmojiListWidget>(body, EmojiListDescriptor{
-			.session = &controller->session(),
+			.show = controller->uiShow(),
 			.mode = EmojiListWidget::Mode::TopicIcon,
-			.controller = controller,
-			.paused = Window::PausedIn(
-				controller,
-				Window::GifPauseReason::Layer),
+			.paused = Window::PausedIn(controller, PauseReason::Layer),
 			.customRecentList = recent(),
 			.customRecentFactory = std::move(factory),
 			.st = &st::reactPanelEmojiPan,
@@ -357,6 +355,7 @@ struct IconSelector {
 				&owner->reactions(),
 				std::move(args),
 				[=] { state->animation->repaint(); },
+				[] { return st::windowFg->c; },
 				Data::CustomEmojiSizeTag::Large);
 		}
 		state->iconId = id;
@@ -467,20 +466,16 @@ void EditForumTopicBox(
 			ChooseNextColorId(current.colorId, state->otherColorIds),
 		};
 	});
-	base::qt_signal_producer(
-		title,
-		&Ui::InputField::changed
+	title->changes(
 	) | rpl::start_with_next([=] {
 		state->defaultIcon = DefaultIcon{
 			title->getLastText().trimmed(),
 			state->defaultIcon.current().colorId,
 		};
-	}, box->lifetime());
+	}, title->lifetime());
 
 	if (!topic || !topic->isGeneral()) {
-		Settings::AddDividerText(
-			top,
-			tr::lng_forum_choose_title_and_icon());
+		Ui::AddDividerText(top, tr::lng_forum_choose_title_and_icon());
 
 		box->setScrollStyle(st::reactPanelScroll);
 

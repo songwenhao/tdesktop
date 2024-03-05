@@ -7,22 +7,16 @@
 #include "base/platform/linux/base_file_utilities_linux.h"
 
 #include "base/platform/base_platform_file_utilities.h"
-#include "base/platform/linux/base_linux_wayland_integration.h"
+#include "base/platform/linux/base_linux_xdp_utilities.h"
+#include "base/platform/linux/base_linux_xdg_activation_token.h"
 #include "base/algorithm.h"
-
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-#include "base/platform/linux/base_linux_app_launch_context.h"
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QStandardPaths>
 #include <QtGui/QDesktopServices>
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-#include <glibmm.h>
 #include <giomm.h>
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -34,137 +28,108 @@
 namespace base::Platform {
 namespace {
 
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-bool PortalShowInFolder(const QString &filepath) {
-	try {
-		const auto connection = Gio::DBus::Connection::get_sync(
-			Gio::DBus::BusType::SESSION);
-
-		const auto fd = open(
-			QFile::encodeName(filepath).constData(),
-			O_RDONLY);
-
-		if (fd == -1) {
-			return false;
+void PortalShowInFolder(const QString &filepath, Fn<void()> fail) {
+	const auto connection = [] {
+		try {
+			return Gio::DBus::Connection::get_sync(
+				Gio::DBus::BusType::SESSION);
+		} catch (...) {
+			return Glib::RefPtr<Gio::DBus::Connection>();
 		}
+	}();
 
-		const auto guard = gsl::finally([&] { close(fd); });
-
-		const auto activationToken = []() -> Glib::ustring {
-			if (const auto integration = WaylandIntegration::Instance()) {
-				if (const auto token = integration->activationToken()
-					; !token.isNull()) {
-					return token.toStdString();
-				}
-			}
-			return {};
-		}();
-
-		auto outFdList = Glib::RefPtr<Gio::UnixFDList>();
-
-		connection->call_sync(
-			"/org/freedesktop/portal/desktop",
-			"org.freedesktop.portal.OpenURI",
-			"OpenDirectory",
-			Glib::VariantContainerBase::create_tuple({
-				Glib::Variant<Glib::ustring>::create({}),
-				Glib::Variant<int>::create_handle(0),
-				Glib::Variant<std::map<
-					Glib::ustring,
-					Glib::VariantBase
-				>>::create({
-					{
-						"activation_token",
-						Glib::Variant<Glib::ustring>::create(activationToken)
-					},
-				}),
-			}),
-			Gio::UnixFDList::create(std::vector<int>{ fd }),
-			outFdList,
-			"org.freedesktop.portal.Desktop");
-
-		return true;
-	} catch (...) {
+	if (!connection) {
+		fail();
+		return;
 	}
 
-	return false;
+	const auto fd = open(
+		QFile::encodeName(filepath).constData(),
+		O_RDONLY);
+
+	if (fd == -1) {
+		fail();
+		return;
+	}
+
+	RunWithXdgActivationToken([=](const QString &activationToken) {
+		connection->call(
+			XDP::kObjectPath,
+			"org.freedesktop.portal.OpenURI",
+			"OpenDirectory",
+			Glib::create_variant(std::tuple{
+				XDP::ParentWindowID(),
+				Glib::DBusHandle(),
+				std::map<Glib::ustring, Glib::VariantBase>{
+					{
+						"activation_token",
+						Glib::create_variant(
+							Glib::ustring(activationToken.toStdString()))
+					},
+				},
+			}),
+			[=](const Glib::RefPtr<Gio::AsyncResult> &result) {
+				try {
+					connection->call_finish(result);
+				} catch (...) {
+					fail();
+				}
+				close(fd);
+			},
+			Gio::UnixFDList::create(std::vector<int>{ fd }),
+			XDP::kService);
+	});
 }
 
-bool DBusShowInFolder(const QString &filepath) {
-	try {
-		const auto connection = Gio::DBus::Connection::get_sync(
-			Gio::DBus::BusType::SESSION);
+void DBusShowInFolder(const QString &filepath, Fn<void()> fail) {
+	const auto connection = [] {
+		try {
+			return Gio::DBus::Connection::get_sync(
+				Gio::DBus::BusType::SESSION);
+		} catch (...) {
+			return Glib::RefPtr<Gio::DBus::Connection>();
+		}
+	}();
 
-		const auto startupId = []() -> Glib::ustring {
-			if (const auto integration = WaylandIntegration::Instance()) {
-				return integration->activationToken().toStdString();
-			}
-			return {};
-		}();
+	if (!connection) {
+		fail();
+		return;
+	}
 
-		connection->call_sync(
+	RunWithXdgActivationToken([=](const QString &startupId) {
+		connection->call(
 			"/org/freedesktop/FileManager1",
 			"org.freedesktop.FileManager1",
 			"ShowItems",
-			Glib::VariantContainerBase::create_tuple({
-				Glib::Variant<std::vector<Glib::ustring>>::create({
+			Glib::create_variant(std::tuple{
+				std::vector<Glib::ustring>{
 					Glib::filename_to_uri(filepath.toStdString())
-				}),
-				Glib::Variant<Glib::ustring>::create(startupId),
+				},
+				Glib::ustring(startupId.toStdString()),
 			}),
+			[=](const Glib::RefPtr<Gio::AsyncResult> &result) {
+				try {
+					connection->call_finish(result);
+				} catch (...) {
+					fail();
+				}
+			},
 			"org.freedesktop.FileManager1");
-
-		return true;
-	} catch (...) {
-	}
-
-	return false;
+	});
 }
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
 
 } // namespace
 
-bool ShowInFolder(const QString &filepath) {
-#ifndef DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-	if (DBusShowInFolder(filepath)) {
-		return true;
-	}
-
-	if (PortalShowInFolder(filepath)) {
-		return true;
-	}
-
-	try {
-		if (Gio::AppInfo::launch_default_for_uri(
-			Glib::filename_to_uri(
-				Glib::path_get_dirname(filepath.toStdString())),
-			AppLaunchContext())) {
-			return true;
-		}
-	} catch (...) {
-	}
-#endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
-
-	return QDesktopServices::openUrl(
-		QUrl::fromLocalFile(QFileInfo(filepath).absolutePath()));
+void ShowInFolder(const QString &filepath) {
+	DBusShowInFolder(filepath, [=] {
+		PortalShowInFolder(filepath, [=] {
+			QDesktopServices::openUrl(
+				QUrl::fromLocalFile(QFileInfo(filepath).absolutePath()));
+		});
+	});
 }
 
 QString CurrentExecutablePath(int argc, char *argv[]) {
-	if (qEnvironmentVariableIsSet("APPIMAGE")) {
-		const auto appimagePath = qEnvironmentVariable("APPIMAGE");
-		const auto appimagePathList = appimagePath.split('/');
-
-		if (qEnvironmentVariableIsSet("ARGV0")
-			&& appimagePathList.size() >= 5
-			&& appimagePathList[1] == qstr("run")
-			&& appimagePathList[2] == qstr("user")
-			&& appimagePathList[4] == qstr("appimagelauncherfs")) {
-			return qEnvironmentVariable("ARGV0");
-		}
-
-		return appimagePath;
-	}
-
 	const auto exeLink = QFileInfo(u"/proc/%1/exe"_q.arg(getpid()));
 	if (exeLink.exists() && exeLink.isSymLink()) {
 		return exeLink.canonicalFilePath();
@@ -173,13 +138,13 @@ QString CurrentExecutablePath(int argc, char *argv[]) {
 	// Fallback to the first command line argument.
 	if (argc) {
 		const auto argv0 = QFile::decodeName(argv[0]);
-		if (!argv0.isEmpty() && !QFileInfo::exists(argv0)) {
+		if (!argv0.isEmpty() && !argv0.contains(QLatin1Char('/'))) {
 			const auto argv0InPath = QStandardPaths::findExecutable(argv0);
 			if (!argv0InPath.isEmpty()) {
 				return argv0InPath;
 			}
 		}
-		return argv0;
+		return QFileInfo(argv0).absoluteFilePath();
 	}
 
 	return QString();
@@ -190,6 +155,10 @@ void RemoveQuarantine(const QString &path) {
 
 QString BundledResourcesPath() {
 	Unexpected("BundledResourcesPath not implemented.");
+}
+
+QString FileNameFromUserString(QString name) {
+	return name;
 }
 
 // From http://stackoverflow.com/questions/2256945/removing-a-non-empty-directory-programmatically-in-c-or-c

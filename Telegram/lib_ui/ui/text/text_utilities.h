@@ -35,8 +35,12 @@ inline constexpr auto Upper = details::ToUpperType{};
 	TextWithEntities text,
 	const QString &url = u"internal:action"_q);
 [[nodiscard]] TextWithEntities Link(TextWithEntities text, int index);
-[[nodiscard]] TextWithEntities PlainLink(const QString &text);
-[[nodiscard]] TextWithEntities PlainLink(TextWithEntities text);
+[[nodiscard]] TextWithEntities Colorized(
+	const QString &text,
+	int index = 0);
+[[nodiscard]] TextWithEntities Colorized(
+	TextWithEntities text,
+	int index = 0);
 [[nodiscard]] TextWithEntities Wrapped(
 	TextWithEntities text,
 	EntityType type,
@@ -65,7 +69,7 @@ inline constexpr auto Upper = details::ToUpperType{};
 }
 
 [[nodiscard]] inline auto ToLink(const QString &url = "internal:action") {
-	return rpl::map([=](const QString &text) {
+	return rpl::map([=](const auto &text) {
 		return Link(text, url);
 	});
 }

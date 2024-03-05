@@ -1134,9 +1134,10 @@ void Instance::Private::processCallback(const Response &response) {
 					QString::number(error.code()),
 					error.type(),
 					error.description()));
-			if (rpcErrorOccured(response, handler, error)) {
+			const auto guard = QPointer<Instance>(_instance);
+			if (rpcErrorOccured(response, handler, error) && guard) {
 				unregisterRequest(requestId);
-			} else {
+			} else if (guard) {
 				QMutexLocker locker(&_parserMapLock);
 				_parserMap.emplace(requestId, std::move(handler));
 			}
@@ -1156,12 +1157,15 @@ void Instance::Private::processCallback(const Response &response) {
 						"RESPONSE_PARSE_FAILED",
 						"Error parse failed.")));
 		} else {
-			if (handler.done && !handler.done(response)) {
+			const auto guard = QPointer<Instance>(_instance);
+			if (handler.done && !handler.done(response) && guard) {
 				handleError(Error::Local(
 					"RESPONSE_PARSE_FAILED",
 					"Response parse failed."));
 			}
-			unregisterRequest(requestId);
+			if (guard) {
+				unregisterRequest(requestId);
+			}
 		}
 	} else {
 		DEBUG_LOG(("RPC Info: parser not found for %1").arg(requestId));
@@ -1192,8 +1196,11 @@ bool Instance::Private::rpcErrorOccured(
 		const FailHandler &onFail,
 		const Error &error) { // return true if need to clean request data
 	if (IsDefaultHandledError(error)) {
+		const auto guard = QPointer<Instance>(_instance);
 		if (onFail && onFail(error, response)) {
 			return true;
+		} else if (!guard) {
+			return false;
 		}
 	}
 
@@ -1208,7 +1215,11 @@ bool Instance::Private::rpcErrorOccured(
 			? QString()
 			: QString(": %1").arg(error.description())));
 	if (onFail) {
+		const auto guard = QPointer<Instance>(_instance);
 		onFail(error, response);
+		if (!guard) {
+			return false;
+		}
 	}
 	return true;
 }
@@ -1343,8 +1354,11 @@ bool Instance::Private::onErrorDefault(
 	const auto &type = error.type();
 	const auto code = error.code();
 	auto badGuestDc = (code == 400) && (type == u"FILE_ID_INVALID"_q);
+	static const auto MigrateRegExp = QRegularExpression("^(FILE|PHONE|NETWORK|USER)_MIGRATE_(\\d+)$");
+	static const auto FloodWaitRegExp = QRegularExpression("^FLOOD_WAIT_(\\d+)$");
+	static const auto SlowmodeWaitRegExp = QRegularExpression("^SLOWMODE_WAIT_(\\d+)$");
 	QRegularExpressionMatch m1, m2;
-	if ((m1 = QRegularExpression("^(FILE|PHONE|NETWORK|USER)_MIGRATE_(\\d+)$").match(type)).hasMatch()) {
+	if ((m1 = MigrateRegExp.match(type)).hasMatch()) {
 		if (!requestId) return false;
 
 		auto dcWithShift = ShiftedDcId(0);
@@ -1447,8 +1461,8 @@ bool Instance::Private::onErrorDefault(
 		return true;
 	} else if (code < 0
 		|| code >= 500
-		|| (m1 = QRegularExpression("^FLOOD_WAIT_(\\d+)$").match(type)).hasMatch()
-		|| ((m2 = QRegularExpression("^SLOWMODE_WAIT_(\\d+)$").match(type)).hasMatch()
+		|| (m1 = FloodWaitRegExp.match(type)).hasMatch()
+		|| ((m2 = SlowmodeWaitRegExp.match(type)).hasMatch()
 			&& m2.captured(1).toInt() < 3)) {
 		if (!requestId) return false;
 

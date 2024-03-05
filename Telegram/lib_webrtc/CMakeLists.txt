@@ -17,22 +17,30 @@ PRIVATE
     webrtc/webrtc_audio_input_tester.h
     webrtc/webrtc_create_adm.cpp
     webrtc/webrtc_create_adm.h
-    webrtc/webrtc_media_devices.cpp
-    webrtc/webrtc_media_devices.h
+    webrtc/webrtc_device_common.h
+    webrtc/webrtc_device_resolver.cpp
+    webrtc/webrtc_device_resolver.h
+    webrtc/webrtc_environment.cpp
+    webrtc/webrtc_environment.h
     webrtc/webrtc_video_track.cpp
     webrtc/webrtc_video_track.h
 
+    webrtc/details/webrtc_environment_openal.cpp
+    webrtc/details/webrtc_environment_openal.h
+    webrtc/details/webrtc_environment_video_capture.cpp
+    webrtc/details/webrtc_environment_video_capture.h
     webrtc/details/webrtc_openal_adm.cpp
     webrtc/details/webrtc_openal_adm.h
 
-    webrtc/linux/webrtc_media_devices_linux.cpp
-    webrtc/linux/webrtc_media_devices_linux.h
-
-    webrtc/mac/webrtc_media_devices_mac.h
-    webrtc/mac/webrtc_media_devices_mac.mm
-
-    webrtc/win/webrtc_loopback_adm_win.cpp
-    webrtc/win/webrtc_loopback_adm_win.h
+    webrtc/platform/linux/webrtc_environment_linux.cpp
+    webrtc/platform/linux/webrtc_environment_linux.h
+    webrtc/platform/mac/webrtc_environment_mac.h
+    webrtc/platform/mac/webrtc_environment_mac.mm
+    webrtc/platform/win/webrtc_environment_win.cpp
+    webrtc/platform/win/webrtc_environment_win.h
+    webrtc/platform/win/webrtc_loopback_adm_win.cpp
+    webrtc/platform/win/webrtc_loopback_adm_win.h
+    webrtc/platform/webrtc_platform_environment.h
 
     webrtc/webrtc_pch.h
 )

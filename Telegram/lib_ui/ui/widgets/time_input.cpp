@@ -7,6 +7,7 @@
 #include "ui/widgets/time_input.h"
 
 #include "ui/widgets/fields/time_part_input.h"
+#include "base/qt/qt_string_view.h"
 #include "base/invoke_queued.h"
 
 #include <QtCore/QRegularExpression>
@@ -16,8 +17,9 @@ namespace Ui {
 namespace {
 
 QTime ValidateTime(const QString &value) {
-	const auto match = QRegularExpression(
-		"^(\\d{1,2})\\:(\\d\\d)$").match(value);
+	static const auto RegExp = QRegularExpression(
+		"^(\\d{1,2})\\:(\\d\\d)$");
+	const auto match = RegExp.match(value);
 	if (!match.hasMatch()) {
 		return QTime();
 	}

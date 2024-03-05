@@ -4,20 +4,19 @@
 # For license and copyright information please follow this link:
 # https://github.com/desktop-app/legal/blob/master/LEGAL
 
-function(target_link_frameworks_generic type target_name)
+function(target_link_frameworks target_name)
     set(list ${ARGV})
-    list(REMOVE_AT list 1)
     list(REMOVE_AT list 0)
 
     set(writing_now "")
     set(private_frameworks "")
     set(public_frameworks "")
     set(interface_frameworks "")
-    foreach (entry ${list})
+    foreach (entry ${list})    
         if (${entry} STREQUAL "PRIVATE" OR ${entry} STREQUAL "PUBLIC" OR ${entry} STREQUAL "INTERFACE")
             set(writing_now ${entry})
         else()
-            set(full_argument "${type} ${entry}")
+            set(full_argument "-framework ${entry}")
             if ("${writing_now}" STREQUAL "PRIVATE")
                 list(APPEND private_frameworks ${full_argument})
             elseif ("${writing_now}" STREQUAL "PUBLIC")
@@ -39,12 +38,4 @@ function(target_link_frameworks_generic type target_name)
     if (NOT "${interface_frameworks}" STREQUAL "")
         target_link_libraries(${target_name} INTERFACE ${interface_frameworks})
     endif()
-endfunction()
-
-function(target_link_frameworks target_name)
-    target_link_frameworks_generic("-framework" ${ARGV})
-endfunction()
-
-function(target_link_frameworks_weak target_name)
-    target_link_frameworks_generic("-weak_framework" ${ARGV})
 endfunction()

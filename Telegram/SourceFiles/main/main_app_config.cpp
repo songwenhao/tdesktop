@@ -7,9 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "main/main_app_config.h"
 
-#include "main/main_account.h"
-#include "base/call_delayed.h"
 #include "apiwrap.h"
+#include "base/call_delayed.h"
+#include "main/main_account.h"
+#include "ui/chat/chat_style.h"
 
 namespace Main {
 namespace {
@@ -26,6 +27,8 @@ AppConfig::AppConfig(not_null<Account*> account) : _account(account) {
 		refresh();
 	}, _lifetime);
 }
+
+AppConfig::~AppConfig() = default;
 
 void AppConfig::start() {
 	_account->mtpMainSessionValue(
@@ -163,6 +166,27 @@ std::vector<std::map<QString, QString>> AppConfig::getStringMapArray(
 						qs(data.vvalue().c_jsonString().vvalue()));
 				}
 				result.push_back(std::move(element));
+			}
+			return result;
+		}, [&](const auto &data) {
+			return std::move(fallback);
+		});
+	});
+}
+
+std::vector<int> AppConfig::getIntArray(
+		const QString &key,
+		std::vector<int> &&fallback) const {
+	return getValue(key, [&](const MTPJSONValue &value) {
+		return value.match([&](const MTPDjsonArray &data) {
+			auto result = std::vector<int>();
+			result.reserve(data.vvalue().v.size());
+			for (const auto &entry : data.vvalue().v) {
+				if (entry.type() != mtpc_jsonNumber) {
+					return std::move(fallback);
+				}
+				result.push_back(
+					int(base::SafeRound(entry.c_jsonNumber().vvalue().v)));
 			}
 			return result;
 		}, [&](const auto &data) {

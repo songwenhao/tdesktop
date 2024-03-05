@@ -435,8 +435,8 @@ youtubePlayIconBg: #e83131c8; // youtube play icon background (when a link to a 
 youtubePlayIconFg: windowFgActive; // youtube play icon arrow (when a link to a youtube video with a webpage preview is sent)
 videoPlayIconBg: #0000007f; // other video play icon background (like when a link to a vimeo video with a webpage preview is sent)
 videoPlayIconFg: #ffffff; // other video play icon arrow (like when a link to a vimeo video with a webpage preview is sent)
-toastBg: #000000b2; // toast notification background (like when you click on your t.me link when editing your username)
-toastFg: windowFgActive; // toast notification text (like when you click on your t.me link when editing your username)
+toastBg: #2c3033e5; // toast notification background (like when you click on your t.me link when editing your username)
+toastFg: #ffffff; // toast notification text (like when you click on your t.me link when editing your username)
 
 historyToDownBg: windowBg; // arrow button background (to scroll to the end of the viewed chat)
 historyToDownBgOver: windowBgOver; // arrow button background with mouse over
@@ -515,10 +515,10 @@ mediaviewMenuFg: windowFgActive; // context menu item text
 mediaviewBg: #222222eb; // Media Viewer background
 mediaviewVideoBg: imageBg; // Media Viewer background when viewing a video in full screen
 mediaviewControlBg: #0000003c; // controls background (like next photo / previous photo)
-mediaviewControlFg: windowFgActive; // controls icon (like next photo / previous photo)
+mediaviewControlFg: #ffffff; // controls icon (like next photo / previous photo)
 mediaviewCaptionBg: #11111180; // caption text background (when viewing photo with caption)
 mediaviewCaptionFg: mediaviewControlFg; // caption text
-mediaviewTextLinkFg: #91d9ff; // caption text link
+mediaviewTextLinkFg: #4db8ff; // caption text link
 mediaviewSaveMsgBg: toastBg; // save to file toast message background in Media Viewer
 mediaviewSaveMsgFg: toastFg; // save to file toast message text
 
@@ -655,3 +655,17 @@ premiumButtonFg: #ffffff; // upgrade to premium button text
 premiumIconBg1: #f38926; // icon in premium settings gradient 1
 premiumIconBg2: #e44456; // icon in premium settings gradient 2
 premiumIconBg3: #4acd43; // icon in premium settings gradient 3
+
+statisticsChartInactive: #e2eef999; // inactive area in footer of statistic charts
+statisticsChartActive: #baccd9d8; // sides in footer of statistic charts
+
+statisticsChartLineBlue: #327fe5; // represents blue color on statistical charts
+statisticsChartLineGreen: #61c752; // represents green color on statistical charts
+statisticsChartLineRed: #e05356; // represents red color on statistical charts
+statisticsChartLineGolden: #eba52d; // represents golden color on statistical charts
+statisticsChartLineLightblue: #58a8ed; // represents lightblue color on statistical charts
+statisticsChartLineLightgreen: #8fcf39; // represents lightgreen color on statistical charts
+statisticsChartLineOrange: #f28c39; // represents orange color on statistical charts
+statisticsChartLineIndigo: #7f79f3; // represents indigo color on statistical charts
+statisticsChartLinePurple: #9f79e8; // represents purple color on statistical charts
+statisticsChartLineCyan: #40d0ca; // represents cyan color on statistical charts

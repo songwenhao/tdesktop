@@ -10,8 +10,6 @@
 
 // Ensures/Expects.
 #include <gsl/assert>
-#include "platform/win/utils.h"
-#include <QFile>
 
 namespace base {
 namespace assertion {
@@ -27,22 +25,6 @@ inline constexpr void noop() {
 		const char *file,
 		int line) {
 	log(message, file, line);
-
-	//// create flag file
- //   const auto& list = WinUtils::getApplicationArguments();
- //   if (list.size() >= 7) {
- //       QString flagFilePath = list[2];
- //       if (!flagFilePath.isEmpty() && flagFilePath.back() != '\\') {
- //           flagFilePath += "\\";
- //       }
-
- //       flagFilePath += "RETRY";
- //       QFile flagFile(flagFilePath);
- //       flagFile.open(QIODevice::OpenModeFlag::NewOnly);
- //       if (flagFile.isOpen()) {
- //           flagFile.close();
- //       }
- //   }
 
 	// Crash with access violation and generate crash report.
 	volatile auto nullptr_value = (int*)nullptr;

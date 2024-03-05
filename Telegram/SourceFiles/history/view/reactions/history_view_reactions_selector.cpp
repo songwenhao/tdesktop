@@ -7,16 +7,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/reactions/history_view_reactions_selector.h"
 
+#include "ui/widgets/labels.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/shadow.h"
 #include "ui/text/text_custom_emoji.h"
+#include "ui/text/text_utilities.h"
 #include "ui/platform/ui_platform_utility.h"
 #include "ui/painter.h"
+#include "history/history.h"
 #include "history/history_item.h"
 #include "data/data_document.h"
+#include "data/data_document_media.h"
 #include "data/data_session.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "chat_helpers/emoji_list_widget.h"
 #include "chat_helpers/stickers_list_footer.h"
@@ -46,6 +51,7 @@ public:
 		QPoint shift,
 		int index);
 
+	int width() override;
 	QString entityData() override;
 	void paint(QPainter &p, const Context &context) override;
 	void unload() override;
@@ -70,6 +76,10 @@ StripEmoji::StripEmoji(
 , _strip(strip)
 , _shift(shift)
 , _index(index) {
+}
+
+int StripEmoji::width() {
+	return _wrapped->width();
 }
 
 QString StripEmoji::entityData() {
@@ -103,50 +113,146 @@ bool StripEmoji::readyInDefaultState() {
 
 } // namespace
 
+UnifiedFactoryOwner::UnifiedFactoryOwner(
+	not_null<Main::Session*> session,
+	const std::vector<Data::Reaction> &reactions,
+	Strip *strip)
+: _session(session)
+, _strip(strip) {
+	auto index = 0;
+	const auto inStrip = _strip ? _strip->count() : 0;
+	_unifiedIdsList.reserve(reactions.size());
+	for (const auto &reaction : reactions) {
+		if (const auto id = reaction.id.custom()) {
+			_unifiedIdsList.push_back(id);
+		} else {
+			_unifiedIdsList.push_back(reaction.selectAnimation->id);
+		}
+
+		const auto unifiedId = _unifiedIdsList.back();
+		if (!reaction.id.custom()) {
+			_defaultReactionIds.emplace(unifiedId, reaction.id.emoji());
+		}
+		if (index + 1 < inStrip) {
+			_defaultReactionInStripMap.emplace(unifiedId, index++);
+		}
+	}
+
+	_stripPaintOneShift = [&] {
+		// See EmojiListWidget custom emoji position resolving.
+		const auto size = st::reactStripSize;
+		const auto area = st::emojiPanArea;
+		const auto areaPosition = QPoint(
+			(size - area.width()) / 2,
+			(size - area.height()) / 2);
+		const auto esize = Ui::Emoji::GetSizeLarge() / style::DevicePixelRatio();
+		const auto innerPosition = QPoint(
+			(area.width() - esize) / 2,
+			(area.height() - esize) / 2);
+		const auto customSize = Ui::Text::AdjustCustomEmojiSize(esize);
+		const auto customSkip = (esize - customSize) / 2;
+		const auto customPosition = QPoint(customSkip, customSkip);
+		return areaPosition + innerPosition + customPosition;
+	}();
+
+	_defaultReactionShift = QPoint(
+		(st::reactStripSize - st::reactStripImage) / 2,
+		(st::reactStripSize - st::reactStripImage) / 2
+	) - _stripPaintOneShift;
+}
+
+Data::ReactionId UnifiedFactoryOwner::lookupReactionId(
+		DocumentId unifiedId) const {
+	const auto i = _defaultReactionIds.find(unifiedId);
+	return (i != end(_defaultReactionIds))
+		? Data::ReactionId{ i->second }
+		: Data::ReactionId{ unifiedId };
+}
+
+UnifiedFactoryOwner::RecentFactory UnifiedFactoryOwner::factory() {
+	return [=](DocumentId id, Fn<void()> repaint)
+	-> std::unique_ptr<Ui::Text::CustomEmoji> {
+		const auto tag = Data::CustomEmojiManager::SizeTag::Large;
+		const auto sizeOverride = st::reactStripImage;
+		const auto isDefaultReaction = _defaultReactionIds.contains(id);
+		const auto manager = &_session->data().customEmojiManager();
+		auto result = isDefaultReaction
+			? std::make_unique<Ui::Text::ShiftedEmoji>(
+				manager->create(id, std::move(repaint), tag, sizeOverride),
+				_defaultReactionShift)
+			: manager->create(id, std::move(repaint), tag);
+		const auto i = _defaultReactionInStripMap.find(id);
+		if (i != end(_defaultReactionInStripMap)) {
+			Assert(_strip != nullptr);
+			return std::make_unique<StripEmoji>(
+				std::move(result),
+				_strip,
+				-_stripPaintOneShift,
+				i->second);
+		}
+		return result;
+	};
+}
+
 Selector::Selector(
 	not_null<QWidget*> parent,
-	not_null<Window::SessionController*> parentController,
+	const style::EmojiPan &st,
+	std::shared_ptr<ChatHelpers::Show> show,
 	const Data::PossibleItemReactionsRef &reactions,
+	TextWithEntities about,
 	IconFactory iconFactory,
-	Fn<void(bool fast)> close)
+	Fn<void(bool fast)> close,
+	bool child)
 : Selector(
 	parent,
-	parentController,
+	st,
+	std::move(show),
 	reactions,
 	(reactions.customAllowed
 		? ChatHelpers::EmojiListMode::FullReactions
 		: ChatHelpers::EmojiListMode::RecentReactions),
 	{},
+	std::move(about),
 	iconFactory,
-	close) {
+	close,
+	child) {
 }
 
 Selector::Selector(
 	not_null<QWidget*> parent,
-	not_null<Window::SessionController*> parentController,
+	const style::EmojiPan &st,
+	std::shared_ptr<ChatHelpers::Show> show,
 	ChatHelpers::EmojiListMode mode,
 	std::vector<DocumentId> recent,
-	Fn<void(bool fast)> close)
+	Fn<void(bool fast)> close,
+	bool child)
 : Selector(
 	parent,
-	parentController,
+	st,
+	std::move(show),
 	{ .customAllowed = true },
 	mode,
 	std::move(recent),
+	{},
 	nullptr,
-	close) {
+	close,
+	child) {
 }
 
 Selector::Selector(
 	not_null<QWidget*> parent,
-	not_null<Window::SessionController*> parentController,
+	const style::EmojiPan &st,
+	std::shared_ptr<ChatHelpers::Show> show,
 	const Data::PossibleItemReactionsRef &reactions,
 	ChatHelpers::EmojiListMode mode,
 	std::vector<DocumentId> recent,
+	TextWithEntities about,
 	IconFactory iconFactory,
-	Fn<void(bool fast)> close)
+	Fn<void(bool fast)> close,
+	bool child)
 : RpWidget(parent)
-, _parentController(parentController.get())
+, _st(st)
+, _show(std::move(show))
 , _reactions(reactions)
 , _recent(std::move(recent))
 , _listMode(mode)
@@ -157,23 +263,34 @@ Selector::Selector(
 	st::reactStripHeight)
 , _strip(iconFactory
 	? std::make_unique<Strip>(
+		_st,
 		QRect(0, 0, st::reactStripSize, st::reactStripSize),
 		st::reactStripImage,
 		crl::guard(this, [=] { update(_inner); }),
 		std::move(iconFactory))
 	: nullptr)
+, _about(about.empty()
+	? nullptr
+	: std::make_unique<Ui::FlatLabel>(
+		this,
+		rpl::single(about),
+		_st.about))
 , _size(st::reactStripSize)
 , _skipx(countSkipLeft())
 , _skipy((st::reactStripHeight - st::reactStripSize) / 2) {
 	setMouseTracking(true);
 
-	_useTransparency = Ui::Platform::TranslucentWindowsSupported();
+	if (_about) {
+		_about->setClickHandlerFilter([=](const auto &...) {
+			_escapes.fire({});
+			return true;
+		});
+	}
 
-	parentController->content()->alive(
-	) | rpl::start_with_done([=] {
-		close(true);
-	}, lifetime());
+	_useTransparency = child || Ui::Platform::TranslucentWindowsSupported();
 }
+
+Selector::~Selector() = default;
 
 bool Selector::useTransparency() const {
 	return _useTransparency;
@@ -184,8 +301,7 @@ int Selector::recentCount() const {
 }
 
 int Selector::countSkipLeft() const {
-	const auto addedToMax = _reactions.customAllowed
-		|| _reactions.morePremiumAvailable;
+	const auto addedToMax = _reactions.customAllowed;
 	const auto max = recentCount() + (addedToMax ? 1 : 0);
 	return std::max(
 		(st::reactStripMinWidth - (max * _size)) / 2,
@@ -193,8 +309,7 @@ int Selector::countSkipLeft() const {
 }
 
 int Selector::countWidth(int desiredWidth, int maxWidth) {
-	const auto addedToMax = _reactions.customAllowed
-		|| _reactions.morePremiumAvailable;
+	const auto addedToMax = _reactions.customAllowed;
 	const auto max = recentCount() + (addedToMax ? 1 : 0);
 	const auto desiredColumns = std::max(
 		(desiredWidth - 2 * _skipx + _size - 1) / _size,
@@ -204,13 +319,9 @@ int Selector::countWidth(int desiredWidth, int maxWidth) {
 		(maxWidth - 2 * _skipx) / _size);
 	_columns = _strip ? std::min(possibleColumns, max) : kDefaultColumns;
 	_small = (possibleColumns - _columns > 1);
-	_recentRows = (recentCount()
-		+ (_reactions.morePremiumAvailable ? 1 : 0)
-		+ _columns - 1) / _columns;
+	_recentRows = (recentCount() + _columns - 1) / _columns;
 	const auto added = (_columns < max || _reactions.customAllowed)
 		? Strip::AddedButton::Expand
-		: _reactions.morePremiumAvailable
-		? Strip::AddedButton::Premium
 		: Strip::AddedButton::None;
 	if (_strip) {
 		const auto &real = _reactions.recent;
@@ -233,7 +344,7 @@ int Selector::countWidth(int desiredWidth, int maxWidth) {
 	return std::max(2 * _skipx + _columns * _size, desiredWidth);
 }
 
-QMargins Selector::extentsForShadow() const {
+QMargins Selector::marginsForShadow() const {
 	const auto line = st::lineWidth;
 	return useTransparency()
 		? st::reactionCornerShadow
@@ -241,14 +352,35 @@ QMargins Selector::extentsForShadow() const {
 }
 
 int Selector::extendTopForCategories() const {
-	return _reactions.customAllowed ? st::reactPanelEmojiPan.footer : 0;
+	return _reactions.customAllowed ? _st.footer : 0;
+}
+
+int Selector::extendTopForCategoriesAndAbout(int width) const {
+	if (_about) {
+		const auto padding = _st.aboutPadding;
+		const auto available = width - padding.left() - padding.right();
+		const auto countAboutHeight = [&](int width) {
+			_about->resizeToWidth(width);
+			return _about->height();
+		};
+		const auto desired = Ui::FindNiceTooltipWidth(
+			std::min(available, _st.about.minWidth * 2),
+			available,
+			countAboutHeight);
+
+		_about->resizeToWidth(desired);
+		_aboutExtend = padding.top() + _about->height() + padding.bottom();
+	} else {
+		_aboutExtend = 0;
+	}
+	return std::max(extendTopForCategories(), _aboutExtend);
 }
 
 int Selector::minimalHeight() const {
 	return _skipy
-		+ (_recentRows * _size)
+		+ std::min(_recentRows * _size, st::emojiPanMinHeight)
 		+ st::emojiPanRadius
-		+ st::reactPanelEmojiPan.padding.bottom();
+		+ _st.padding.bottom();
 }
 
 void Selector::setSpecialExpandTopSkip(int skip) {
@@ -256,26 +388,40 @@ void Selector::setSpecialExpandTopSkip(int skip) {
 }
 
 void Selector::initGeometry(int innerTop) {
-	const auto extents = extentsForShadow();
+	const auto margins = marginsForShadow();
 	const auto parent = parentWidget()->rect();
 	const auto innerWidth = 2 * _skipx + _columns * _size;
 	const auto innerHeight = st::reactStripHeight;
 	const auto width = _useTransparency
-		? (innerWidth + extents.left() + extents.right())
+		? (innerWidth + margins.left() + margins.right())
 		: parent.width();
-	const auto height = innerHeight + extents.top() + extents.bottom();
-	const auto left = style::RightToLeft() ? 0 : (parent.width() - width);
+	const auto forAbout = width - margins.left() - margins.right();
 	_collapsedTopSkip = _useTransparency
-		? (extendTopForCategories() + _specialExpandTopSkip)
+		? (extendTopForCategoriesAndAbout(forAbout) + _specialExpandTopSkip)
 		: 0;
-	const auto top = innerTop - extents.top() - _collapsedTopSkip;
-	const auto add = st::reactStripBubble.height() - extents.bottom();
-	_outer = QRect(0, _collapsedTopSkip, width, height);
+	_topAddOnExpand = extendTopForCategories()
+		- _aboutExtend
+		+ _specialExpandTopSkip;
+	const auto height = margins.top()
+		+ _aboutExtend
+		+ innerHeight
+		+ margins.bottom();
+	const auto left = style::RightToLeft() ? 0 : (parent.width() - width);
+	const auto top = innerTop - margins.top() - _collapsedTopSkip;
+	const auto add = _st.icons.stripBubble.height() - margins.bottom();
+	_outer = QRect(0, _collapsedTopSkip - _aboutExtend, width, height);
 	_outerWithBubble = _outer.marginsAdded({ 0, 0, 0, add });
 	setGeometry(_outerWithBubble.marginsAdded(
-		{ 0, _collapsedTopSkip, 0, 0 }
+		{ 0, _outer.y(), 0, 0}
 	).translated(left, top));
-	_inner = _outer.marginsRemoved(extents);
+	_inner = _outer.marginsRemoved(
+		margins + QMargins{ 0, _aboutExtend, 0, 0 });
+	if (_about) {
+		_about->move(
+			_inner.x() + (_inner.width() - _about->width()) / 2,
+			_outer.y() + margins.top() + _st.aboutPadding.top());
+		_aboutCache = Ui::GrabWidgetToImage(_about.get());
+	}
 
 	if (!_strip) {
 		expand();
@@ -288,6 +434,10 @@ void Selector::beforeDestroy() {
 	}
 }
 
+rpl::producer<> Selector::escapes() const {
+	return _escapes.events();
+}
+
 void Selector::updateShowState(
 		float64 progress,
 		float64 opacity,
@@ -298,6 +448,14 @@ void Selector::updateShowState(
 		&& !appearing
 		&& !_paintBuffer.isNull()) {
 		paintBackgroundToBuffer();
+		if (_about && _about->isHidden()) {
+			_about->show();
+		}
+	} else if (_useTransparency
+		&& !_appearing
+		&& appearing
+		&& _about) {
+		_about->hide();
 	}
 	_appearing = appearing;
 	_toggling = toggling;
@@ -316,26 +474,26 @@ void Selector::updateShowState(
 	update();
 }
 
+int Selector::countAppearedWidth(float64 progress) const {
+	return anim::interpolate(_skipx * 2 + _size, _inner.width(), progress);
+}
+
 void Selector::paintAppearing(QPainter &p) {
 	Expects(_strip != nullptr);
 
 	p.setOpacity(_appearOpacity);
-
 	const auto factor = style::DevicePixelRatio();
 	if (_paintBuffer.size() != _outerWithBubble.size() * factor) {
 		_paintBuffer = _cachedRound.PrepareImage(_outerWithBubble.size());
 	}
-	_paintBuffer.fill(st::defaultPopupMenu.menu.itemBg->c);
+	_paintBuffer.fill(_st.bg->c);
 	auto q = QPainter(&_paintBuffer);
-	const auto extents = extentsForShadow();
-	const auto appearedWidth = anim::interpolate(
-		_skipx * 2 + _size,
-		_inner.width(),
-		_appearProgress);
-	const auto fullWidth = _inner.x() + appearedWidth + extents.right();
+	const auto margins = marginsForShadow();
+	const auto appearedWidth = countAppearedWidth(_appearProgress);
+	const auto fullWidth = _inner.x() + appearedWidth + margins.right();
 	const auto size = QSize(fullWidth, _outer.height());
 
-	q.translate(_inner.topLeft() - QPoint(0, _collapsedTopSkip));
+	q.translate(_inner.topLeft() - QPoint(0, _outer.y()));
 	_strip->paint(
 		q,
 		{ _skipx, _skipy },
@@ -344,9 +502,9 @@ void Selector::paintAppearing(QPainter &p) {
 		1.,
 		false);
 
-	_cachedRound.setBackgroundColor(st::defaultPopupMenu.menu.itemBg->c);
+	_cachedRound.setBackgroundColor(_st.bg->c);
 	_cachedRound.setShadowColor(st::shadowFg->c);
-	q.translate(QPoint(0, _collapsedTopSkip) - _inner.topLeft());
+	q.translate(QPoint(0, _outer.y()) - _inner.topLeft());
 	const auto radius = st::reactStripHeight / 2;
 	_cachedRound.overlayExpandedBorder(
 		q,
@@ -367,6 +525,15 @@ void Selector::paintAppearing(QPainter &p) {
 		_outer.topLeft(),
 		_paintBuffer,
 		QRect(QPoint(), QSize(fullWidth, height()) * factor));
+
+	const auto aboutRight = _inner.x() + appearedWidth;
+	if (_about && _about->isHidden() && aboutRight > _about->x()) {
+		const auto aboutWidth = aboutRight - _about->x();
+		p.drawImage(
+			_about->geometry().topLeft(),
+			_aboutCache,
+			QRect(QPoint(), QSize(aboutWidth, _about->height()) * factor));
+	}
 }
 
 void Selector::paintBackgroundToBuffer() {
@@ -379,14 +546,17 @@ void Selector::paintBackgroundToBuffer() {
 	}
 	_paintBuffer.fill(Qt::transparent);
 
-	_cachedRound.setBackgroundColor(st::defaultPopupMenu.menu.itemBg->c);
+	_cachedRound.setBackgroundColor(_st.bg->c);
 	_cachedRound.setShadowColor(st::shadowFg->c);
 
 	auto p = QPainter(&_paintBuffer);
 	const auto radius = _inner.height() / 2.;
 	const auto frame = _cachedRound.validateFrame(0, 1., radius);
-	const auto outer = _outer.translated(0, -_collapsedTopSkip);
-	_cachedRound.FillWithImage(p, outer, frame);
+	const auto outer = _outer.translated(0, -_outer.y());
+	const auto fill = _cachedRound.FillWithImage(p, outer, frame);
+	if (!fill.isEmpty()) {
+		p.fillRect(fill, _st.bg);
+	}
 	paintBubble(p, _inner.width());
 }
 
@@ -399,7 +569,7 @@ void Selector::paintCollapsed(QPainter &p) {
 		}
 		p.drawImage(_outer.topLeft(), _paintBuffer);
 	} else {
-		p.fillRect(_inner, st::defaultPopupMenu.menu.itemBg);
+		p.fillRect(_inner, _st.bg);
 	}
 	_strip->paint(
 		p,
@@ -411,8 +581,16 @@ void Selector::paintCollapsed(QPainter &p) {
 }
 
 void Selector::paintExpanding(Painter &p, float64 progress) {
-	const auto rects = paintExpandingBg(p, progress);
+	const auto rects = updateExpandingRects(progress);
+	paintExpandingBg(p, rects);
 	progress /= kFullDuration;
+	if (_about && !_aboutCache.isNull()) {
+		p.setClipping(false);
+		p.setOpacity((1. - progress) * (1. - progress));
+		const auto y = _about->y() - _outer.y() + rects.outer.y();
+		p.drawImage(_about->x(), y, _aboutCache);
+		p.setOpacity(1.);
+	}
 	if (_footer) {
 		_footer->paintExpanding(
 			p,
@@ -422,15 +600,15 @@ void Selector::paintExpanding(Painter &p, float64 progress) {
 	}
 	_list->paintExpanding(
 		p,
-		rects.list.marginsRemoved(st::reactPanelEmojiPan.margin),
+		rects.list.marginsRemoved(_st.margin),
 		rects.finalBottom,
+		rects.expanding,
 		progress,
 		RectPart::TopRight);
 	paintFadingExpandIcon(p, progress);
 }
 
-auto Selector::paintExpandingBg(QPainter &p, float64 progress)
--> ExpandingRects {
+Selector::ExpandingRects Selector::updateExpandingRects(float64 progress) {
 	progress = (progress >= kExpandDuration)
 		? 1.
 		: (progress / kExpandDuration);
@@ -441,46 +619,59 @@ auto Selector::paintExpandingBg(QPainter &p, float64 progress)
 	const auto radius = _reactions.customAllowed
 		? (radiusStart + progress * (radiusEnd - radiusStart))
 		: radiusStart;
-	const auto extents = extentsForShadow();
+	const auto margins = marginsForShadow();
 	const auto expanding = anim::easeOutCirc(1., progress);
-	const auto expandUp = anim::interpolate(0, _collapsedTopSkip, expanding);
+	const auto expandUp = anim::interpolate(0, _topAddOnExpand, expanding);
 	const auto expandDown = anim::interpolate(
 		0,
 		(height() - _outer.y() - _outer.height()),
 		expanding);
 	const auto outer = _outer.marginsAdded({ 0, expandUp, 0, expandDown });
-	if (_useTransparency) {
-		const auto pattern = _cachedRound.validateFrame(frame, 1., radius);
-		const auto fill = _cachedRound.FillWithImage(p, outer, pattern);
-		if (!fill.isEmpty()) {
-			p.fillRect(fill, st::defaultPopupMenu.menu.itemBg);
-		}
-	} else {
-		const auto inner = outer.marginsRemoved(extentsForShadow());
-		p.fillRect(inner, st::defaultPopupMenu.menu.itemBg);
-		p.fillRect(
-			inner.x(),
-			inner.y() + inner.height(),
-			inner.width(),
-			st::lineWidth,
-			st::defaultPopupMenu.shadow.fallback);
-	}
-	const auto categories = anim::interpolate(
-		0,
-		extendTopForCategories(),
-		expanding);
-	const auto inner = outer.marginsRemoved(extents);
-	_shadowTop = inner.y() + categories;
+	const auto inner = outer.marginsRemoved(margins
+		+ QMargins{
+			0,
+			anim::interpolate(_aboutExtend, 0, expanding),
+			0,
+			0 });
+	const auto list = outer.marginsRemoved(margins
+		+ QMargins{
+			0,
+			anim::interpolate(
+				_aboutExtend,
+				extendTopForCategories(),
+				expanding),
+			0,
+			0 });
+	_shadowTop = list.y();
+	const auto categories = list.y() - inner.y();
 	_shadowSkip = (_useTransparency && categories < radius)
 		? int(base::SafeRound(
 			radius - sqrt(categories * (2 * radius - categories))))
 		: 0;
 	return {
 		.categories = QRect(inner.x(), inner.y(), inner.width(), categories),
-		.list = inner.marginsRemoved({ 0, categories, 0, 0 }),
+		.list = list,
 		.radius = radius,
-		.finalBottom = height() - extents.bottom(),
+		.expanding = expanding,
+		.finalBottom = height() - margins.bottom(),
+		.frame = frame,
+		.outer = outer,
 	};
+}
+
+void Selector::paintExpandingBg(QPainter &p, const ExpandingRects &rects) {
+	if (_useTransparency) {
+		const auto pattern = _cachedRound.validateFrame(
+			rects.frame,
+			1.,
+			rects.radius);
+		const auto fill = _cachedRound.FillWithImage(p, rects.outer, pattern);
+		if (!fill.isEmpty()) {
+			p.fillRect(fill, _st.bg);
+		}
+	} else {
+		paintNonTransparentExpandRect(p, rects.outer - marginsForShadow());
+	}
 }
 
 void Selector::paintFadingExpandIcon(QPainter &p, float64 progress) {
@@ -499,6 +690,18 @@ void Selector::paintFadingExpandIcon(QPainter &p, float64 progress) {
 	p.setOpacity(1.);
 }
 
+void Selector::paintNonTransparentExpandRect(
+		QPainter &p,
+		const QRect &inner) const {
+	p.fillRect(inner, _st.bg);
+	p.fillRect(
+		inner.x(),
+		inner.y() + inner.height(),
+		inner.width(),
+		st::lineWidth,
+		st::defaultPopupMenu.shadow.fallback);
+}
+
 void Selector::paintExpanded(QPainter &p) {
 	if (!_expandFinished) {
 		finishExpand();
@@ -506,14 +709,7 @@ void Selector::paintExpanded(QPainter &p) {
 	if (_useTransparency) {
 		p.drawImage(0, 0, _paintBuffer);
 	} else {
-		const auto inner = rect().marginsRemoved(extentsForShadow());
-		p.fillRect(inner, st::defaultPopupMenu.menu.itemBg);
-		p.fillRect(
-			inner.x(),
-			inner.y() + inner.height(),
-			inner.width(),
-			st::lineWidth,
-			st::defaultPopupMenu.shadow.fallback);
+		paintNonTransparentExpandRect(p, rect() - marginsForShadow());
 	}
 }
 
@@ -521,6 +717,7 @@ void Selector::finishExpand() {
 	Expects(!_expandFinished);
 
 	_expandFinished = true;
+	updateExpandingRects(kExpandDuration);
 	if (_useTransparency) {
 		auto q = QPainter(&_paintBuffer);
 		q.setCompositionMode(QPainter::CompositionMode_Source);
@@ -530,7 +727,7 @@ void Selector::finishExpand() {
 			st::emojiPanRadius);
 		const auto fill = _cachedRound.FillWithImage(q, rect(), pattern);
 		if (!fill.isEmpty()) {
-			q.fillRect(fill, st::defaultPopupMenu.menu.itemBg);
+			q.fillRect(fill, _st.bg);
 		}
 	}
 	if (_footer) {
@@ -538,21 +735,18 @@ void Selector::finishExpand() {
 	}
 	_scroll->show();
 	_list->afterShown();
-
-	if (const auto controller = _parentController.get()) {
-		controller->session().api().updateCustomEmoji();
-	}
+	_show->session().api().updateCustomEmoji();
 }
 
 void Selector::paintBubble(QPainter &p, int innerWidth) {
-	const auto &bubble = st::reactStripBubble;
+	const auto &bubble = _st.icons.stripBubble;
 	const auto bubbleRight = std::min(
 		st::reactStripBubbleRight,
 		(innerWidth - bubble.width()) / 2);
 	bubble.paint(
 		p,
 		_inner.x() + innerWidth - bubbleRight - bubble.width(),
-		_inner.y() + _inner.height() - _collapsedTopSkip,
+		_inner.y() + _inner.height() - _outer.y(),
 		width());
 }
 
@@ -626,9 +820,7 @@ void Selector::mouseReleaseEvent(QMouseEvent *e) {
 	}
 	_pressed = -1;
 	const auto selected = _strip->selected();
-	if (selected == Strip::AddedButton::Premium) {
-		_premiumPromoChosen.fire({});
-	} else if (selected == Strip::AddedButton::Expand) {
+	if (selected == Strip::AddedButton::Expand) {
 		expand();
 	} else if (const auto id = std::get_if<Data::ReactionId>(&selected)) {
 		if (!id->empty()) {
@@ -657,38 +849,59 @@ ChosenReaction Selector::lookupChosen(const Data::ReactionId &id) const {
 	return result;
 }
 
+void Selector::preloadAllRecentsAnimations() {
+	const auto preload = [&](DocumentData *document) {
+		const auto view = document
+			? document->activeMediaView()
+			: nullptr;
+		if (view) {
+			view->checkStickerLarge();
+		}
+	};
+	for (const auto &reaction : _reactions.recent) {
+		if (!reaction.id.custom()) {
+			preload(reaction.centerIcon);
+		}
+		preload(reaction.aroundAnimation);
+	}
+}
+
 void Selector::expand() {
 	if (_expandScheduled) {
 		return;
 	}
 	_expandScheduled = true;
+	_willExpand.fire({});
+	preloadAllRecentsAnimations();
 	const auto parent = parentWidget()->geometry();
-	const auto extents = extentsForShadow();
+	const auto margins = marginsForShadow();
 	const auto heightLimit = _reactions.customAllowed
 		? st::emojiPanMaxHeight
 		: minimalHeight();
 	const auto willBeHeight = std::min(
 		parent.height() - y(),
-		extents.top() + heightLimit + extents.bottom());
+		margins.top() + heightLimit + margins.bottom());
 	const auto additionalBottom = willBeHeight - height();
 	const auto additional = _specialExpandTopSkip + additionalBottom;
-	const auto strong = _parentController.get();
-	if (additionalBottom < 0 || additional <= 0 || !strong) {
+	if (additionalBottom < 0 || additional <= 0) {
 		return;
 	} else if (additionalBottom > 0) {
 		resize(width(), height() + additionalBottom);
 		raise();
 	}
 
-	createList(strong);
+	createList();
 	cacheExpandIcon();
 
-	[[maybe_unused]] const auto grabbed = Ui::GrabWidget(_scroll);
+	[[maybe_unused]] const auto grabbed = Ui::GrabWidget(_scroll); // clazy:exclude=unused-non-trivial-variable
 	_list->prepareExpanding();
 	setSelected(-1);
 
 	base::call_delayed(kExpandDelay, this, [this] {
 		const auto full = kExpandDuration + kScaleDuration;
+		if (_about) {
+			_about->hide();
+		}
 		_expanded = true;
 		_paintBuffer = _cachedRound.PrepareImage(size());
 		_expanding.start([=] { update(); }, 0., full, full);
@@ -705,97 +918,39 @@ void Selector::cacheExpandIcon() {
 	_strip->paintOne(q, _strip->count() - 1, { 0, 0 }, 1.);
 }
 
-void Selector::createList(not_null<Window::SessionController*> controller) {
+void Selector::createList() {
 	using namespace ChatHelpers;
-	auto recent = _recent;
-	auto defaultReactionIds = base::flat_map<DocumentId, QString>();
-	if (_strip) {
-		recent.reserve(recentCount());
-		auto index = 0;
-		const auto inStrip = _strip->count();
-		for (const auto &reaction : _reactions.recent) {
-			if (const auto id = reaction.id.custom()) {
-				recent.push_back(id);
-			} else {
-				recent.push_back(reaction.selectAnimation->id);
-				defaultReactionIds.emplace(recent.back(), reaction.id.emoji());
-			}
-			if (index + 1 < inStrip) {
-				_defaultReactionInStripMap.emplace(recent.back(), index++);
-			}
-		};
-	}
-	const auto manager = &controller->session().data().customEmojiManager();
-	_stripPaintOneShift = [&] {
-		// See EmojiListWidget custom emoji position resolving.
-		const auto area = st::emojiPanArea;
-		const auto areaPosition = QPoint(
-			(_size - area.width()) / 2,
-			(_size - area.height()) / 2);
-		const auto esize = Ui::Emoji::GetSizeLarge() / style::DevicePixelRatio();
-		const auto innerPosition = QPoint(
-			(area.width() - esize) / 2,
-			(area.height() - esize) / 2);
-		const auto customSize = Ui::Text::AdjustCustomEmojiSize(esize);
-		const auto customSkip = (esize - customSize) / 2;
-		const auto customPosition = QPoint(customSkip, customSkip);
-		return areaPosition + innerPosition + customPosition;
-	}();
-	_defaultReactionShift = QPoint(
-		(_size - st::reactStripImage) / 2,
-		(_size - st::reactStripImage) / 2
-	) - _stripPaintOneShift;
-	auto factory = [=](DocumentId id, Fn<void()> repaint)
-	-> std::unique_ptr<Ui::Text::CustomEmoji> {
-		const auto tag = Data::CustomEmojiManager::SizeTag::Large;
-		const auto sizeOverride = st::reactStripImage;
-		const auto isDefaultReaction = defaultReactionIds.contains(id);
-		auto result = isDefaultReaction
-			? std::make_unique<Ui::Text::ShiftedEmoji>(
-				manager->create(id, std::move(repaint), tag, sizeOverride),
-				_defaultReactionShift)
-			: manager->create(id, std::move(repaint), tag);
-		const auto i = _defaultReactionInStripMap.find(id);
-		if (i != end(_defaultReactionInStripMap)) {
-			Assert(_strip != nullptr);
-			return std::make_unique<StripEmoji>(
-				std::move(result),
-				_strip.get(),
-				-_stripPaintOneShift,
-				i->second);
-		}
-		return result;
-	};
+	_unifiedFactoryOwner = std::make_unique<UnifiedFactoryOwner>(
+		&_show->session(),
+		_strip ? _reactions.recent : std::vector<Data::Reaction>(),
+		_strip.get());
 	_scroll = Ui::CreateChild<Ui::ScrollArea>(this, st::reactPanelScroll);
 	_scroll->hide();
 
-	const auto st = lifetime().make_state<style::EmojiPan>(
-		st::reactPanelEmojiPan);
+	const auto st = lifetime().make_state<style::EmojiPan>(_st);
 	st->padding.setTop(_skipy);
 	if (!_reactions.customAllowed) {
 		st->bg = st::transparent;
 	}
 	_list = _scroll->setOwnedWidget(
 		object_ptr<EmojiListWidget>(_scroll, EmojiListDescriptor{
-			.session = &controller->session(),
+			.show = _show,
 			.mode = _listMode,
-			.controller = controller,
 			.paused = [] { return false; },
-			.customRecentList = std::move(recent),
-			.customRecentFactory = std::move(factory),
+			.customRecentList = (_strip
+				? _unifiedFactoryOwner->unifiedIdsList()
+				: _recent),
+			.customRecentFactory = _unifiedFactoryOwner->factory(),
 			.st = st,
 		})
 	).data();
 
+	_list->escapes() | rpl::start_to_stream(_escapes, _list->lifetime());
+
 	_list->customChosen(
 	) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
-		const auto id = DocumentId{ data.document->id };
-		const auto i = defaultReactionIds.find(id);
-		const auto reactionId = (i != end(defaultReactionIds))
-			? Data::ReactionId{ i->second }
-			: Data::ReactionId{ id };
 		_chosen.fire({
-			.id = reactionId,
+			.id = _unifiedFactoryOwner->lookupReactionId(data.document->id),
 			.icon = data.messageSendingFrom.frame,
 			.globalGeometry = data.messageSendingFrom.globalStartGeometry,
 		});
@@ -804,7 +959,7 @@ void Selector::createList(not_null<Window::SessionController*> controller) {
 	_list->jumpedToPremium(
 	) | rpl::start_with_next(_jumpedToPremium, _list->lifetime());
 
-	const auto inner = rect().marginsRemoved(extentsForShadow());
+	const auto inner = rect().marginsRemoved(marginsForShadow());
 	const auto footer = _reactions.customAllowed
 		? _list->createFooter().data()
 		: nullptr;
@@ -831,8 +986,7 @@ void Selector::createList(not_null<Window::SessionController*> controller) {
 		}, _shadow->lifetime());
 		_shadow->show();
 	}
-	const auto geometry = inner.marginsRemoved(
-		st::reactPanelEmojiPan.margin);
+	const auto geometry = inner.marginsRemoved(_st.margin);
 	_list->move(0, 0);
 	_list->resizeToWidth(geometry.width());
 	_list->refreshEmoji();
@@ -853,7 +1007,7 @@ void Selector::createList(not_null<Window::SessionController*> controller) {
 	}, _list->lifetime());
 
 	_scroll->setGeometry(inner.marginsRemoved({
-		st::reactPanelEmojiPan.margin.left(),
+		_st.margin.left(),
 		_footer ? _footer->height() : 0,
 		0,
 		0,
@@ -875,16 +1029,16 @@ bool AdjustMenuGeometryForSelector(
 	const auto desiredWidth = menu->menu()->width() + added;
 	const auto maxWidth = menu->st().menu.widthMax + added;
 	const auto width = selector->countWidth(desiredWidth, maxWidth);
-	const auto extents = selector->extentsForShadow();
-	const auto categoriesTop = selector->useTransparency()
-		? selector->extendTopForCategories()
+	const auto margins = selector->marginsForShadow();
+	const auto categoriesAboutTop = selector->useTransparency()
+		? selector->extendTopForCategoriesAndAbout(width)
 		: 0;
 	menu->setForceWidth(width - added);
 	const auto height = menu->height();
-	const auto fullTop = extents.top() + categoriesTop + extend.top();
-	const auto minimalHeight = extents.top()
+	const auto fullTop = margins.top() + categoriesAboutTop + extend.top();
+	const auto minimalHeight = margins.top()
 		+ selector->minimalHeight()
-		+ extents.bottom();
+		+ margins.bottom();
 	const auto willBeHeightWithoutBottomPadding = fullTop
 		+ height
 		- menu->st().shadow.extend.top();
@@ -895,15 +1049,15 @@ bool AdjustMenuGeometryForSelector(
 			? (minimalHeight - willBeHeightWithoutBottomPadding)
 			: 0);
 	menu->setAdditionalMenuPadding(QMargins(
-		extents.left() + extend.left(),
+		margins.left() + extend.left(),
 		fullTop,
-		extents.right() + extend.right(),
+		margins.right() + extend.right(),
 		additionalPaddingBottom
 	), QMargins(
-		extents.left(),
-		extents.top(),
-		extents.right(),
-		std::min(additionalPaddingBottom, extents.bottom())
+		margins.left(),
+		margins.top(),
+		margins.right(),
+		std::min(additionalPaddingBottom, margins.bottom())
 	));
 	if (!menu->prepareGeometryFor(desiredPosition)) {
 		return false;
@@ -915,20 +1069,21 @@ bool AdjustMenuGeometryForSelector(
 		return true;
 	}
 	menu->setAdditionalMenuPadding(QMargins(
-		extents.left() + extend.left(),
+		margins.left() + extend.left(),
 		fullTop + additionalPaddingBottom,
-		extents.right() + extend.right(),
+		margins.right() + extend.right(),
 		0
 	), QMargins(
-		extents.left(),
-		extents.top(),
-		extents.right(),
+		margins.left(),
+		margins.top(),
+		margins.right(),
 		0
 	));
 	selector->setSpecialExpandTopSkip(additionalPaddingBottom);
 	return menu->prepareGeometryFor(desiredPosition);
 }
 
+#if 0 // not ready
 AttachSelectorResult MakeJustSelectorMenu(
 		not_null<Ui::PopupMenu*> menu,
 		not_null<Window::SessionController*> controller,
@@ -938,10 +1093,12 @@ AttachSelectorResult MakeJustSelectorMenu(
 		Fn<void(ChosenReaction)> chosen) {
 	const auto selector = Ui::CreateChild<Selector>(
 		menu.get(),
-		controller,
+		st::reactPanelEmojiPan,
+		controller->uiShow(),
 		mode,
 		std::move(recent),
-		[=](bool fast) { menu->hideMenu(fast); });
+		[=](bool fast) { menu->hideMenu(fast); },
+		false); // child
 	if (!AdjustMenuGeometryForSelector(menu, desiredPosition, selector)) {
 		return AttachSelectorResult::Failed;
 	}
@@ -996,6 +1153,7 @@ AttachSelectorResult MakeJustSelectorMenu(
 
 	return AttachSelectorResult::Attached;
 }
+#endif
 
 AttachSelectorResult AttachSelectorToMenu(
 		not_null<Ui::PopupMenu*> menu,
@@ -1003,21 +1161,69 @@ AttachSelectorResult AttachSelectorToMenu(
 		QPoint desiredPosition,
 		not_null<HistoryItem*> item,
 		Fn<void(ChosenReaction)> chosen,
-		Fn<void(FullMsgId)> showPremiumPromo,
+		TextWithEntities about,
 		IconFactory iconFactory) {
-	auto reactions = Data::LookupPossibleReactions(item);
-	if (reactions.recent.empty() && !reactions.morePremiumAvailable) {
-		return AttachSelectorResult::Skipped;
+	const auto result = AttachSelectorToMenu(
+		menu,
+		desiredPosition,
+		st::reactPanelEmojiPan,
+		controller->uiShow(),
+		Data::LookupPossibleReactions(item),
+		std::move(about),
+		std::move(iconFactory));
+	if (!result) {
+		return result.error();
+	}
+	const auto selector = *result;
+	const auto itemId = item->fullId();
+
+	selector->chosen() | rpl::start_with_next([=](ChosenReaction reaction) {
+		menu->hideMenu();
+		reaction.context = itemId;
+		chosen(std::move(reaction));
+	}, selector->lifetime());
+
+	selector->escapes() | rpl::start_with_next([=] {
+		menu->hideMenu();
+	}, selector->lifetime());
+
+	const auto weak = base::make_weak(controller);
+	controller->enableGifPauseReason(
+		Window::GifPauseReason::MediaPreview);
+	QObject::connect(menu.get(), &QObject::destroyed, [weak] {
+		if (const auto strong = weak.get()) {
+			strong->disableGifPauseReason(
+				Window::GifPauseReason::MediaPreview);
+		}
+	});
+
+	return AttachSelectorResult::Attached;
+}
+
+auto AttachSelectorToMenu(
+	not_null<Ui::PopupMenu*> menu,
+	QPoint desiredPosition,
+	const style::EmojiPan &st,
+	std::shared_ptr<ChatHelpers::Show> show,
+	const Data::PossibleItemReactionsRef &reactions,
+	TextWithEntities about,
+	IconFactory iconFactory)
+-> base::expected<not_null<Selector*>, AttachSelectorResult> {
+	if (reactions.recent.empty()) {
+		return base::make_unexpected(AttachSelectorResult::Skipped);
 	}
 	const auto withSearch = reactions.customAllowed;
 	const auto selector = Ui::CreateChild<Selector>(
 		menu.get(),
-		controller,
+		st,
+		std::move(show),
 		std::move(reactions),
+		std::move(about),
 		std::move(iconFactory),
-		[=](bool fast) { menu->hideMenu(fast); });
+		[=](bool fast) { menu->hideMenu(fast); },
+		false); // child
 	if (!AdjustMenuGeometryForSelector(menu, desiredPosition, selector)) {
-		return AttachSelectorResult::Failed;
+		return base::make_unexpected(AttachSelectorResult::Failed);
 	}
 	if (withSearch) {
 		Ui::Platform::FixPopupMenuNativeEmojiPopup(menu);
@@ -1033,19 +1239,6 @@ AttachSelectorResult AttachSelectorToMenu(
 	}, selector->lifetime());
 	selector->initGeometry(selectorInnerTop);
 	selector->show();
-
-	const auto itemId = item->fullId();
-
-	selector->chosen() | rpl::start_with_next([=](ChosenReaction reaction) {
-		menu->hideMenu();
-		reaction.context = itemId;
-		chosen(std::move(reaction));
-	}, selector->lifetime());
-
-	selector->premiumPromoChosen() | rpl::start_with_next([=] {
-		menu->hideMenu();
-		showPremiumPromo(itemId);
-	}, selector->lifetime());
 
 	const auto correctTop = selector->y();
 	menu->showStateValue(
@@ -1067,17 +1260,21 @@ AttachSelectorResult AttachSelectorToMenu(
 			state.toggling);
 	}, selector->lifetime());
 
-	const auto weak = base::make_weak(controller);
-	controller->enableGifPauseReason(
-		Window::GifPauseReason::MediaPreview);
-	QObject::connect(menu.get(), &QObject::destroyed, [weak] {
-		if (const auto strong = weak.get()) {
-			strong->disableGifPauseReason(
-				Window::GifPauseReason::MediaPreview);
-		}
-	});
+	return selector;
+}
 
-	return AttachSelectorResult::Attached;
+TextWithEntities ItemReactionsAbout(not_null<HistoryItem*> item) {
+	return !item->reactionsAreTags()
+		? TextWithEntities()
+		: item->history()->session().premium()
+		? TextWithEntities{ tr::lng_add_tag_about(tr::now) }
+		: tr::lng_subscribe_tag_about(
+			tr::now,
+			lt_link,
+			Ui::Text::Link(
+				tr::lng_subscribe_tag_link(tr::now),
+				u"internal:about_tags"_q),
+			Ui::Text::WithEntities);
 }
 
 } // namespace HistoryView::Reactions

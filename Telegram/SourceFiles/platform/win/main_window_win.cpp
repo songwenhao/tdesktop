@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtWidgets/QApplication>
 #include <QtGui/QWindow>
 #include <QtGui/QScreen>
+#include <QtCore/QOperatingSystemVersion>
 
 #include <Shobjidl.h>
 #include <shellapi.h>
@@ -493,6 +494,7 @@ void MainWindow::unreadCounterChangedHook() {
 }
 
 void MainWindow::updateTaskbarAndIconCounters() {
+    // no need to update
 	return;
 
 	const auto counter = Core::App().unreadBadge();
@@ -511,10 +513,12 @@ void MainWindow::updateTaskbarAndIconCounters() {
 	auto iconSmallPixmap16 = Tray::IconWithCounter(
 		Tray::CounterLayerArgs(16, counter, muted),
 		true,
+		false,
 		supportMode);
 	auto iconSmallPixmap32 = Tray::IconWithCounter(
 		Tray::CounterLayerArgs(32, counter, muted),
 		true,
+		false,
 		supportMode);
 	QIcon iconSmall, iconBig;
 	iconSmall.addPixmap(iconSmallPixmap16);
@@ -525,9 +529,11 @@ void MainWindow::updateTaskbarAndIconCounters() {
 	iconBig.addPixmap(Tray::IconWithCounter(
 		Tray::CounterLayerArgs(32, bigCounter, muted),
 		false,
+		false,
 		supportMode));
 	iconBig.addPixmap(Tray::IconWithCounter(
 		Tray::CounterLayerArgs(64, bigCounter, muted),
+		false,
 		false,
 		supportMode));
 
@@ -589,7 +595,7 @@ void MainWindow::validateWindowTheme(bool native, bool night) {
 		SetWindowTheme(_hWnd, empty, empty);
 		QApplication::setStyle(QStyleFactory::create(u"Windows"_q));
 #if 0
-	} else if (!Platform::IsDarkModeSupported()/*
+	} else if (!Core::App().settings().systemDarkMode().has_value()/*
 		|| (!Dlls::AllowDarkModeForApp && !Dlls::SetPreferredAppMode)
 		|| !Dlls::AllowDarkModeForWindow
 		|| !Dlls::RefreshImmersiveColorPolicyState

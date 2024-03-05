@@ -424,7 +424,7 @@ bool QAVIFHandler::decode_one_frame()
     }
 
     if (m_decoder->image->transformFlags & AVIF_TRANSFORM_IMIR) {
-#if AVIF_VERSION > 90100
+#if AVIF_VERSION > 90100 && AVIF_VERSION < 1000000
         switch (m_decoder->image->imir.mode) {
 #else
         switch (m_decoder->image->imir.axis) {
@@ -1103,3 +1103,5 @@ QImageIOHandler *QAVIFPlugin::create(QIODevice *device, const QByteArray &format
     handler->setFormat(format);
     return handler;
 }
+
+#include "moc_avif_p.cpp"

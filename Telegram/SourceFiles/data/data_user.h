@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_peer.h"
 #include "data/data_chat_participant_status.h"
+#include "data/data_lastseen_status.h"
 #include "data/data_user_names.h"
 #include "dialogs/dialogs_key.h"
 
@@ -23,6 +24,7 @@ struct BotInfo {
 	bool readsAllHistory = false;
 	bool cantJoinGroups = false;
 	bool supportsAttachMenu = false;
+	bool canEditInformation = false;
 	int version = 0;
 	int descriptionVersion = 0;
 	QString description;
@@ -42,7 +44,7 @@ struct BotInfo {
 	ChatAdminRights channelAdminRights;
 };
 
-enum class UserDataFlag {
+enum class UserDataFlag : uint32 {
 	Contact = (1 << 0),
 	MutualContact = (1 << 1),
 	Deleted = (1 << 2),
@@ -61,9 +63,20 @@ enum class UserDataFlag {
 	CanReceiveGifts = (1 << 15),
 	VoiceMessagesForbidden = (1 << 16),
 	PersonalPhoto = (1 << 17),
+	StoriesHidden = (1 << 18),
+	HasActiveStories = (1 << 19),
+	HasUnreadStories = (1 << 20),
+	MeRequiresPremiumToWrite = (1 << 21),
+	SomeRequirePremiumToWrite = (1 << 22),
+	RequirePremiumToWriteKnown = (1 << 23),
+	ReadDatesPrivate = (1 << 24),
 };
 inline constexpr bool is_flag_type(UserDataFlag) { return true; };
 using UserDataFlags = base::flags<UserDataFlag>;
+
+[[nodiscard]] Data::LastseenStatus LastseenFromMTP(
+	const MTPUserStatus &status,
+	Data::LastseenStatus currentStatus);
 
 class UserData final : public PeerData {
 public:
@@ -72,7 +85,6 @@ public:
 
 	UserData(not_null<Data::Session*> owner, PeerId id);
 	void setPhoto(const MTPUserProfilePhoto &photo);
-	void setEmojiStatus(const MTPEmojiStatus &status);
 
 	void setName(
 		const QString &newFirstName,
@@ -80,9 +92,6 @@ public:
 		const QString &newPhoneName,
 		const QString &newUsername);
 	void setUsernames(const Data::Usernames &newUsernames);
-
-	void setEmojiStatus(DocumentId emojiStatusId, TimeId until = 0);
-	[[nodiscard]] DocumentId emojiStatusId() const;
 
 	void setUsername(const QString &username);
 	void setPhone(const QString &newPhone);
@@ -118,6 +127,12 @@ public:
 	[[nodiscard]] bool isInaccessible() const;
 	[[nodiscard]] bool applyMinPhoto() const;
 	[[nodiscard]] bool hasPersonalPhoto() const;
+	[[nodiscard]] bool hasStoriesHidden() const;
+	[[nodiscard]] bool someRequirePremiumToWrite() const;
+	[[nodiscard]] bool meRequiresPremiumToWrite() const;
+	[[nodiscard]] bool requirePremiumToWriteKnown() const;
+	[[nodiscard]] bool canSendIgnoreRequirePremium() const;
+	[[nodiscard]] bool readDatesPrivate() const;
 
 	[[nodiscard]] bool canShareThisContact() const;
 	[[nodiscard]] bool canAddContact() const;
@@ -138,7 +153,6 @@ public:
 	[[nodiscard]] QString editableUsername() const;
 	[[nodiscard]] const std::vector<QString> &usernames() const;
 	QString nameOrPhone;
-	TimeId onlineTill = 0;
 
 	enum class ContactStatus : char {
 		Unknown,
@@ -148,6 +162,9 @@ public:
 	[[nodiscard]] ContactStatus contactStatus() const;
 	[[nodiscard]] bool isContact() const;
 	void setIsContact(bool is);
+
+	[[nodiscard]] Data::LastseenStatus lastseen() const;
+	bool updateLastseen(Data::LastseenStatus value);
 
 	enum class CallsStatus : char {
 		Unknown,
@@ -167,16 +184,26 @@ public:
 	int commonChatsCount() const;
 	void setCommonChatsCount(int count);
 
+	[[nodiscard]] bool hasPrivateForwardName() const;
+	[[nodiscard]] QString privateForwardName() const;
+	void setPrivateForwardName(const QString &name);
+
+	[[nodiscard]] bool hasActiveStories() const;
+	[[nodiscard]] bool hasUnreadStories() const;
+	void setStoriesState(StoriesState state);
+
 private:
 	auto unavailableReasons() const
 		-> const std::vector<Data::UnavailableReason> & override;
 
 	Flags _flags;
+	Data::LastseenStatus _lastseen;
 
 	Data::UsernamesInfo _username;
 
 	std::vector<Data::UnavailableReason> _unavailableReasons;
 	QString _phone;
+	QString _privateForwardName;
 	ContactStatus _contactStatus = ContactStatus::Unknown;
 	CallsStatus _callsStatus = CallsStatus::Unknown;
 	int _commonChatsCount = 0;
@@ -184,8 +211,6 @@ private:
 	uint64 _accessHash = 0;
 	static constexpr auto kInaccessibleAccessHashOld
 		= 0xFFFFFFFFFFFFFFFFULL;
-
-	DocumentId _emojiStatusId = 0;
 
 };
 

@@ -5,6 +5,9 @@
 # https://github.com/desktop-app/legal/blob/master/LEGAL
 
 set(MAXIMUM_CXX_STANDARD cxx_std_20)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(MAXIMUM_CXX_STANDARD cxx_std_17)
+endif()
 
 function(init_target_folder target_name folder_name)
     if (NOT "${folder_name}" STREQUAL "")
@@ -12,29 +15,29 @@ function(init_target_folder target_name folder_name)
     endif()
 endfunction()
 
-function(init_target target_name) # init_target(my_target [cxx_std_..] folder_name)
-    set(argslist ${ARGV})
-    list(REMOVE_AT argslist 0)
-    set(standard ${MAXIMUM_CXX_STANDARD})
-    foreach (entry ${argslist})
-        if (${entry} STREQUAL cxx_std_14 OR ${entry} STREQUAL cxx_std_11 OR ${entry} STREQUAL cxx_std_17)
-            set(standard ${entry})
+function(init_target target_name) # init_target(my_target folder_name)
+    if (ARGC GREATER 1)
+        if (${ARGV1} STREQUAL cxx_std_14 OR ${ARGV1} STREQUAL cxx_std_11 OR ${ARGV1} STREQUAL cxx_std_17)
+            target_compile_features(${target_name} PUBLIC ${ARGV1})
         else()
-            init_target_folder(${target_name} ${entry})
+            target_compile_features(${target_name} PUBLIC ${MAXIMUM_CXX_STANDARD})
+            init_target_folder(${target_name} ${ARGV1})
         endif()
-    endforeach()
-    target_compile_features(${target_name} PRIVATE ${standard})
-
-    if (WIN32 AND DESKTOP_APP_SPECIAL_TARGET)
-        set_property(TARGET ${target_name} APPEND_STRING PROPERTY STATIC_LIBRARY_OPTIONS "$<IF:$<CONFIG:Debug>,,/LTCG>")
+    else()
+        target_compile_features(${target_name} PUBLIC ${MAXIMUM_CXX_STANDARD})
     endif()
-
-    target_link_libraries(${target_name} PRIVATE desktop-app::common_options)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        set_target_properties(${target_name} PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+    target_link_libraries(${target_name} PUBLIC desktop-app::common_options)
+    if (NOT DESKTOP_APP_USE_PACKAGED)
+        set_target_properties(${target_name} PROPERTIES LINK_SEARCH_START_STATIC 1)
+    endif()
     set_target_properties(${target_name} PROPERTIES
         XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_WEAK YES
         XCODE_ATTRIBUTE_GCC_INLINES_ARE_PRIVATE_EXTERN YES
         XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN YES
-        MSVC_RUNTIME_LIBRARY MultiThreaded$<$<CONFIG:Debug>:Debug>
     )
     if (DESKTOP_APP_SPECIAL_TARGET)
         set_target_properties(${target_name} PROPERTIES
@@ -42,14 +45,11 @@ function(init_target target_name) # init_target(my_target [cxx_std_..] folder_na
             XCODE_ATTRIBUTE_LLVM_LTO $<IF:$<CONFIG:Debug>,NO,YES>
         )
     endif()
-endfunction()
-
-# This code is not supposed to run on build machine, only on target machine.
-function(init_non_host_target target_name)
-    init_target(${ARGV})
-    if (APPLE)
+    if (DESKTOP_APP_SPECIAL_TARGET AND WIN32)
         set_target_properties(${target_name} PROPERTIES
-            OSX_ARCHITECTURES "${DESKTOP_APP_MAC_ARCH}"
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE True
+            INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO True
+            INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL True
         )
     endif()
 endfunction()

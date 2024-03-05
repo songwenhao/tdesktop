@@ -18,7 +18,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/facade.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/input_fields.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/fields/number_input.h"
+#include "ui/widgets/fields/password_input.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/dropdown_menu.h"
 #include "ui/wrap/slide_wrap.h"
@@ -111,7 +113,8 @@ Base64UrlInput::Base64UrlInput(
 	rpl::producer<QString> placeholder,
 	const QString &val)
 : MaskedInputField(parent, st, std::move(placeholder), val) {
-	if (!QRegularExpression("^[a-zA-Z0-9_\\-]+$").match(val).hasMatch()) {
+	static const auto RegExp = QRegularExpression("^[a-zA-Z0-9_\\-]+$");
+	if (!RegExp.match(val).hasMatch()) {
 		setText(QString());
 	}
 }
@@ -745,7 +748,7 @@ void ProxiesBox::applyView(View &&view) {
 		const auto wrap = _wrap
 			? _wrap.data()
 			: _initialWrap.data();
-		const auto [i, ok] = _rows.emplace(id, nullptr);
+		const auto &[i, ok] = _rows.emplace(id, nullptr);
 		i->second.reset(wrap->insert(
 			0,
 			object_ptr<ProxyRow>(
@@ -829,8 +832,9 @@ void ProxyBox::prepare() {
 	connect(_host.data(), &HostInput::changed, [=] {
 		Ui::PostponeCall(_host, [=] {
 			const auto host = _host->getLastText().trimmed();
-			static const auto mask = u"^\\d+\\.\\d+\\.\\d+\\.\\d+:(\\d*)$"_q;
-			const auto match = QRegularExpression(mask).match(host);
+			static const auto mask = QRegularExpression(
+				u"^\\d+\\.\\d+\\.\\d+\\.\\d+:(\\d*)$"_q);
+			const auto match = mask.match(host);
 			if (_host->cursorPosition() == host.size()
 				&& match.hasMatch()) {
 				const auto port = match.captured(1);
@@ -1105,6 +1109,10 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		proxy.password = fields.value(u"secret"_q);
 	}
 	if (proxy) {
+		static const auto UrlStartRegExp = QRegularExpression(
+			"^https://",
+			QRegularExpression::CaseInsensitiveOption);
+		static const auto UrlEndRegExp = QRegularExpression("/$");
 		const auto displayed = "https://" + server + "/";
 		const auto parsed = QUrl::fromUserInput(displayed);
 		const auto displayUrl = !UrlClickHandler::IsSuspicious(displayed)
@@ -1115,11 +1123,9 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		const auto displayServer = QString(
 			displayUrl
 		).replace(
-			QRegularExpression(
-				"^https://",
-				QRegularExpression::CaseInsensitiveOption),
+			UrlStartRegExp,
 			QString()
-		).replace(QRegularExpression("/$"), QString());
+		).replace(UrlEndRegExp, QString());
 		const auto text = tr::lng_sure_enable_socks(
 			tr::now,
 			lt_server,
@@ -1265,7 +1271,7 @@ object_ptr<Ui::BoxContent> ProxiesBoxController::CreateOwningBox(
 
 object_ptr<Ui::BoxContent> ProxiesBoxController::create() {
 	auto result = Box<ProxiesBox>(this, _settings);
-	_show = std::make_shared<Ui::BoxShow>(result.data());
+	_show = result->uiShow();
 	for (const auto &item : _list) {
 		updateView(item);
 	}
@@ -1548,9 +1554,7 @@ void ProxiesBoxController::share(const ProxyData &proxy) {
 		+ ((proxy.type == Type::Mtproto && !proxy.password.isEmpty())
 			? "&secret=" + proxy.password : "");
 	QGuiApplication::clipboard()->setText(link);
-	Ui::Toast::Show(
-		_show->toastParent(),
-		tr::lng_username_copied(tr::now));
+	_show->showToast(tr::lng_username_copied(tr::now));
 }
 
 ProxiesBoxController::~ProxiesBoxController() {

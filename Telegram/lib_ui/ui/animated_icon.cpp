@@ -1,10 +1,9 @@
-/*
-This file is part of Telegram Desktop,
-the official desktop application for the Telegram messaging service.
-
-For license and copyright information please follow this link:
-https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
-*/
+// This file is part of Desktop App Toolkit,
+// a set of libraries for developing nice desktop applications.
+//
+// For license and copyright information please follow this link:
+// https://github.com/desktop-app/legal/blob/master/LEGAL
+//
 #include "ui/animated_icon.h"
 
 #include "ui/image/image_prepare.h"
@@ -41,6 +40,7 @@ public:
 	[[nodiscard]] bool valid() const;
 	[[nodiscard]] QSize size() const;
 	[[nodiscard]] int framesCount() const;
+	[[nodiscard]] double frameRate() const;
 	[[nodiscard]] Frame &frame();
 	[[nodiscard]] const Frame &frame() const;
 
@@ -67,6 +67,7 @@ private:
 
 	base::weak_ptr<AnimatedIcon> _weak;
 	int _framesCount = 0;
+	double _frameRate = 0.;
 	mutable crl::semaphore _semaphore;
 	mutable bool _ready = false;
 
@@ -88,6 +89,7 @@ void AnimatedIcon::Impl::prepareFromAsync(
 		return;
 	}
 	_framesCount = generator->count();
+	_frameRate = generator->rate();
 	_current.generated = generator->renderNext(QImage(), sizeOverride);
 	if (_current.generated.image.isNull()) {
 		return;
@@ -118,6 +120,11 @@ QSize AnimatedIcon::Impl::size() const {
 int AnimatedIcon::Impl::framesCount() const {
 	waitTillPrepared();
 	return _framesCount;
+}
+
+double AnimatedIcon::Impl::frameRate() const {
+	waitTillPrepared();
+	return _frameRate;
 }
 
 AnimatedIcon::Frame &AnimatedIcon::Impl::frame() {
@@ -195,7 +202,8 @@ void AnimatedIcon::Impl::renderPreloadFrame() {
 }
 
 AnimatedIcon::AnimatedIcon(AnimatedIconDescriptor &&descriptor)
-: _impl(std::make_shared<Impl>(base::make_weak(this))) {
+: _impl(std::make_shared<Impl>(base::make_weak(this)))
+, _colorized(descriptor.colorized) {
 	crl::async([
 		impl = _impl,
 		factory = std::move(descriptor.generator),
@@ -221,11 +229,33 @@ int AnimatedIcon::framesCount() const {
 	return _impl->framesCount();
 }
 
-QImage AnimatedIcon::frame() const {
-	return frame(QSize(), nullptr).image;
+double AnimatedIcon::frameRate() const {
+	return _impl->frameRate();
+}
+
+QImage AnimatedIcon::frame(const QColor &textColor) const {
+	return frame(textColor, QSize(), nullptr).image;
+}
+
+QImage AnimatedIcon::notColorizedFrame() const {
+	return notColorizedFrame(QSize(), nullptr).image;
 }
 
 AnimatedIcon::ResizedFrame AnimatedIcon::frame(
+		const QColor &textColor,
+		QSize desiredSize,
+		Fn<void()> updateWithPerfect) const {
+	auto result = notColorizedFrame(
+		desiredSize,
+		std::move(updateWithPerfect));
+	if (_colorized) {
+		auto &image = result.image;
+		style::colorizeImage(image, textColor, &image, {}, {}, true);
+	}
+	return result;
+}
+
+AnimatedIcon::ResizedFrame AnimatedIcon::notColorizedFrame(
 		QSize desiredSize,
 		Fn<void()> updateWithPerfect) const {
 	auto &frame = _impl->frame();
@@ -337,6 +367,7 @@ int AnimatedIcon::wantedFrameIndex(
 		const auto next = _animationCurrentStart + duration;
 		if (frame->generated.last) {
 			_animation.stop();
+			if (_repaint) _repaint();
 			return _animationCurrentIndex;
 		} else if (now < next) {
 			return _animationCurrentIndex;

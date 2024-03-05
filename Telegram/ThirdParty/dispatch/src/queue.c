@@ -773,7 +773,7 @@ _dispatch_async_redirect_invoke(dispatch_continuation_t dc,
 {
 	dispatch_thread_frame_s dtf;
 	struct dispatch_continuation_s *other_dc = dc->dc_other;
-	dispatch_invoke_flags_t ctxt_flags = (dispatch_invoke_flags_t)dc->dc_ctxt;
+	dispatch_invoke_flags_t ctxt_flags = (dispatch_invoke_flags_t)(uintptr_t)dc->dc_ctxt;
 	// if we went through _dispatch_root_queue_push_override,
 	// the "right" root queue was stuffed into dc_func
 	dispatch_queue_global_t assumed_rq = (dispatch_queue_global_t)dc->dc_func;
@@ -6264,8 +6264,13 @@ _dispatch_worker_thread(void *context)
 static unsigned WINAPI
 _dispatch_worker_thread_thunk(LPVOID lpParameter)
 {
-  _dispatch_worker_thread(lpParameter);
-  return 0;
+	HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
+	if (FAILED(hr)) {
+		_dispatch_client_assert_fail("Error %ld initializing Windows Runtime", hr);
+	}
+	_dispatch_worker_thread(lpParameter);
+	CoUninitialize();
+	return 0;
 }
 #endif // defined(_WIN32)
 #endif // DISPATCH_USE_PTHREAD_POOL
@@ -7013,6 +7018,7 @@ _dispatch_sig_thread(void *ctxt DISPATCH_UNUSED)
 	_dispatch_clear_stack(0);
 #if defined(_WIN32)
 	Sleep(INFINITE);
+	__builtin_unreachable();
 #else
 	_dispatch_sigsuspend();
 #endif

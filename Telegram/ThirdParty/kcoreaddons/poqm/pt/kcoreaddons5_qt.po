@@ -3,7 +3,7 @@ msgstr ""
 "Project-Id-Version: kdelibs4\n"
 "Report-Msgid-Bugs-To: http://bugs.kde.org\n"
 "POT-Creation-Date: 2014-03-23 01:50+0000\n"
-"PO-Revision-Date: 2022-11-02 14:06+0000\n"
+"PO-Revision-Date: 2022-12-18 14:02+0000\n"
 "Last-Translator: José Nuno Pires <zepires@gmail.com>\n"
 "Language-Team: pt <kde-i18n-pt@kde.org>\n"
 "Language: pt\n"
@@ -108,47 +108,47 @@ msgstr ""
 "X-Qt-Contexts: true\n"
 "X-POFile-SpellExtra: Gi KListOpenFilesJob lsof FAT RAMFS NTFS ExFAT FUSE\n"
 
-#: lib/io/kfilesystemtype.cpp:236
+#: lib/io/kfilesystemtype.cpp:243
 msgctxt "KFileSystemType|"
 msgid "NFS"
 msgstr "NFS"
 
-#: lib/io/kfilesystemtype.cpp:238
+#: lib/io/kfilesystemtype.cpp:245
 msgctxt "KFileSystemType|"
 msgid "SMB"
 msgstr "SMB"
 
-#: lib/io/kfilesystemtype.cpp:240
+#: lib/io/kfilesystemtype.cpp:247
 msgctxt "KFileSystemType|"
 msgid "FAT"
 msgstr "FAT"
 
-#: lib/io/kfilesystemtype.cpp:242
+#: lib/io/kfilesystemtype.cpp:249
 msgctxt "KFileSystemType|"
 msgid "RAMFS"
 msgstr "RAMFS"
 
-#: lib/io/kfilesystemtype.cpp:244
+#: lib/io/kfilesystemtype.cpp:251
 msgctxt "KFileSystemType|"
 msgid "Other"
 msgstr "Outro"
 
-#: lib/io/kfilesystemtype.cpp:246
+#: lib/io/kfilesystemtype.cpp:253
 msgctxt "KFileSystemType|"
 msgid "NTFS"
 msgstr "NTFS"
 
-#: lib/io/kfilesystemtype.cpp:248
+#: lib/io/kfilesystemtype.cpp:255
 msgctxt "KFileSystemType|"
 msgid "ExFAT"
 msgstr "ExFAT"
 
-#: lib/io/kfilesystemtype.cpp:250
+#: lib/io/kfilesystemtype.cpp:257
 msgctxt "KFileSystemType|"
 msgid "FUSE"
 msgstr "FUSE"
 
-#: lib/io/kfilesystemtype.cpp:252
+#: lib/io/kfilesystemtype.cpp:259
 msgctxt "KFileSystemType|"
 msgid "Unknown"
 msgstr "Desconhecido"
@@ -875,14 +875,17 @@ msgctxt "KFormat|"
 msgid "Just now"
 msgstr "Mesmo agora"
 
-#: lib/util/kformatprivate.cpp:512
+#. @item:intext %1 is a whole number
+#: lib/util/kformatprivate.cpp:515
 #, qt-format
 msgctxt "KFormat|"
-msgid "%1 minutes ago"
-msgstr "há %1 minutos"
+msgid "%n minute(s) ago"
+msgid_plural "%n minute(s) ago"
+msgstr[0] "há %n minuto"
+msgstr[1] "há %n minutos"
 
 #. relative datetime with %1 result of QLocale.toString(date, format) or formatRelativeDate and %2 result of QLocale.toString(time, timeformatType) If this does not fit the grammar of your language please contact the i18n team to solve the problem
-#: lib/util/kformatprivate.cpp:528
+#: lib/util/kformatprivate.cpp:531
 #, qt-format
 msgctxt "KFormat|"
 msgid "%1 at %2"

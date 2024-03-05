@@ -118,7 +118,9 @@ class KCOREADDONS_EXPORT KPluginMetaData
     Q_PROPERTY(QStringList mimeTypes READ mimeTypes CONSTANT)
     Q_PROPERTY(QStringList formFactors READ formFactors CONSTANT)
     Q_PROPERTY(bool isEnabledByDefault READ isEnabledByDefault CONSTANT)
+#if KCOREADDONS_ENABLE_DEPRECATED_SINCE(5, 104)
     Q_PROPERTY(int initialPreference READ isEnabledByDefault CONSTANT)
+#endif
 
 public:
     /**
@@ -487,14 +489,18 @@ public:
      */
     bool isEnabledByDefault() const;
 
+#if KCOREADDONS_ENABLE_DEPRECATED_SINCE(5, 104)
     /**
      * @return the initial preference of the plugin.
      * This is the preference to associate with this plugin initially (before
      * the user has had any chance to define preferences for it).
      * Higher values indicate stronger preference.
      * @since 5.67
+     * @deprecated Since 5.104, this feature is only used in KParts, read the key manually if needed
      */
+    KCOREADDONS_DEPRECATED_VERSION(5, 104, "This feature is only used in KParts, read the key manually if needed")
     int initialPreference() const;
+#endif
 
     /**
      * Returns @c true if the plugin is enabled in @p config, otherwise returns isEnabledByDefault().
@@ -611,18 +617,18 @@ public:
     bool isStaticPlugin() const;
 
 private:
-    QJsonObject rootObject() const;
+    KCOREADDONS_NO_EXPORT QJsonObject rootObject() const;
 #if KCOREADDONS_BUILD_DEPRECATED_SINCE(5, 92)
-    void loadFromDesktopFile(const QString &file, const QStringList &serviceTypes);
+    KCOREADDONS_NO_EXPORT void loadFromDesktopFile(const QString &file, const QStringList &serviceTypes);
 #endif
-    void loadFromJsonFile(const QString &file);
+    KCOREADDONS_NO_EXPORT void loadFromJsonFile(const QString &file);
 
 private:
-    QVariantList authorsVariant() const;
-    QVariantList translatorsVariant() const;
-    QVariantList otherContributorsVariant() const;
-    QStaticPlugin staticPlugin() const;
-    QString requestedFileName() const;
+    KCOREADDONS_NO_EXPORT QVariantList authorsVariant() const;
+    KCOREADDONS_NO_EXPORT QVariantList translatorsVariant() const;
+    KCOREADDONS_NO_EXPORT QVariantList otherContributorsVariant() const;
+    KCOREADDONS_NO_EXPORT QStaticPlugin staticPlugin() const;
+    KCOREADDONS_NO_EXPORT QString requestedFileName() const;
 
     QJsonObject m_metaData;
     QString m_fileName;
@@ -630,11 +636,7 @@ private:
     friend class KPluginFactory;
 };
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-inline size_t qHash(const KPluginMetaData &md, size_t seed)
-#else
 inline uint qHash(const KPluginMetaData &md, uint seed)
-#endif
 {
     return qHash(md.pluginId(), seed);
 }

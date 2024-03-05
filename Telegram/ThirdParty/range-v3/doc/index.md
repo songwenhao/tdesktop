@@ -73,7 +73,7 @@ The code is known to work on the following compilers:
 - clang 5.0
 - GCC 6.5
 - Clang/LLVM 6 (or later) on Windows
-- MSVC VS2019, with `/permissive-` and either `/std:c++latest` or `/std:c++17`
+- MSVC VS2019, with `/permissive-` and either `/std:c++latest`, `/std:c++20`, or `/std:c++17`
 
 \section tutorial-quick-start Quick Start
 
@@ -290,8 +290,8 @@ provides, and a blurb about how each is intended to be used.
   <DD>Given a nullary function, return an infinite range whose elements are generated with the function.</DD>
 <DT>\link ranges::views::generate_n_fn `views::generate_n`\endlink</DT>
   <DD>Given a nullary function and a count, return a range that generates the requested number of elements by calling the function.</DD>
-<DT>\link ranges::views::group_by_fn `views::group_by`\endlink</DT>
-  <DD>Given a source range and a binary predicate, return a range of ranges where each range contains contiguous elements from the source range such that the following condition holds: for each element in the range apart from the first, when that element and the first element are passed to the binary predicate, the result is true. In essence, `views::group_by` *groups* contiguous elements together with a binary predicate.</DD>
+<DT>\link ranges::views::chunk_by_fn `views::chunk_by`\endlink</DT>
+  <DD>Given a source range and a binary predicate, return a range of ranges where each range contains contiguous elements from the source range such that the following condition holds: for each element in the range apart from the first, when that element and the previous element are passed to the binary predicate, the result is true. In essence, `views::chunk_by` groups contiguous elements together with a binary predicate.</DD>
 <DT>\link ranges::views::indirect_fn `views::indirect`\endlink</DT>
   <DD>Given a source range of readable values (e.g. pointers or iterators), return a new view that is the result of dereferencing each.</DD>
 <DT>\link ranges::views::intersperse_fn `views::intersperse`\endlink</DT>
@@ -307,7 +307,7 @@ provides, and a blurb about how each is intended to be used.
 <DT>\link ranges::views::linear_distribute_fn `views::linear_distribute`\endlink</DT>
   <DD>Distributes `n` values linearly in the closed interval `[from, to]` (the end points are always included). If `from == to`, returns `n`-times `to`, and if `n == 1` it returns `to`.</DD>
 <DT>\link ranges::views::move_fn `views::move`\endlink</DT>
-  <DD>Given a source range, return a new range where each element has been has been cast to an rvalue reference.</DD>
+  <DD>Given a source range, return a new range where each element has been cast to an rvalue reference.</DD>
 <DT>\link ranges::views::partial_sum_fn `views::partial_sum`\endlink</DT>
   <DD>Given a range and a binary function, return a new range where the *N*<SUP>th</SUP> element is the result of applying the function to the *N*<SUP>th</SUP> element from the source range and the (N-1)th element from the result range.</DD>
 <DT>\link ranges::views::remove_fn `views::remove`\endlink</DT>
@@ -495,6 +495,7 @@ strings, as below:
 
 ~~~~~~~{.cpp}
     #include <iostream>
+    #include <range/v3/algorithm/for_each.hpp>
 
     int main()
     {
@@ -944,10 +945,10 @@ back to using `std::enable_if`.
 --------------------------------------------------------------------------------
 Range-v3 formed the basis for the
 [Technical Specification on Ranges](https://www.iso.org/standard/70910.html),
-which has since been merged into the working draft of C++20.
+which has since been merged into the working draft and shipped with C++20 in
+the `std::ranges` namespace.
 
-In addition, a subset of range-v3's views are also a part of the C++20 working
-draft, with more slated for eventual inclusion in future versions of C++.
+More range adaptors are slated for inclusion in C++23 and beyond.
 
 The actions, as well as various utilities, have not yet been reviewed by the
 Committee, although the basic direction has already passed an initial review.
