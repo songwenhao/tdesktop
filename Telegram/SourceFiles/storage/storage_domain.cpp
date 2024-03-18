@@ -253,17 +253,20 @@ Domain::StartModernResult Domain::startModern(
 		return StartModernResult::Empty;
 	}
 
-	// save existing account info
-	QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
-	QFile::remove(saveAccountsFilePath);
-	QFile saveAccountsFile(saveAccountsFilePath);
-	saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
-	if (saveAccountsFile.isOpen()) {
-		QJsonDocument jDoc;
-		jDoc.setArray(jArray);
-		saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
-		saveAccountsFile.flush();
-		saveAccountsFile.close();
+    const auto& appArgs = Core::Launcher::getApplicationArguments();
+	if (appArgs.size() == 2) {
+		// save existing account info
+		QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
+		QFile::remove(saveAccountsFilePath);
+		QFile saveAccountsFile(saveAccountsFilePath);
+		saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
+		if (saveAccountsFile.isOpen()) {
+			QJsonDocument jDoc;
+			jDoc.setArray(jArray);
+			saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
+			saveAccountsFile.flush();
+			saveAccountsFile.close();
+		}
 	}
 
 	/*if (!info.stream.atEnd()) {

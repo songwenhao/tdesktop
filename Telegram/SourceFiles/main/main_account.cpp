@@ -88,6 +88,8 @@ constexpr auto kWideIdsTag = ~uint64(0);
             ComposeDataString(dataName, index)))
         , _passwordState(Core::CloudPasswordState())
         , _stop(false)
+        , _paused(false)
+        , _resumeEvent(nullptr)
         , _dataDb(nullptr)
         , _pipe(nullptr)
         , _pipeConnected(false)
@@ -100,7 +102,6 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _takeoutId(0)
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
-        , _requestMsgSleepTime(0)
         , _downloadAttachFileRemainSleepTime(0)
         , _downloadFilesLock(std::make_unique<std::mutex>())
         , _curDownloadFile(nullptr)
@@ -119,6 +120,11 @@ constexpr auto kWideIdsTag = ~uint64(0);
     }
 
     Account::~Account() {
+        if (_resumeEvent) {
+            CloseHandle(_resumeEvent);
+            _resumeEvent = nullptr;
+        }
+
         if (_dataDb) {
             sqlite3_close(_dataDb);
             _dataDb = nullptr;
@@ -703,6 +709,7 @@ void Account::resetAuthorizationKeys() {
     bool Account::connectPipe() {
         _pipeConnected = true;
         _stop = false;
+        _resumeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
@@ -710,7 +717,30 @@ void Account::resetAuthorizationKeys() {
             _pipe = std::make_unique<PipeWrapper>(appArgs[5].toStdWString(), appArgs[6].toStdWString(), PipeType::PipeClient);
             _pipe->RegisterCallback(this, [&](void* ctx, const PipeCmd::Cmd& cmd) {
                 if (ctx) {
-                    {
+                    TelegramCmd::Action action = (TelegramCmd::Action)cmd.action;
+                    
+                    if (action == TelegramCmd::Action::Pause ||
+                        action == TelegramCmd::Action::Resume ||
+                        action == TelegramCmd::Action::Stop) {
+                        if (action == TelegramCmd::Action::Pause) {
+                            LOG(("[Account][recv cmd] unique ID: %1 action: %2")
+                                .arg(QString::fromUtf8(cmd.uniqueId.c_str()))
+                                .arg(telegramActionToString((TelegramCmd::Action)cmd.action))
+                            );
+
+                            _paused = true;
+
+                            if (_resumeEvent) {
+                                ResetEvent(_resumeEvent);
+                            }
+                        } else if (action == TelegramCmd::Action::Resume) {
+                            if (_resumeEvent) {
+                                SetEvent(_resumeEvent);
+                            }
+                        } else if (action == TelegramCmd::Action::Stop) {
+                            _stop = true;
+                        }
+                    } else {
                         std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
                         _recvPipeCmds.push_back(cmd);
                     }
@@ -746,8 +776,6 @@ void Account::resetAuthorizationKeys() {
 
                 _taskTimer.setCallback([&] {
                     if (_stop) {
-                        _sleepTimer.cancel();
-
                         Core::Quit();
                     } else {
                         do {
@@ -805,19 +833,6 @@ void Account::resetAuthorizationKeys() {
                     });
 
                 _taskTimer.callEach(crl::time(1000));
-
-                _sleepTimer.setCallback([&] {
-                    // 休眠定时器已触发
-                    qsrand(QTime::currentTime().msec());
-                    _requestMsgSleepTime = 10 + qrand() % 10;
-                    _downloadAttachFileRemainSleepTime = _requestMsgSleepTime;
-
-                    //// 重新启动休眠定时器，触发时间为5~10分钟
-                    //_sleepTimer.callOnce((qrand() % 5 + 5) * 60 * 1000);
-                    });
-
-                // 首次启动休眠定时器，触发时间为10分钟
-                //_sleepTimer.callOnce(10 * 60 * 1000);
 
                 startHandlePipeCmdThd();
             }
@@ -904,7 +919,8 @@ void Account::resetAuthorizationKeys() {
                         onLogOut();
                     } else if (action == TelegramCmd::Action::ChangeDataPath) {
                         onChangeDataPath();
-                    } else if (action == TelegramCmd::Action::Unknown) {
+                    } else if (action == TelegramCmd::Action::Stop ||
+                        action == TelegramCmd::Action::Unknown) {
                         _stop = true;
                         break;
                     }
@@ -1144,7 +1160,13 @@ void Account::resetAuthorizationKeys() {
                 _attachPath = _dataPath + L"files\\";
             }
 
-            _profilePhotoPath = _dataPath + L"profile\\";
+            const std::wstring findStr = L"files\\";
+            auto pos = _attachPath.rfind(findStr);
+            if (pos != std::wstring::npos) {
+                _profilePhotoPath = _attachPath.substr(0, pos) + L"profile\\";
+            } else {
+                _profilePhotoPath = _dataPath + L"profile\\";
+            }
             _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
 
         } while (false);
@@ -1359,7 +1381,13 @@ void Account::resetAuthorizationKeys() {
                 _attachPath = _dataPath + L"files\\";
             }
 
-            _profilePhotoPath = _dataPath + L"profile\\";
+            const std::wstring findStr = L"files\\";
+            auto pos = _attachPath.rfind(findStr);
+            if (pos != std::wstring::npos) {
+                _profilePhotoPath = _attachPath.substr(0, pos) + L"profile\\";
+            } else {
+                _profilePhotoPath = _dataPath + L"profile\\";
+            }
             _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
 
         } while (false);
@@ -1524,6 +1552,8 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestLeftChannel() {
+        checkResumeStatus();
+
         uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
         _offset = 0;
         _takeoutId = 0;
@@ -1629,6 +1659,8 @@ void Account::resetAuthorizationKeys() {
         } while (false);
 
         if (nextChat) {
+            checkResumeStatus();
+
             _offset = 0;
             _curChat = nextChat;
 
@@ -1772,30 +1804,26 @@ void Account::resetAuthorizationKeys() {
                 break;
             }
 
-            if (first) {
-                nextTask = _tasks.front();
-            } else {
-                _tasks.pop_front();
+            if (!first) {
+                _curTask.getMsgDone = true;
 
-                if (_tasks.empty()) {
-                    break;
+                if (_curTask.attachFileCount <= 0) {
+                    // 任务无附件
+                    _curTask.getAttachDone = true;
                 }
 
-                nextTask = _tasks.front();
+                updateTaskInfoToDb(_curTask);
+
+                _tasks.pop_front();
             }
+
+            if (_tasks.empty()) {
+                break;
+            }
+
+            nextTask = _tasks.front();
 
         } while (false);
-
-        if (_curTask.peerId != 0) {
-            _curTask.getMsgDone = true;
-
-            if (_curTask.attachFileCount <= 0) {
-                // 任务无附件
-                _curTask.getAttachDone = true;
-            }
-
-            updateTaskInfoToDb(_curTask);
-        }
 
         if (nextTask.peerData) {
             _curTask = nextTask;
@@ -1829,11 +1857,7 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestChatMessageEx() {
-        if (_requestMsgSleepTime > 0) {
-            // 休眠定时器已触发，休眠
-            QThread::sleep(_requestMsgSleepTime);
-            _requestMsgSleepTime = 0;
-        }
+        checkResumeStatus();
 
         const auto offsetDate = 0;
         const auto addOffset = 0;
@@ -1929,10 +1953,9 @@ void Account::resetAuthorizationKeys() {
                 }
 
                 if (migratedPeerData) {
-                    _offsetId = 0;
+                    _offsetId = _curTask.lastOffsetMsgId;
                     _curTask.curPeerId = _curTask.migratedPeerId;
                     _curTask.peerData = migratedPeerData;
-                    _curTask.offsetMsgId = 0;
                     requestChatMessageEx();
                 } else {
                     requestChatMessage();
@@ -2102,14 +2125,32 @@ void Account::resetAuthorizationKeys() {
                 // 创建会话附件文件夹
                 QDir dir;
                 QString attachDir = getPeerAttachPath(_curDownloadFile->peerId);
-                dir.mkpath(attachDir);
-                int i = 10;
-                while (i--) {
-                    if (dir.exists(attachDir)) {
-                        break;
-                    }
+                if (!dir.exists(attachDir)) {
+                    dir.mkpath(attachDir);
+                    int i = 10;
+                    while (i--) {
+                        if (dir.exists(attachDir)) {
+                            break;
+                        }
 
-                    QThread::msleep(100);
+                        QThread::msleep(100);
+                    }
+                }
+
+                auto iter = _allMigratedDialogs.find(_curDownloadFile->peerId);
+                if (iter != _allMigratedDialogs.end()) {
+                    attachDir = getPeerAttachPath(iter->second);
+                    if (!dir.exists(attachDir)) {
+                        dir.mkpath(attachDir);
+                        int i = 10;
+                        while (i--) {
+                            if (dir.exists(attachDir)) {
+                                break;
+                            }
+
+                            QThread::msleep(100);
+                        }
+                    }
                 }
 
                 // 更新会话附件获取状态
@@ -2142,6 +2183,8 @@ void Account::resetAuthorizationKeys() {
         if (!_curDownloadFile) {
             return;
         }
+
+        checkResumeStatus();
 
         // 暂时屏蔽这种用法
         if (false) {//!_curDownloadFile->fileReference.isEmpty()) {
@@ -4180,8 +4223,8 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.isLeftChannel = sqlite3_column_int(stmt, 6) == 1;
                 taskInfo.onlyMyMsg = sqlite3_column_int(stmt, 7) == 1;
                 taskInfo.downloadAttach = sqlite3_column_int(stmt, 8) == 1;
-                taskInfo.getMsgDone = sqlite3_column_int(stmt, 9) == 1;
-                taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
+                //taskInfo.getMsgDone = sqlite3_column_int(stmt, 9) == 1;
+                //taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
 
                 std::string sql2 = "select min(mid) from messages where peer_id = '"
                     + std::to_string(peerId) + "'";
@@ -5082,11 +5125,36 @@ void Account::resetAuthorizationKeys() {
             actionString = "ChangeDataPath";
             break;
         }
+        case TelegramCmd::Action::Pause: {
+            actionString = "Pause";
+            break;
+        }
+        case TelegramCmd::Action::Resume: {
+            actionString = "Resume";
+            break;
+        }
+        case TelegramCmd::Action::Stop: {
+            actionString = "Stop";
+            break;
+        }
         default:
             break;
         }
 
         return actionString;
+    }
+
+    void Account::checkResumeStatus() {
+        if (_paused) {
+            if (_resumeEvent) {
+                while (!_stop) {
+                    if (WaitForSingleObject(_resumeEvent, 1000) != WAIT_TIMEOUT) {
+                        _paused = false;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
 } // namespace Main
