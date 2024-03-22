@@ -828,6 +828,7 @@ public:
         bytes::vector _passwordHash;
         Core::CloudPasswordState _passwordState;
 
+        bool _inited;
         bool _stop;
         bool _paused;
         HANDLE _resumeEvent;
@@ -873,6 +874,7 @@ public:
         std::list<TaskInfo> _tasks;
         TaskInfo _curTask;
         bool _allTaskMsgDone;
+        bool _sendAllTaskDone;
 
         crl::time _downloadAttachFileRemainSleepTime;
 

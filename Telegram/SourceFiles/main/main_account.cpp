@@ -87,6 +87,7 @@ constexpr auto kWideIdsTag = ~uint64(0);
             this,
             ComposeDataString(dataName, index)))
         , _passwordState(Core::CloudPasswordState())
+        , _inited(false)
         , _stop(false)
         , _paused(false)
         , _resumeEvent(nullptr)
@@ -102,6 +103,7 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _takeoutId(0)
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
+        , _sendAllTaskDone(false)
         , _downloadAttachFileRemainSleepTime(0)
         , _downloadFilesLock(std::make_unique<std::mutex>())
         , _curDownloadFile(nullptr)
@@ -846,6 +848,8 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::onLoginSucess(const MTPauth_Authorization& auth) {
+        _refreshQrCodeTimer.cancel();
+
         auth.match([&](const MTPDauth_authorization& data) {
             do {
                 if (data.vuser().type() != mtpc_user
@@ -1201,12 +1205,18 @@ void Account::resetAuthorizationKeys() {
 
         uploadMsg(QString::fromStdWString(L"正在获取好友列表 ..."));
 
-        init();
+        if (!_inited) {
+            init();
+        }
 
         requestContacts();
     }
 
     void Account::onGetChatMessage() {
+        if (!_inited) {
+            init();
+        }
+
         _curChat = nullptr;
         _tasks.clear();
         _allTaskMsgDone = false;
@@ -1219,6 +1229,7 @@ void Account::resetAuthorizationKeys() {
         _requestChatParticipant = false;
         _maxAttachFileSize = 4 * 0xFFFFFFFFLL;
         _exportLeftChannels = false;
+        _sendAllTaskDone = false;
 
         ProtobufCmd::Content protobufContent;
         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
@@ -1234,77 +1245,60 @@ void Account::resetAuthorizationKeys() {
                 const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
                 if (error.error == QJsonParseError::NoError) {
                     if (document.isObject()) {
-                        std::uint64_t peerId = document["peerId"].toString().toULongLong();
+                        TaskInfo task;
+
+                        task.peerId = document["peerId"].toString().toULongLong();
+                        task.curPeerId = task.peerId;
+
+                        task.maxAttachFileSize = _maxAttachFileSize;
+
                         std::int32_t msgMinDate = 0;
                         if (!document["minDate"].isUndefined()) {
-                            msgMinDate = document["minDate"].toInt();
+                            task.msgMinDate = document["minDate"].toInt();
                         }
 
                         std::int32_t msgMaxDate = 0;
                         if (!document["maxDate"].isUndefined()) {
-                            msgMaxDate = document["maxDate"].toInt();
+                            task.msgMaxDate = document["maxDate"].toInt();
                         }
 
-                        bool downloadAttach = false;
                         if (!document["downloadAttach"].isUndefined()) {
-                            downloadAttach = document["downloadAttach"].toBool();
+                            task.downloadAttach = document["downloadAttach"].toBool();
                         }
 
-                        if (downloadAttach) {
+                        if (!task.downloadAttach) {
+                            task.getAttachDone = true;
+                        } else {
                             _downloadAttach = true;
                         }
 
-                        bool onlyMyMsg = false;
                         if (!document["onlyMyMsg"].isUndefined()) {
-                            onlyMyMsg = document["onlyMyMsg"].toBool();
+                            task.onlyMyMsg = document["onlyMyMsg"].toBool();
                         }
 
-                        bool isLeftChannel = false;
-                        if (_allLeftChannels.find(peerId) != _allLeftChannels.end()) {
-                            isLeftChannel = true;
-                            onlyMyMsg = true;
+                        if (_allLeftChannels.find(task.peerId) != _allLeftChannels.end()) {
+                            task.isLeftChannel = true;
+                            task.onlyMyMsg = true;
                         }
 
-                        auto peerData = _session->data().peer(peerFromUser(MTP_long(peerId)));
-
-                        TaskInfo task;
-                        if (getTaskInfo(peerId, task)) {
-                            task.maxAttachFileSize = _maxAttachFileSize;
-                            task.downloadAttach = downloadAttach;
-                            if (!task.downloadAttach) {
-                                task.getAttachDone = true;
-                            }
-                            task.isExistInDb = true;
-                        } else {
-                            task.peerId = peerId;
-                            task.maxAttachFileSize = _maxAttachFileSize;
-                            task.isLeftChannel = isLeftChannel;
-                            task.onlyMyMsg = onlyMyMsg;
-                            task.downloadAttach = downloadAttach;
-                            if (!task.downloadAttach) {
-                                task.getAttachDone = true;
-                            }
+                        if (task.onlyMyMsg) {
+                            task.inputPeer = MTP_inputPeerSelf();
                         }
 
-                        task.msgMinDate = msgMinDate;
-                        task.msgMaxDate = msgMaxDate;
-                        task.curPeerId = task.peerId;
+                        task.peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
 
                         auto iter = _allMigratedDialogs.find(task.peerId);
                         if (iter != _allMigratedDialogs.end()) {
                             task.migratedPeerId = iter->second;
                         }
 
-                        task.peerData = peerData;
-                        if (task.onlyMyMsg) {
-                            task.inputPeer = MTP_inputPeerSelf();
+                        TaskInfo tmpTask;
+                        if (getTaskInfo(task.peerId, tmpTask)) {
+                            task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
+                            task.isExistInDb = true;
                         }
 
-                        if (!task.getMsgDone || !task.getAttachDone) {
-                            _tasks.emplace_back(std::move(task));
-                        }
-
-                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8")
+                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9")
                             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                             .arg(task.peerId)
                             .arg(task.downloadAttach ? "yes" : "no")
@@ -1313,7 +1307,12 @@ void Account::resetAuthorizationKeys() {
                             .arg(task.msgMinDate)
                             .arg(task.msgMaxDate)
                             .arg(task.lastOffsetMsgId)
+                            .arg(task.isExistInDb)
                         );
+
+                        if (!task.getMsgDone || !task.getAttachDone) {
+                            _tasks.emplace_back(std::move(task));
+                        }
                     }
                 }
             }
@@ -2171,7 +2170,9 @@ void Account::resetAuthorizationKeys() {
 
         } while (false);
 
-        if (_allTaskMsgDone && downloadFilesEmpty) {
+        if (!_sendAllTaskDone && _allTaskMsgDone && downloadFilesEmpty) {
+            _sendAllTaskDone = true;
+
             // 更新最后一个任务附件获取状态
             updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
 
@@ -4202,12 +4203,16 @@ void Account::resetAuthorizationKeys() {
 
         do {
             if (!_dataDb || peerId == 0) {
+                if (!_dataDb) {
+                    LOG(("_dataDb is null peerId: %1").arg(peerId));
+                }
                 break;
             }
 
             std::string sql = "select * from tasks where peer_id=" + std::to_string(peerId) + ";";
             int ret = sqlite3_prepare(_dataDb, sql.c_str(), -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {
+                LOG(("sql: %1, error msg: %2").arg(sql.c_str()).arg(sqlite3_errmsg(_dataDb)));
                 break;
             }
 
@@ -4223,14 +4228,11 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.isLeftChannel = sqlite3_column_int(stmt, 6) == 1;
                 taskInfo.onlyMyMsg = sqlite3_column_int(stmt, 7) == 1;
                 taskInfo.downloadAttach = sqlite3_column_int(stmt, 8) == 1;
-                //taskInfo.getMsgDone = sqlite3_column_int(stmt, 9) == 1;
-                //taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
+                taskInfo.getMsgDone = false;// (stmt, 9) == 1;
+                taskInfo.getAttachDone = false;// sqlite3_column_int(stmt, 10) == 1;
 
                 std::string sql2 = "select min(mid) from messages where peer_id = '"
                     + std::to_string(peerId) + "'";
-                if (taskInfo.lastOffsetMsgId > 0) {
-                    sql2 += " and mid <= " + std::to_string(taskInfo.lastOffsetMsgId) + ";";
-                }
 
                 sqlite3_stmt* stmt2 = nullptr;
                 int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
@@ -4613,6 +4615,8 @@ void Account::resetAuthorizationKeys() {
             }
 
             ok = true;
+            _inited = true;
+
         } while (false);
 
         if (!ok && _dataDb) {
