@@ -101,10 +101,16 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _checkRequest(false)
         , _pipeCmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
+        , _msgRequestId(0)
+        , _startCheckMsgRequestTimer(false)
+        , _stopCheckMsgRequestTimer(false)
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
         , _sendAllTaskDone(false)
         , _downloadAttachFileRemainSleepTime(0)
+        , _fileRequestId(0)
+        , _startCheckFileRequestTimer(false)
+        , _stopCheckFileRequestTimer(false)
         , _downloadFilesLock(std::make_unique<std::mutex>())
         , _curDownloadFile(nullptr)
         , _prevDownloadFilePeerId(0)
@@ -776,6 +782,20 @@ void Account::resetAuthorizationKeys() {
                     sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
                     });
 
+                _checkMsgRequestTimer.setCallback([&] {
+                    PipeCmd::Cmd cmd;
+                    cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
+                    sendPipeResult(cmd, TelegramCmd::Status::Success);
+                    _stop = true;
+                    });
+
+                _checkFileRequestTimer.setCallback([&] {
+                    PipeCmd::Cmd cmd;
+                    cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
+                    sendPipeResult(cmd, TelegramCmd::Status::Success);
+                    _stop = true;
+                    });
+
                 _taskTimer.setCallback([&] {
                     if (_stop) {
                         Core::Quit();
@@ -784,6 +804,8 @@ void Account::resetAuthorizationKeys() {
                             if (_checkRequest) {
                                 checkRequest();
                             }
+
+                            checkNeedRestart();
 
                             if (_downloadAttach) {
                                 if (_downloadAttachFileRemainSleepTime > 0) {
@@ -1193,8 +1215,8 @@ void Account::resetAuthorizationKeys() {
     void Account::onGetContactAndChat() {
         ProtobufCmd::Content protobufContent;
         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
-            _exportLeftChannels = GetBooleanExtraData(protobufContent, "exportLeftChannels");
-            _downloadPeerProfilePhoto = GetBooleanExtraData(protobufContent, "downloadUserPic");
+            _exportLeftChannels = getBooleanExtraData(protobufContent, "exportLeftChannels");
+            _downloadPeerProfilePhoto = getBooleanExtraData(protobufContent, "downloadUserPic");
         }
 
         LOG(("[Account][recv cmd] unique ID: %1 action: GetContactAndChat exportLeftChannels: %2 downloadUserPic: %3")
@@ -1233,8 +1255,8 @@ void Account::resetAuthorizationKeys() {
 
         ProtobufCmd::Content protobufContent;
         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
-            _maxAttachFileSize = GetNumExtraData(protobufContent, "maxAttachFileSize");
-            _requestChatParticipant = GetBooleanExtraData(protobufContent, "requestChatParticipant");
+            _maxAttachFileSize = getNumExtraData(protobufContent, "maxAttachFileSize");
+            _requestChatParticipant = getBooleanExtraData(protobufContent, "requestChatParticipant");
         }
 
         for (const auto& extra : protobufContent.extra()) {
@@ -1266,6 +1288,7 @@ void Account::resetAuthorizationKeys() {
                             task.downloadAttach = document["downloadAttach"].toBool();
                         }
 
+                        // 不下载附件
                         if (!task.downloadAttach) {
                             task.getAttachDone = true;
                         } else {
@@ -1295,6 +1318,7 @@ void Account::resetAuthorizationKeys() {
                         TaskInfo tmpTask;
                         if (getTaskInfo(task.peerId, tmpTask)) {
                             task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
+                            task.getMsgCount = tmpTask.getMsgCount;
                             task.isExistInDb = true;
                         }
 
@@ -1359,19 +1383,19 @@ void Account::resetAuthorizationKeys() {
                 break;
             }
 
-            _utf8DataPath = GetStringExtraData(protobufContent, "dataPath");
+            _utf8DataPath = getStringExtraData(protobufContent, "dataPath");
             if (!_utf8DataPath.empty() && _utf8DataPath.back() != '\\') {
                 _utf8DataPath += "\\";
             }
 
             _dataPath = Main::Account::utf8ToUtf16(_utf8DataPath);
             
-            _utf8RootPath = GetStringExtraData(protobufContent, "rootPath");
+            _utf8RootPath = getStringExtraData(protobufContent, "rootPath");
             if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
                 _utf8RootPath.pop_back();
             }
 
-            _attachPath = Main::Account::utf8ToUtf16(GetStringExtraData(protobufContent, "attachPath"));
+            _attachPath = Main::Account::utf8ToUtf16(getStringExtraData(protobufContent, "attachPath"));
             if (!_attachPath.empty() && _attachPath.back() != L'\\') {
                 _attachPath += L"\\";
             }
@@ -1453,6 +1477,7 @@ void Account::resetAuthorizationKeys() {
         int offsetDate,
         int offsetId
     ) {
+        _offset = 0;
         uploadMsg(QString::fromStdWString(L"正在获取会话列表 ..."));
 
         requestDialogsEx((
@@ -1509,6 +1534,10 @@ void Account::resetAuthorizationKeys() {
                 saveMigratedDialogsToDb(migratedDialogs);
                 saveChatsToDb(chats);
 
+                _offset += dialogs.size();
+                uploadMsg(QString::fromStdWString(L"正在获取会话列表, 已获取 %1 条 ...")
+                    .arg(_offset));
+
                 const auto last = info.chats.empty()
                     ? Export::Data::DialogInfo()
                     : info.chats.back();
@@ -1543,8 +1572,8 @@ void Account::resetAuthorizationKeys() {
         resultCmd.uniqueId = _curRecvCmd.uniqueId;
 
         ProtobufCmd::Content protobufContent;
-        AddExtraData(protobufContent, "status", std::int32_t(TelegramCmd::Status::Success));
-        AddExtraData(protobufContent, "shouldWait", shouldWait);
+        addExtraData(protobufContent, "status", std::int32_t(TelegramCmd::Status::Success));
+        addExtraData(protobufContent, "shouldWait", shouldWait);
         protobufContent.SerializeToString(&resultCmd.content);
 
         sendPipeCmd(resultCmd, false);
@@ -1805,6 +1834,8 @@ void Account::resetAuthorizationKeys() {
 
             if (!first) {
                 _curTask.getMsgDone = true;
+                uploadMsg(QString::fromStdWString(L"[%1] 聊天记录已获取完毕 ...")
+                    .arg(getPeerDisplayName(_curTask.peerData)));
 
                 if (_curTask.attachFileCount <= 0) {
                     // 任务无附件
@@ -1844,12 +1875,15 @@ void Account::resetAuthorizationKeys() {
                 requestChatMessage();
             }
         } else {
+            resetMsgRequestStatus();
             _allTaskMsgDone = true;
             _curTask.getMsgDone = true;
             updateTaskInfoToDb(_curTask);
 
             // 无需下载附件
             if (!_downloadAttach) {
+                resetFileRequestStatus();
+
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
             }
         }
@@ -1868,6 +1902,8 @@ void Account::resetAuthorizationKeys() {
         _curPeerAttachPath = getPeerAttachPath(_curTask.peerData->id.value);
 
         auto getMessageDone = [=](const MTPmessages_Messages& result) {
+            _stopCheckMsgRequestTimer = true;
+
             int msgCount = 0;
 
             if (
@@ -1939,7 +1975,7 @@ void Account::resetAuthorizationKeys() {
             }
 
             // 固定休眠一下
-            QThread::sleep(1);
+            QThread::msleep(100);
 
             if (msgCount > 0) {
                 requestChatMessageEx();
@@ -2008,7 +2044,9 @@ void Account::resetAuthorizationKeys() {
                     }).send();
         } else {
             if (!_curTask.isLeftChannel) {
-                _session->api().request(MTPmessages_Search(
+                _startCheckMsgRequestTimer = true;
+
+                _msgRequestId = _session->api().request(MTPmessages_Search(
                     MTP_flags(MTPmessages_Search::Flag::f_from_id),
                     _curTask.peerData->input,
                     MTP_string(), // query
@@ -2028,11 +2066,15 @@ void Account::resetAuthorizationKeys() {
                 )).done([=](const MTPmessages_Messages& result) {
                     getMessageDone(result);
                     }).fail([this](const MTP::Error& error) {
+                        _stopCheckMsgRequestTimer = true;
+
                         requestChatMessage();
                         }).send();
             } else {
                 if (_takeoutId != 0) {
-                    _session->api().request(buildTakeoutRequest(MTPmessages_Search(
+                    _startCheckMsgRequestTimer = true;
+
+                    _msgRequestId = _session->api().request(buildTakeoutRequest(MTPmessages_Search(
                         MTP_flags(MTPmessages_Search::Flag::f_from_id),
                         _curTask.peerData->input,
                         MTP_string(), // query
@@ -2052,6 +2094,8 @@ void Account::resetAuthorizationKeys() {
                     ))).done([=](const MTPmessages_Messages& result) {
                         getMessageDone(result);
                         }).fail([this](const MTP::Error& error) {
+                            _stopCheckMsgRequestTimer = true;
+
                             requestChatMessage();
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
                 } else {
@@ -2170,7 +2214,12 @@ void Account::resetAuthorizationKeys() {
 
         } while (false);
 
+        if (downloadFilesEmpty) {
+            resetFileRequestStatus();
+        }
+
         if (!_sendAllTaskDone && _allTaskMsgDone && downloadFilesEmpty) {
+
             _sendAllTaskDone = true;
 
             // 更新最后一个任务附件获取状态
@@ -2201,6 +2250,8 @@ void Account::resetAuthorizationKeys() {
             constexpr int kFileChunkSize = 1024 * 1024;
 
             auto getFileFail = [=](const MTP::Error& error) {
+                _stopCheckFileRequestTimer = true;
+
                 if (error.code() == 400
                     && error.type().startsWith(u"FILE_REFERENCE_"_q)) {
                     // 文件链接过期，需要刷新
@@ -2229,7 +2280,9 @@ void Account::resetAuthorizationKeys() {
 
             // 正常未退出的群聊及频道
             if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
-                _session->api().request(MTPupload_GetFile(
+                _startCheckFileRequestTimer = true;
+
+                _fileRequestId = _session->api().request(MTPupload_GetFile(
                     MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
                     _curDownloadFile->fileLocation,
                     MTP_long(_curDownloadFileOffset),
@@ -2240,7 +2293,9 @@ void Account::resetAuthorizationKeys() {
                         FilePartDone(result);
                         }).toDC(MTP::ShiftDcId(_curDownloadFile->dcId, MTP::kExportMediaDcShift)).send();
             } else {
-                _session->api().request(buildTakeoutRequest(MTPupload_GetFile(
+                _startCheckFileRequestTimer = true;
+
+                _fileRequestId = _session->api().request(buildTakeoutRequest(MTPupload_GetFile(
                     MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
                     _curDownloadFile->fileLocation,
                     MTP_long(_curDownloadFileOffset),
@@ -2255,6 +2310,8 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::FilePartDone(const MTPupload_File& result) {
+        _stopCheckFileRequestTimer = true;
+
         bool hasErr = true;
 
         do {
@@ -4672,11 +4729,11 @@ void Account::resetAuthorizationKeys() {
         resultCmd.content = content.toUtf8().constData();
 
         ProtobufCmd::Content protobufContent;
-        AddExtraData(protobufContent, "content", content.toUtf8().constData());
-        AddExtraData(protobufContent, "status", std::int32_t(status));
+        addExtraData(protobufContent, "content", content.toUtf8().constData());
+        addExtraData(protobufContent, "status", std::int32_t(status));
 
         if (!error.isEmpty()) {
-            AddExtraData(protobufContent, "error", error.toUtf8().constData());
+            addExtraData(protobufContent, "error", error.toUtf8().constData());
         }
 
         protobufContent.SerializeToString(&resultCmd.content);
@@ -4934,7 +4991,7 @@ void Account::resetAuthorizationKeys() {
         }
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         const std::string& value
@@ -4947,7 +5004,7 @@ void Account::resetAuthorizationKeys() {
         }
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         long long value
@@ -4960,7 +5017,7 @@ void Account::resetAuthorizationKeys() {
         }
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         unsigned long long value
@@ -4973,23 +5030,23 @@ void Account::resetAuthorizationKeys() {
         }
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         int value
     ) {
-        return AddExtraData(content, key, (long long)value);
+        return addExtraData(content, key, (long long)value);
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         unsigned int value
     ) {
-        return AddExtraData(content, key, (unsigned long long)value);
+        return addExtraData(content, key, (unsigned long long)value);
     }
 
-    void Account::AddExtraData(
+    void Account::addExtraData(
         ProtobufCmd::Content& content,
         const std::string& key,
         double value
@@ -5002,7 +5059,7 @@ void Account::resetAuthorizationKeys() {
         }
     }
 
-    std::string Account::GetStringExtraData(
+    std::string Account::getStringExtraData(
         const ProtobufCmd::Content& content,
         const std::string& key
     ) {
@@ -5018,7 +5075,7 @@ void Account::resetAuthorizationKeys() {
         return data;
     }
 
-    long long Account::GetNumExtraData(
+    long long Account::getNumExtraData(
         const ProtobufCmd::Content& content,
         const std::string& key
     ) {
@@ -5035,7 +5092,7 @@ void Account::resetAuthorizationKeys() {
         return data;
     }
 
-    double Account::GetRealExtraData(
+    double Account::getRealExtraData(
         const ProtobufCmd::Content& content,
         const std::string& key
     ) {
@@ -5051,7 +5108,7 @@ void Account::resetAuthorizationKeys() {
         return data;
     }
 
-    bool Account::GetBooleanExtraData(
+    bool Account::getBooleanExtraData(
         const ProtobufCmd::Content& content,
         const std::string& key
     ) {
@@ -5159,6 +5216,50 @@ void Account::resetAuthorizationKeys() {
                 }
             }
         }
+    }
+
+    void Account::checkNeedRestart() {
+        do {
+            if (_msgRequestId != 0) {
+                if (_stopCheckMsgRequestTimer) {
+                    _checkMsgRequestTimer.cancel();
+                    _stopCheckMsgRequestTimer = false;
+                }
+
+                if (_stopCheckMsgRequestTimer) {
+                    if (!_checkMsgRequestTimer.isActive()) {
+                        _checkMsgRequestTimer.callOnce(_maxMsgRequestTime);
+                    }
+                }
+            }
+
+            if (_fileRequestId != 0) {
+                if (_stopCheckFileRequestTimer) {
+                    _checkFileRequestTimer.cancel();
+                    _stopCheckFileRequestTimer = false;
+                }
+
+                if (_startCheckFileRequestTimer) {
+                    if (!_checkFileRequestTimer.isActive()) {
+                        _checkFileRequestTimer.callOnce(_maxFileRequestTime);
+                    }
+                }
+            }
+        } while (false);
+    }
+
+    void Account::resetMsgRequestStatus() {
+        _msgRequestId = 0;
+        _startCheckMsgRequestTimer = false;
+        _stopCheckMsgRequestTimer = true;
+        _checkMsgRequestTimer.cancel();
+    }
+
+    void Account::resetFileRequestStatus() {
+        _fileRequestId = 0;
+        _startCheckFileRequestTimer = false;
+        _stopCheckFileRequestTimer = true;
+        _checkFileRequestTimer.cancel();
     }
 
 } // namespace Main

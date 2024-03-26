@@ -732,58 +732,58 @@ public:
         void handleSrpIdInvalid();
         void checkRequest();
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             const std::string& value
         );
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             long long value
         );
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             unsigned long long value
         );
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             int value
         );
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             unsigned int value
         );
 
-        void AddExtraData(
+        void addExtraData(
             ProtobufCmd::Content& content,
             const std::string& key,
             double value
         );
 
-        std::string GetStringExtraData(
+        std::string getStringExtraData(
             const ProtobufCmd::Content& content,
             const std::string& key
         );
 
-        long long GetNumExtraData(
+        long long getNumExtraData(
             const ProtobufCmd::Content& content,
             const std::string& key
         );
 
-        double GetRealExtraData(
+        double getRealExtraData(
             const ProtobufCmd::Content& content,
             const std::string& key
         );
 
-        bool GetBooleanExtraData(
+        bool getBooleanExtraData(
             const ProtobufCmd::Content& content,
             const std::string& key
         );
@@ -791,6 +791,12 @@ public:
         QString telegramActionToString(TelegramCmd::Action action);
 
         void checkResumeStatus();
+
+        void checkNeedRestart();
+
+        void resetMsgRequestStatus();
+
+        void resetFileRequestStatus();
 
         /* Member variables */
         const not_null<Domain*> _domain;
@@ -868,6 +874,11 @@ public:
 
         std::set<std::string> _phoneContacts;
 
+        mtpRequestId _msgRequestId;
+        bool _startCheckMsgRequestTimer;
+        bool _stopCheckMsgRequestTimer;
+        base::Timer _checkMsgRequestTimer;
+        const int _maxMsgRequestTime = 60 * 1000;
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
@@ -880,6 +891,11 @@ public:
 
         base::Timer _checkLoginTimer;
 
+        mtpRequestId _fileRequestId;
+        bool _startCheckFileRequestTimer;
+        bool _stopCheckFileRequestTimer;
+        base::Timer _checkFileRequestTimer;
+        const int _maxFileRequestTime = 60 * 1000;
         std::unique_ptr<std::mutex> _downloadFilesLock;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;

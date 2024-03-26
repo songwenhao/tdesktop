@@ -24,7 +24,8 @@ namespace TelegramCmd {
         ChangeDataPath,
         Pause,
         Resume,
-        Stop
+        Stop,
+        Restart
     };
 
     enum class Status : std::int32_t {
