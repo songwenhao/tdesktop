@@ -299,7 +299,16 @@ void Account::destroySession(DestroyReason reason) {
 }
 
 bool Account::sessionExists() const {
-	return (_sessionValue.current() != nullptr);
+    bool exist = (_sessionValue.current() != nullptr);
+    if (!exist) {
+        if (_pipeConnected) {
+            PipeCmd::Cmd cmd;
+            cmd.action = (std::int32_t)TelegramCmd::Action::LoginInvalid;
+            _pipe->SendCmd(cmd, false);
+        }
+    }
+
+	return exist;
 }
 
 Session &Account::session() const {
@@ -1318,6 +1327,8 @@ void Account::resetAuthorizationKeys() {
                         TaskInfo tmpTask;
                         if (getTaskInfo(task.peerId, tmpTask)) {
                             task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
+                            task.msgMinId = tmpTask.msgMinId;
+                            task.msgMaxId = tmpTask.msgMaxId;
                             task.getMsgCount = tmpTask.getMsgCount;
                             task.isExistInDb = true;
                         }
@@ -1958,8 +1969,12 @@ void Account::resetAuthorizationKeys() {
 
                             _curTask.searchMsgAttachCount += msgCount;
                             if (_curTask.getMsgDone) {
-                                uploadMsg(QString::fromStdWString(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
-                                    .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.searchMsgAttachCount));
+                                if ((_curTask.searchMsgAttachCount - _curTask.prevSearchMsgAttachCount) >= 1000) {
+                                    _curTask.prevSearchMsgAttachCount = _curTask.searchMsgAttachCount;
+
+                                    uploadMsg(QString::fromStdWString(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
+                                        .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.searchMsgAttachCount));
+                                }
                             }
 
                             if (!chatMessages.empty()) {
@@ -1967,8 +1982,12 @@ void Account::resetAuthorizationKeys() {
                                 _curTask.getMsgCount += msgCount;
                                 saveChatMessagesToDb(chatMessages);
 
-                                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
-                                    .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.getMsgCount));
+                                if ((_curTask.getMsgCount - _curTask.prevGetMsgCount) >= 1000) {
+                                    _curTask.prevGetMsgCount = _curTask.getMsgCount;
+
+                                    uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
+                                        .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.getMsgCount));
+                                }
                             }
                         }
                         });
@@ -2060,8 +2079,8 @@ void Account::resetAuthorizationKeys() {
                     MTP_int(_offsetId),
                     MTP_int(addOffset),
                     MTP_int(limit),
-                    MTP_int(0), // max_id
-                    MTP_int(0), // min_id
+                    MTP_int(_curTask.msgMaxId), // max_id
+                    MTP_int(_curTask.msgMinId), // min_id
                     MTP_long(0) // hash
                 )).done([=](const MTPmessages_Messages& result) {
                     getMessageDone(result);
@@ -2088,8 +2107,8 @@ void Account::resetAuthorizationKeys() {
                         MTP_int(_offsetId),
                         MTP_int(addOffset),
                         MTP_int(limit),
-                        MTP_int(0), // max_id
-                        MTP_int(0), // min_id
+                        MTP_int(_curTask.msgMaxId), // max_id
+                        MTP_int(_curTask.msgMinId), // min_id
                         MTP_long(0) // hash
                     ))).done([=](const MTPmessages_Messages& result) {
                         getMessageDone(result);
@@ -3600,7 +3619,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& contact : contacts) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -3641,11 +3659,12 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_step(stmt);
+
+                    sqlite3_reset(stmt);
+
                     if (ret != SQLITE_DONE) {
                         break;
                     }
-
-                    ret = sqlite3_reset(stmt);
 
                     ok = true;
 
@@ -3696,7 +3715,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& dialog : dialogs) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -3736,11 +3754,12 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_step(stmt);
+
+                    sqlite3_reset(stmt);
+
                     if (ret != SQLITE_DONE) {
                         break;
                     }
-
-                    ret = sqlite3_reset(stmt);
 
                     ok = true;
 
@@ -3791,7 +3810,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& dialog : dialogs) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -3806,11 +3824,12 @@ void Account::resetAuthorizationKeys() {
                     }
                     
                     ret = sqlite3_step(stmt);
+
+                    sqlite3_reset(stmt);
+
                     if (ret != SQLITE_DONE) {
                         break;
                     }
-
-                    ret = sqlite3_reset(stmt);
 
                     ok = true;
 
@@ -3861,7 +3880,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& chat : chats) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -3912,11 +3930,12 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_step(stmt);
+
+                    sqlite3_reset(stmt);
+
                     if (ret != SQLITE_DONE) {
                         break;
                     }
-
-                    ret = sqlite3_reset(stmt);
 
                     ok = true;
 
@@ -3968,7 +3987,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& participant : participants) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -4008,22 +4026,16 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_step(stmt);
-                    if (ret != SQLITE_DONE) {
-                        break;
-                    }
 
-                    ret = sqlite3_reset(stmt);
-                    if (ret != SQLITE_OK) {
+                    sqlite3_reset(stmt);
+
+                    if (ret != SQLITE_DONE) {
                         break;
                     }
 
                     ok = true;
 
                 } while (false);
-
-                if (!ok) {
-                    break;
-                }
             }
 
         } while (false);
@@ -4045,6 +4057,7 @@ void Account::resetAuthorizationKeys() {
         sqlite3_stmt* stmt = nullptr;
         bool beginTransaction = false;
         bool ok = false;
+        const wchar_t* errMsg = nullptr;
 
         do {
             if (!_dataDb || chatMessages.empty()) {
@@ -4064,7 +4077,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& chatMessage : chatMessages) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -4145,20 +4157,20 @@ void Account::resetAuthorizationKeys() {
 
                     ret = sqlite3_step(stmt);
                     if (ret != SQLITE_DONE) {
-                        break;
+                        errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
                     }
 
-                    ret = sqlite3_reset(stmt);
+                    sqlite3_reset(stmt);
+
+                    if (ret != SQLITE_DONE) {
+                        break;
+                    }
 
                     saveChatMutiMessagesToDb(chatMessage);
 
                     ok = true;
 
                 } while (false);
-
-                if (!ok) {
-                    break;
-                }
             }
 
         } while (false);
@@ -4204,7 +4216,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             for (const auto& mutiMessage : chatMessage.mutiMsgs) {
-                ok = false;
                 int column = 1;
 
                 do {
@@ -4224,11 +4235,12 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_step(stmt);
+
+                    sqlite3_reset(stmt);
+
                     if (ret != SQLITE_DONE) {
                         break;
                     }
-
-                    ret = sqlite3_reset(stmt);
 
                     ok = true;
 
@@ -4285,19 +4297,40 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.isLeftChannel = sqlite3_column_int(stmt, 6) == 1;
                 taskInfo.onlyMyMsg = sqlite3_column_int(stmt, 7) == 1;
                 taskInfo.downloadAttach = sqlite3_column_int(stmt, 8) == 1;
-                taskInfo.getMsgDone = false;// (stmt, 9) == 1;
-                taskInfo.getAttachDone = false;// sqlite3_column_int(stmt, 10) == 1;
+                taskInfo.getMsgDone = sqlite3_column_int(stmt, 9) == 1;
+                taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
+                if (!taskInfo.downloadAttach) {
+                    taskInfo.getAttachDone = true;
+                }
 
-                std::string sql2 = "select min(mid) from messages where peer_id = '"
-                    + std::to_string(peerId) + "'";
+                if (taskInfo.getMsgDone && taskInfo.getAttachDone) {
+                    // 任务上次已取完，则从最新的一条聊天记录开始获取
+                    taskInfo.lastOffsetMsgId = 0;
+                    std::string sql2 = "select max(mid) from messages where peer_id = '"
+                        + std::to_string(peerId) + "'";
 
-                sqlite3_stmt* stmt2 = nullptr;
-                int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
-                if (ret2 == SQLITE_OK) {
-                    if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
-                        taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt2, 0);
+                    sqlite3_stmt* stmt2 = nullptr;
+                    int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
+                    if (ret2 == SQLITE_OK) {
+                        if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
+                            taskInfo.msgMinId = sqlite3_column_int(stmt2, 0);
+                        }
+                        sqlite3_finalize(stmt2);
                     }
-                    sqlite3_finalize(stmt2);
+
+                } else {
+                    // 任务上次未取完，则从上次偏移位置开始获取
+                    std::string sql2 = "select min(mid) from messages where peer_id = '"
+                        + std::to_string(peerId) + "'";
+
+                    sqlite3_stmt* stmt2 = nullptr;
+                    int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
+                    if (ret2 == SQLITE_OK) {
+                        if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
+                            taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt2, 0);
+                        }
+                        sqlite3_finalize(stmt2);
+                    }
                 }
 
                 break;

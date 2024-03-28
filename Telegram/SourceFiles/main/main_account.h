@@ -391,9 +391,13 @@ public:
                 curPeerId = 0;
                 msgMinDate = 0;
                 msgMaxDate = 0;
+                msgMinId = 0;
+                msgMaxId = 0;
                 lastOffsetMsgId = 0;
                 offsetMsgId = 0;
+                prevGetMsgCount = 0;
                 getMsgCount = 0;
+                prevSearchMsgAttachCount = 0;
                 searchMsgAttachCount = 0;
                 attachFileCount = 0;
                 maxAttachFileSize = 0;
@@ -412,9 +416,13 @@ public:
             std::uint64_t curPeerId;
             std::int32_t msgMinDate;
             std::int32_t msgMaxDate;
+            std::int32_t msgMinId;
+            std::int32_t msgMaxId;
             std::int32_t lastOffsetMsgId;
             std::int32_t offsetMsgId;
+            std::int64_t prevGetMsgCount;
             std::int64_t getMsgCount;
+            std::int64_t prevSearchMsgAttachCount;
             std::int64_t searchMsgAttachCount;
             std::int64_t attachFileCount;
             std::int64_t maxAttachFileSize;

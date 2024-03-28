@@ -25,7 +25,8 @@ namespace TelegramCmd {
         Pause,
         Resume,
         Stop,
-        Restart
+        Restart,
+        LoginInvalid
     };
 
     enum class Status : std::int32_t {
