@@ -2541,9 +2541,12 @@ void Account::resetAuthorizationKeys() {
             name = userData->firstName + userData->lastName;
             if (name.isEmpty()) {
                 name = userData->userName();
-                if (name.isEmpty()) {
-                    name = QString("Deleted Account(%1)").arg(userData->id.value);
-                }
+            }
+
+            if (!name.isEmpty()) {
+                name = QString("%1(%2)").arg(name).arg(userData->id.value);
+            } else {
+                name = QString("Deleted Account(%1)").arg(userData->id.value);
             }
         }
 
@@ -2555,7 +2558,9 @@ void Account::resetAuthorizationKeys() {
 
         if (chatData) {
             name = chatData->name();
-            if (name.isEmpty()) {
+            if (!name.isEmpty()) {
+                name = QString("%1(%2)").arg(name).arg(chatData->id.value);
+            } else {
                 name = QString("%1").arg(chatData->id.value);
             }
         }
@@ -2568,7 +2573,9 @@ void Account::resetAuthorizationKeys() {
 
         if (channelData) {
             name = channelData->name();
-            if (name.isEmpty()) {
+            if (!name.isEmpty()) {
+                name = QString("%1(%2)").arg(name).arg(channelData->id.value);
+            } else {
                 name = QString("%1").arg(channelData->id.value);
             }
         }

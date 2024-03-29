@@ -477,13 +477,6 @@ void MainWindow::init() {
 
 	updateTitle();
 	updateWindowIcon();
-
-    // hide taskbar icon
-#ifndef SHOW_WINDOW
-	{
-        SetWindowLong((HWND)winId(), GWL_EXSTYLE, WS_EX_TOOLWINDOW);
-	}
-#endif
 }
 
 void MainWindow::handleStateChanged(Qt::WindowState state) {
@@ -782,7 +775,7 @@ void MainWindow::firstShow() {
 	updateMinimumSize();
 	if (initGeometryFromSystem()) {
 #ifdef SHOW_WINDOW
-		show();
+        show();
 #endif
 		return;
 	}
@@ -792,28 +785,9 @@ void MainWindow::firstShow() {
 		).arg(geometry.y()
 		).arg(geometry.width()
 		).arg(geometry.height()));
-
-	// move window to invisible area
-#ifndef SHOW_WINDOW
-    int y = 0;
-    const auto primaryScreen = QGuiApplication::primaryScreen();
-    if (primaryScreen) {
-        y = primaryScreen->geometry().height() + 100;
-    }
-
-	if (y == 0) {
-		y = 3000;
-	}
-
-	QRect changedGeometry;
-    changedGeometry.setX(geometry.x());
-    changedGeometry.setY(y);
-    changedGeometry.setWidth(geometry.width());
-    changedGeometry.setHeight(geometry.height());
-
-	setGeometry(changedGeometry);
-#else
-    setGeometry(geometry);
+	setGeometry(geometry);
+#ifdef SHOW_WINDOW
+    show();
 #endif
 }
 

@@ -494,8 +494,10 @@ void MainWindow::unreadCounterChangedHook() {
 }
 
 void MainWindow::updateTaskbarAndIconCounters() {
+#ifndef SHOW_WINDOW
     // no need to update
 	return;
+#endif
 
 	const auto counter = Core::App().unreadBadge();
 	const auto muted = Core::App().unreadBadgeMuted();
