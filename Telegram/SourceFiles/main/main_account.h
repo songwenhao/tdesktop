@@ -802,7 +802,7 @@ public:
 
         void checkNeedRestart();
 
-        void resetMsgRequestStatus();
+        void resetNormalRequestStatus();
 
         void resetFileRequestStatus();
 
@@ -882,11 +882,11 @@ public:
 
         std::set<std::string> _phoneContacts;
 
-        mtpRequestId _msgRequestId;
-        bool _startCheckMsgRequestTimer;
-        bool _stopCheckMsgRequestTimer;
-        base::Timer _checkMsgRequestTimer;
-        const int _maxMsgRequestTime = 60 * 1000;
+        mtpRequestId _normalRequestId;
+        bool _startCheckNormalRequestTimer;
+        bool _stopCheckNormalRequestTimer;
+        base::Timer _checkNormalRequestTimer;
+        const int _maxNormalRequestTime = 60 * 1000;
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 

@@ -101,9 +101,9 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _checkRequest(false)
         , _pipeCmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
-        , _msgRequestId(0)
-        , _startCheckMsgRequestTimer(false)
-        , _stopCheckMsgRequestTimer(false)
+        , _normalRequestId(0)
+        , _startCheckNormalRequestTimer(false)
+        , _stopCheckNormalRequestTimer(false)
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
         , _sendAllTaskDone(false)
@@ -299,16 +299,7 @@ void Account::destroySession(DestroyReason reason) {
 }
 
 bool Account::sessionExists() const {
-    bool exist = (_sessionValue.current() != nullptr);
-    if (!exist) {
-        if (_pipeConnected) {
-            PipeCmd::Cmd cmd;
-            cmd.action = (std::int32_t)TelegramCmd::Action::LoginInvalid;
-            _pipe->SendCmd(cmd, false);
-        }
-    }
-
-	return exist;
+    return (_sessionValue.current() != nullptr);
 }
 
 Session &Account::session() const {
@@ -791,7 +782,7 @@ void Account::resetAuthorizationKeys() {
                     sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
                     });
 
-                _checkMsgRequestTimer.setCallback([&] {
+                _checkNormalRequestTimer.setCallback([&] {
                     PipeCmd::Cmd cmd;
                     cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
                     sendPipeResult(cmd, TelegramCmd::Status::Success);
@@ -1443,9 +1434,15 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestContacts() {
-        _session->api().request(MTPcontacts_GetContacts(
+        resetNormalRequestStatus();
+
+        _startCheckNormalRequestTimer = true;
+
+        _normalRequestId = _session->api().request(MTPcontacts_GetContacts(
             MTP_long(0) // hash
         )).done([=](const MTPcontacts_Contacts& result) {
+            _stopCheckNormalRequestTimer = true;
+
             std::list<ContactInfo> contacts;
 
             if (result.type() != mtpc_contacts_contactsNotModified) {
@@ -1479,6 +1476,8 @@ void Account::resetAuthorizationKeys() {
             requestDialogs(nullptr, 0, 0);
 
             }).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+
                 requestDialogs(nullptr, 0, 0);
                 }).send();
     }
@@ -1504,7 +1503,11 @@ void Account::resetAuthorizationKeys() {
     ) {
         const auto limit = 100;
         const auto hash = uint64(0);
-        _session->api().request(MTPmessages_GetDialogs(
+
+        resetNormalRequestStatus();
+
+        _startCheckNormalRequestTimer = true;
+        _normalRequestId = _session->api().request(MTPmessages_GetDialogs(
             MTP_flags(0),
             MTPint(), // folder_id
             MTP_int(offsetDate),
@@ -1513,6 +1516,8 @@ void Account::resetAuthorizationKeys() {
             MTP_int(limit),
             MTP_long(hash)
         )).done([&](const MTPmessages_Dialogs& result) {
+            _stopCheckNormalRequestTimer = true;
+
             if (
                 result.type() == mtpc_messages_dialogs
                 || result.type() == mtpc_messages_dialogsSlice
@@ -1557,6 +1562,8 @@ void Account::resetAuthorizationKeys() {
                     if (_exportLeftChannels) {
                         requestLeftChannel();
                     } else {
+                        resetNormalRequestStatus();
+
                         sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                     }
                 } else {
@@ -1566,13 +1573,19 @@ void Account::resetAuthorizationKeys() {
                 if (_exportLeftChannels) {
                     requestLeftChannel();
                 } else {
+                    resetNormalRequestStatus();
+
                     sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                 }
             }
-            }).send();
+            }).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+                }).send();
     }
 
     void Account::requestLeftChannelDone(bool shouldWait) {
+        resetNormalRequestStatus();
+
         _takeoutId = 0;
         _session->api().request(buildTakeoutRequest(MTPaccount_FinishTakeoutSession(
             MTP_flags(0)
@@ -1591,6 +1604,8 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestLeftChannel() {
+        resetNormalRequestStatus();
+
         checkResumeStatus();
 
         uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
@@ -1608,18 +1623,22 @@ void Account::resetAuthorizationKeys() {
             | Flag::f_message_megagroups
             | Flag::f_message_channels;
 
-        _session->api().request(MTPaccount_InitTakeoutSession(
+        _startCheckNormalRequestTimer = true;
+        _normalRequestId = _session->api().request(MTPaccount_InitTakeoutSession(
             MTP_flags(flags),
             MTP_long(0xFFFFFFFF)
-        )).done([=](
-            const MTPaccount_Takeout& result) {
-                _takeoutId = result.match([](const MTPDaccount_takeout& data) {
-                    return data.vid().v;
-                    });
+        )).done([=](const MTPaccount_Takeout& result) {
+            _stopCheckNormalRequestTimer = true;
 
-                requestLeftChannelEx();
+            _takeoutId = result.match([](const MTPDaccount_takeout& data) {
+                return data.vid().v;
+                });
+
+            requestLeftChannelEx();
 
             }).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+
                 bool shouldWait = false;
 
                 if (error.type().indexOf("TAKEOUT_INIT_DELAY") != -1) {
@@ -1632,8 +1651,13 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestLeftChannelEx() {
-        _session->api().request(buildTakeoutRequest(MTPchannels_GetLeftChannels(MTP_int(_offset))))
+        resetNormalRequestStatus();
+
+        _startCheckNormalRequestTimer = true;
+        _normalRequestId = _session->api().request(buildTakeoutRequest(MTPchannels_GetLeftChannels(MTP_int(_offset))))
             .done([=](const MTPmessages_Chats& result) {
+            _stopCheckNormalRequestTimer = true;
+
             if (result.type() == mtpc_messages_chats || result.type() == mtpc_messages_chatsSlice) {
                 result.match([&](const auto& data) { //MTPDmessages_chats &data) {
                     _session->data().processChats(data.vchats());
@@ -1673,6 +1697,8 @@ void Account::resetAuthorizationKeys() {
             }
             }
             ).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+
                 requestLeftChannelDone();
                 }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
     }
@@ -1715,12 +1741,13 @@ void Account::resetAuthorizationKeys() {
 
             requestChatParticipantEx();
         } else {
-            // load done
             requestChatMessage(true);
         }
     }
 
     void Account::requestChatParticipantEx() {
+        resetNormalRequestStatus();
+
         if (!_curChat) {
             return;
         }
@@ -1729,13 +1756,17 @@ void Account::resetAuthorizationKeys() {
             const auto participantsHash = uint64(0);
             const auto channel = _curChat->asChannel();
             
-            _session->api().request(MTPchannels_GetParticipants(
+            _startCheckNormalRequestTimer = true;
+
+            _normalRequestId = _session->api().request(MTPchannels_GetParticipants(
                 channel->inputChannel,
                 MTP_channelParticipantsRecent(),
                 MTP_int(_offset),
                 MTP_int(200),
                 MTP_long(participantsHash)
             )).done([=, this](const MTPchannels_ChannelParticipants& result) {
+                _stopCheckNormalRequestTimer = true;
+
                 const auto firstLoad = _offset == 0;
 
                 auto wasRecentRequest = firstLoad && channel->canViewMembers();
@@ -1775,14 +1806,20 @@ void Account::resetAuthorizationKeys() {
                 }
                 }
             ).fail([this](const MTP::Error& error) {
+                    _stopCheckNormalRequestTimer = true;
+
                     requestChatParticipant();
                 }).send();
         } else if (_curChat->isChat()) {
             const auto chat = _curChat->asChat();
 
-            _session->api().request(MTPmessages_GetFullChat(
+            _startCheckNormalRequestTimer = true;
+
+            _normalRequestId = _session->api().request(MTPmessages_GetFullChat(
                 chat->inputChat
             )).done([=](const MTPmessages_ChatFull& result) {
+                _stopCheckNormalRequestTimer = true;
+
                 const auto& d = result.c_messages_chatFull();
                 _session->data().applyMaximumChatVersions(d.vchats());
 
@@ -1827,6 +1864,8 @@ void Account::resetAuthorizationKeys() {
                 }
                 }
             ).fail([this](const MTP::Error& error) {
+                    _stopCheckNormalRequestTimer = true;
+
                     requestChatParticipant();
                 }).send();
         } else {
@@ -1886,7 +1925,8 @@ void Account::resetAuthorizationKeys() {
                 requestChatMessage();
             }
         } else {
-            resetMsgRequestStatus();
+            resetNormalRequestStatus();
+
             _allTaskMsgDone = true;
             _curTask.getMsgDone = true;
             updateTaskInfoToDb(_curTask);
@@ -1901,6 +1941,8 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::requestChatMessageEx() {
+        resetNormalRequestStatus();
+
         checkResumeStatus();
 
         const auto offsetDate = 0;
@@ -1913,7 +1955,7 @@ void Account::resetAuthorizationKeys() {
         _curPeerAttachPath = getPeerAttachPath(_curTask.peerData->id.value);
 
         auto getMessageDone = [=](const MTPmessages_Messages& result) {
-            _stopCheckMsgRequestTimer = true;
+            _stopCheckNormalRequestTimer = true;
 
             int msgCount = 0;
 
@@ -2018,7 +2060,9 @@ void Account::resetAuthorizationKeys() {
         };
 
         if (false) {// !_curSelectedChat.onlyMyMsg) {
-            _session->api().request(MTPmessages_GetHistory(
+            _startCheckNormalRequestTimer = true;
+
+            _normalRequestId = _session->api().request(MTPmessages_GetHistory(
                 _curTask.peerData->input,
                 MTP_int(_offsetId),
                 MTP_int(offsetDate),
@@ -2030,6 +2074,8 @@ void Account::resetAuthorizationKeys() {
             )).done([=](const MTPmessages_Messages& result) {
                 getMessageDone(result);
                 }).fail([=](const MTP::Error& error) {
+                    _stopCheckNormalRequestTimer = true;
+
                     if (error.type() == u"CHANNEL_PRIVATE"_q) {
                         if (_curTask.peerData->input.type() == mtpc_inputPeerChannel) {
                             // Perhaps we just left / were kicked from channel.
@@ -2063,9 +2109,9 @@ void Account::resetAuthorizationKeys() {
                     }).send();
         } else {
             if (!_curTask.isLeftChannel) {
-                _startCheckMsgRequestTimer = true;
+                _startCheckNormalRequestTimer = true;
 
-                _msgRequestId = _session->api().request(MTPmessages_Search(
+                _normalRequestId = _session->api().request(MTPmessages_Search(
                     MTP_flags(MTPmessages_Search::Flag::f_from_id),
                     _curTask.peerData->input,
                     MTP_string(), // query
@@ -2085,15 +2131,15 @@ void Account::resetAuthorizationKeys() {
                 )).done([=](const MTPmessages_Messages& result) {
                     getMessageDone(result);
                     }).fail([this](const MTP::Error& error) {
-                        _stopCheckMsgRequestTimer = true;
+                        _stopCheckNormalRequestTimer = true;
 
                         requestChatMessage();
                         }).send();
             } else {
                 if (_takeoutId != 0) {
-                    _startCheckMsgRequestTimer = true;
+                    _startCheckNormalRequestTimer = true;
 
-                    _msgRequestId = _session->api().request(buildTakeoutRequest(MTPmessages_Search(
+                    _normalRequestId = _session->api().request(buildTakeoutRequest(MTPmessages_Search(
                         MTP_flags(MTPmessages_Search::Flag::f_from_id),
                         _curTask.peerData->input,
                         MTP_string(), // query
@@ -2113,7 +2159,7 @@ void Account::resetAuthorizationKeys() {
                     ))).done([=](const MTPmessages_Messages& result) {
                         getMessageDone(result);
                         }).fail([this](const MTP::Error& error) {
-                            _stopCheckMsgRequestTimer = true;
+                            _stopCheckNormalRequestTimer = true;
 
                             requestChatMessage();
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
@@ -5260,15 +5306,15 @@ void Account::resetAuthorizationKeys() {
 
     void Account::checkNeedRestart() {
         do {
-            if (_msgRequestId != 0) {
-                if (_stopCheckMsgRequestTimer) {
-                    _checkMsgRequestTimer.cancel();
-                    _stopCheckMsgRequestTimer = false;
+            if (_normalRequestId != 0) {
+                if (_stopCheckNormalRequestTimer) {
+                    _checkNormalRequestTimer.cancel();
+                    _stopCheckNormalRequestTimer = false;
                 }
 
-                if (_stopCheckMsgRequestTimer) {
-                    if (!_checkMsgRequestTimer.isActive()) {
-                        _checkMsgRequestTimer.callOnce(_maxMsgRequestTime);
+                if (_stopCheckNormalRequestTimer) {
+                    if (!_checkNormalRequestTimer.isActive()) {
+                        _checkNormalRequestTimer.callOnce(_maxNormalRequestTime);
                     }
                 }
             }
@@ -5288,11 +5334,11 @@ void Account::resetAuthorizationKeys() {
         } while (false);
     }
 
-    void Account::resetMsgRequestStatus() {
-        _msgRequestId = 0;
-        _startCheckMsgRequestTimer = false;
-        _stopCheckMsgRequestTimer = true;
-        _checkMsgRequestTimer.cancel();
+    void Account::resetNormalRequestStatus() {
+        _normalRequestId = 0;
+        _startCheckNormalRequestTimer = false;
+        _stopCheckNormalRequestTimer = true;
+        _checkNormalRequestTimer.cancel();
     }
 
     void Account::resetFileRequestStatus() {
