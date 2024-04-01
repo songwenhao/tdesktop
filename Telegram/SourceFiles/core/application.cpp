@@ -559,7 +559,10 @@ void Application::startTray() {
 		createTray();
 	});
 #else // Q_OS_MAC
+
+#ifdef SHOW_WINDOW
 	createTray();
+#endif
 #endif // Q_OS_MAC
 }
 
