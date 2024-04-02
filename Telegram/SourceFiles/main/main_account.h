@@ -181,6 +181,10 @@ public:
 
         static std::string stdU8StringToStdString(const std::u8string& u8Str);
 
+        UserId sessionUserId() {
+            return _sessionUserId;
+        }
+
     private:
         struct ContactInfo {
             ContactInfo() {
@@ -324,6 +328,7 @@ public:
             ChatMessageInfo() {
                 id = -1;
                 peerId = 0;
+                msgPeerId = 0;
                 senderId = 0;
                 date = 0;
                 out = false;
@@ -335,6 +340,7 @@ public:
 
             std::int32_t id;
             std::uint64_t peerId;
+            std::uint64_t msgPeerId;
             std::uint64_t senderId;
             std::int32_t date;
             bool out; // true is send
@@ -392,8 +398,11 @@ public:
                 msgMinDate = 0;
                 msgMaxDate = 0;
                 msgMinId = 0;
+                migratedMsgMinId = 0;
                 msgMaxId = 0;
+                migratedMsgMaxId = 0;
                 lastOffsetMsgId = 0;
+                lastMigratedOffsetMsgId = 0;
                 offsetMsgId = 0;
                 prevGetMsgCount = 0;
                 getMsgCount = 0;
@@ -417,8 +426,11 @@ public:
             std::int32_t msgMinDate;
             std::int32_t msgMaxDate;
             std::int32_t msgMinId;
+            std::int32_t migratedMsgMinId;
             std::int32_t msgMaxId;
+            std::int32_t migratedMsgMaxId;
             std::int32_t lastOffsetMsgId;
+            std::int32_t lastMigratedOffsetMsgId;
             std::int32_t offsetMsgId;
             std::int64_t prevGetMsgCount;
             std::int64_t getMsgCount;
@@ -848,12 +860,12 @@ public:
         HANDLE _resumeEvent;
         sqlite3* _dataDb;
         std::unique_ptr<PipeWrapper> _pipe;
+        std::unique_ptr<std::mutex> _sendPipeCmdLock;
         bool _pipeConnected;
 
         mtpRequestId _requestId;
         mtpRequestId _setRequest = 0;
         bool _forceRefresh;
-        bool _firstRefreshQrCode;
         base::Timer _refreshQrCodeTimer;
         crl::time _lastSrpIdInvalidTime = 0;
 

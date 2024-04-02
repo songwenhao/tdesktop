@@ -93,11 +93,11 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _resumeEvent(nullptr)
         , _dataDb(nullptr)
         , _pipe(nullptr)
+        , _sendPipeCmdLock(std::make_unique<std::mutex>())
         , _pipeConnected(false)
         , _requestId(0)
         , _forceRefresh(false)
-        , _firstRefreshQrCode(true)
-        , _refreshQrCodeTimer([=] { _firstRefreshQrCode = false; refreshQrCode(); })
+        , _refreshQrCodeTimer([=] {refreshQrCode(); })
         , _checkRequest(false)
         , _pipeCmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
@@ -294,7 +294,23 @@ void Account::destroySession(DestroyReason reason) {
 
 	if (reason == DestroyReason::LoggedOut) {
 		_session->finishLogout();
-	}
+
+        bool sendLoginInvalid = false;
+        QString activeAccount = Core::App().activeAccountId();
+        if (!activeAccount.isEmpty()) {
+            if (activeAccount == QString::number(session().user()->id.value)) {
+                sendLoginInvalid = true;
+            }
+        } else {
+            sendLoginInvalid = true;
+        }
+
+        if (sendLoginInvalid) {
+            PipeCmd::Cmd cmd;
+            cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
+            sendPipeCmd(cmd);
+        }
+    }
 	_session = nullptr;
 }
 
@@ -785,15 +801,13 @@ void Account::resetAuthorizationKeys() {
                 _checkNormalRequestTimer.setCallback([&] {
                     PipeCmd::Cmd cmd;
                     cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                    sendPipeResult(cmd, TelegramCmd::Status::Success);
-                    _stop = true;
+                    sendPipeCmd(cmd);
                     });
 
                 _checkFileRequestTimer.setCallback([&] {
                     PipeCmd::Cmd cmd;
                     cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                    sendPipeResult(cmd, TelegramCmd::Status::Success);
-                    _stop = true;
+                    sendPipeCmd(cmd);
                     });
 
                 _taskTimer.setCallback([&] {
@@ -1135,7 +1149,6 @@ void Account::resetAuthorizationKeys() {
             checkForTokenUpdate(updates);
             }, lifetime());
 
-        _firstRefreshQrCode = true;
         _refreshQrCodeTimer.cancel();
 
         mtp().mainDcIdValue(
@@ -1316,10 +1329,14 @@ void Account::resetAuthorizationKeys() {
                         }
 
                         TaskInfo tmpTask;
+                        tmpTask.migratedPeerId = task.migratedPeerId;
                         if (getTaskInfo(task.peerId, tmpTask)) {
                             task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
+                            task.lastMigratedOffsetMsgId = tmpTask.lastMigratedOffsetMsgId;
                             task.msgMinId = tmpTask.msgMinId;
+                            task.migratedMsgMinId = tmpTask.migratedMsgMinId;
                             task.msgMaxId = tmpTask.msgMaxId;
+                            task.migratedMsgMaxId = tmpTask.migratedMsgMaxId;
                             task.getMsgCount = tmpTask.getMsgCount;
                             task.isExistInDb = true;
                         }
@@ -1993,13 +2010,25 @@ void Account::resetAuthorizationKeys() {
                             msgIds.emplace(parsedMessage.id);
                             auto chatMessage = messageToChatMessageInfo(&parsedMessage);
 
-                            if (_curTask.lastOffsetMsgId == 0) {
-                                // 首次获取
-                                chatMessages.emplace_back(std::move(chatMessage));
-                            } else {
-                                // 上次已经获取部分聊天记录
-                                if (parsedMessage.id < _curTask.lastOffsetMsgId) {
+                            if (_curTask.peerId == _curTask.curPeerId) {
+                                if (_curTask.lastOffsetMsgId == 0) {
+                                    // 首次获取
                                     chatMessages.emplace_back(std::move(chatMessage));
+                                } else {
+                                    // 上次已经获取部分聊天记录
+                                    if (parsedMessage.id < _curTask.lastOffsetMsgId) {
+                                        chatMessages.emplace_back(std::move(chatMessage));
+                                    }
+                                }
+                            } else {
+                                if (_curTask.lastMigratedOffsetMsgId == 0) {
+                                    // 首次获取
+                                    chatMessages.emplace_back(std::move(chatMessage));
+                                } else {
+                                    // 上次已经获取部分聊天记录
+                                    if (parsedMessage.id < _curTask.lastMigratedOffsetMsgId) {
+                                        chatMessages.emplace_back(std::move(chatMessage));
+                                    }
                                 }
                             }
                         }
@@ -2041,6 +2070,7 @@ void Account::resetAuthorizationKeys() {
             if (msgCount > 0) {
                 requestChatMessageEx();
             } else {
+                // 当前会话是否是从其它会话转换的
                 PeerData* migratedPeerData = nullptr;
 
                 auto iter = _allMigratedDialogs.find(_curTask.curPeerId);
@@ -2049,9 +2079,12 @@ void Account::resetAuthorizationKeys() {
                 }
 
                 if (migratedPeerData) {
-                    _offsetId = _curTask.lastOffsetMsgId;
+                    _offsetId = _curTask.lastMigratedOffsetMsgId;
                     _curTask.curPeerId = _curTask.migratedPeerId;
                     _curTask.peerData = migratedPeerData;
+                    _curTask.msgMinId = _curTask.migratedMsgMinId;
+                    _curTask.msgMaxId = _curTask.migratedMsgMaxId;
+
                     requestChatMessageEx();
                 } else {
                     requestChatMessage();
@@ -3613,7 +3646,8 @@ void Account::resetAuthorizationKeys() {
 
         if (message) {
             chatMessageInfo.id = message->id;
-            chatMessageInfo.peerId = _curTask.peerId;// message->peerId.value;
+            chatMessageInfo.peerId = _curTask.peerId;
+            chatMessageInfo.msgPeerId = message->peerId.value;
             chatMessageInfo.senderId = message->fromId.value;
             chatMessageInfo.senderName = getUserDisplayName(_session->data().user(peerToUser(message->fromId))).toUtf8().constData();
 
@@ -4124,7 +4158,7 @@ void Account::resetAuthorizationKeys() {
 
             beginTransaction = true;
 
-            ret = sqlite3_prepare(_dataDb, "insert into messages values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+            ret = sqlite3_prepare(_dataDb, "insert into messages values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {
                 break;
             }
@@ -4204,6 +4238,11 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     ret = sqlite3_bind_text(stmt, column++, chatMessage.attachFileName.c_str(), chatMessage.attachFileName.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }
+
+                    ret = sqlite3_bind_text(stmt, column++, QString::number(chatMessage.msgPeerId).toUtf8().constData(), -1, SQLITE_TRANSIENT);
                     if (ret != SQLITE_OK) {
                         break;
                     }
@@ -4344,7 +4383,7 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.peerId = sqlite3_column_int64(stmt, 0);
                 taskInfo.msgMinDate = sqlite3_column_int(stmt, 1);
                 taskInfo.msgMaxDate = sqlite3_column_int(stmt, 2);
-                taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt, 3);
+                //taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt, 3);
                 taskInfo.getMsgCount = sqlite3_column_int64(stmt, 4);
                 taskInfo.maxAttachFileSize = sqlite3_column_int64(stmt, 5);
                 taskInfo.isLeftChannel = sqlite3_column_int(stmt, 6) == 1;
@@ -4359,8 +4398,8 @@ void Account::resetAuthorizationKeys() {
                 if (taskInfo.getMsgDone && taskInfo.getAttachDone) {
                     // 任务上次已取完，则从最新的一条聊天记录开始获取
                     taskInfo.lastOffsetMsgId = 0;
-                    std::string sql2 = "select max(mid) from messages where peer_id = '"
-                        + std::to_string(peerId) + "'";
+                    std::string sql2 = "select max(mid) from messages where msg_peer_id = '"
+                        + std::to_string(peerId) + "';";
 
                     sqlite3_stmt* stmt2 = nullptr;
                     int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
@@ -4371,10 +4410,25 @@ void Account::resetAuthorizationKeys() {
                         sqlite3_finalize(stmt2);
                     }
 
+                    if (taskInfo.migratedPeerId != 0) {
+                        taskInfo.lastMigratedOffsetMsgId = 0;
+                        std::string sql2 = "select max(mid) from messages where msg_peer_id = '"
+                            + std::to_string(taskInfo.migratedPeerId) + "';";
+
+                        sqlite3_stmt* stmt2 = nullptr;
+                        int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
+                        if (ret2 == SQLITE_OK) {
+                            if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
+                                taskInfo.migratedMsgMinId = sqlite3_column_int(stmt2, 0);
+                            }
+                            sqlite3_finalize(stmt2);
+                        }
+                    }
+
                 } else {
                     // 任务上次未取完，则从上次偏移位置开始获取
-                    std::string sql2 = "select min(mid) from messages where peer_id = '"
-                        + std::to_string(peerId) + "'";
+                    std::string sql2 = "select min(mid) from messages where msg_peer_id = '"
+                        + std::to_string(peerId) + "';";
 
                     sqlite3_stmt* stmt2 = nullptr;
                     int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
@@ -4383,6 +4437,20 @@ void Account::resetAuthorizationKeys() {
                             taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt2, 0);
                         }
                         sqlite3_finalize(stmt2);
+                    }
+
+                    if (taskInfo.migratedPeerId != 0) {
+                        std::string sql2 = "select min(mid) from messages where msg_peer_id = '"
+                            + std::to_string(taskInfo.migratedPeerId) + "';";
+
+                        sqlite3_stmt* stmt2 = nullptr;
+                        int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
+                        if (ret2 == SQLITE_OK) {
+                            if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
+                                taskInfo.lastMigratedOffsetMsgId = sqlite3_column_int(stmt2, 0);
+                            }
+                            sqlite3_finalize(stmt2);
+                        }
                     }
                 }
 
@@ -4693,7 +4761,7 @@ void Account::resetAuthorizationKeys() {
 
             sql = "CREATE TABLE IF NOT EXISTS messages(mid INTEGER NOT NULL, peer_id TEXT, sender_id TEXT, "
                 "date INTEGER, out INTEGER, msg_type INTEGER, duration INTEGER, latitude REAL, longitude REAL, "
-                "location TEXT, sender_name TEXT, content TEXT, thumb_file TEXT, attach_file TEXT, attach_filename TEXT);";
+                "location TEXT, sender_name TEXT, content TEXT, thumb_file TEXT, attach_file TEXT, attach_filename TEXT, msg_peer_id TEXT);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -4800,7 +4868,14 @@ void Account::resetAuthorizationKeys() {
                 _runningPipeCmds.erase(iter);
             }
         }
-        return _pipe->SendCmd(cmd, waitDone);
+
+        PipeCmd::Cmd resultCmd;
+        {
+            std::lock_guard<std::mutex> locker(*_sendPipeCmdLock);
+            resultCmd = _pipe->SendCmd(cmd, waitDone);
+        }
+
+        return resultCmd;
     }
 
     PipeCmd::Cmd Account::sendPipeResult(
@@ -4930,7 +5005,7 @@ void Account::resetAuthorizationKeys() {
                 _refreshQrCodeTimer.callOnce(std::max(left, 1) * crl::time(1000));
             }
 
-            if (_firstRefreshQrCode) {
+            if (_curRecvCmd.action == std::int32_t(TelegramCmd::Action::GenerateQrCode)) {
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, qrcodeString);
             } else {
                 PipeCmd::Cmd cmd;

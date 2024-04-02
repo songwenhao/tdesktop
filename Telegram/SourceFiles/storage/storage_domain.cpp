@@ -52,12 +52,6 @@ Domain::~Domain() = default;
 StartResult Domain::start(const QByteArray &passcode) {
 	const auto modern = startModern(passcode);
 
-    const auto& appArgs = Core::Launcher::getApplicationArguments();
-    if (appArgs.size() == 2) {
-        Core::Quit();
-		return StartResult::Success;
-    }
-
 	if (modern == StartModernResult::Success) {
 		if (_oldVersion < AppVersion) {
 			writeAccounts();
@@ -192,6 +186,7 @@ Domain::StartModernResult Domain::startModern(
 	QJsonArray jArray;
 
 	QString activeAccount = Core::App().activeAccountId();
+    const auto& appArgs = Core::Launcher::getApplicationArguments();
 
 	for (auto i = 0; i != count; ++i) {
 		auto index = qint32();
@@ -204,6 +199,7 @@ Domain::StartModernResult Domain::startModern(
 				_dataName,
 				index);
 			auto config = account->prepareToStart(_localKey);
+
 			const auto sessionId = account->willHaveSessionUniqueId(
 				config.get());
 
@@ -211,35 +207,58 @@ Domain::StartModernResult Domain::startModern(
 				continue;
 			}
 
+            QString userId = QString::number(account->sessionUserId().bare);
+
+            // skip not target account
+            if (!activeAccount.isEmpty() && activeAccount != userId) {
+                continue;
+            }
+
 			if (!sessions.contains(sessionId)
 				&& (sessionId != 0 || (sessions.empty() && i + 1 == count))) {
 				if (sessions.empty()) {
 					active = index;
 				}
-				account->start(std::move(config));
 
-				QJsonObject jObj;
-				QString userId = QString::number(account->session().user()->id.value);
-				jObj["userId"] = userId;
-				if (activeAccount == userId) {
-					active = index;
-				}
+                account->start(std::move(config));
 
+                QJsonObject jObj;
+                jObj["userId"] = userId;
                 jObj["phone"] = account->session().user()->phone();
                 jObj["firstName"] = account->session().user()->firstName;
                 jObj["lastName"] = account->session().user()->lastName;
                 jObj["userName"] = account->session().user()->userName();
 
-				jArray.append(jObj);
+                jArray.append(jObj);
 
-				_owner->accountAddedInStorage({
-					.index = index,
-					.account = std::move(account)
-				});
-				sessions.emplace(sessionId);
+                active = index;
+
+                _owner->accountAddedInStorage({
+                    .index = index,
+                    .account = std::move(account)
+                    });
+                sessions.emplace(sessionId);
 			}
 		}
 	}
+
+    if (appArgs.size() == 2) {
+        // save existing account info
+        QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
+        QFile::remove(saveAccountsFilePath);
+        QFile saveAccountsFile(saveAccountsFilePath);
+        saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
+        if (saveAccountsFile.isOpen()) {
+            QJsonDocument jDoc;
+            jDoc.setArray(jArray);
+            saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
+            saveAccountsFile.flush();
+            saveAccountsFile.close();
+        }
+
+        Core::Quit();
+        return StartModernResult::Success;
+    }
 
 	if (sessions.empty()) {
 		_passcodeKey.reset();
@@ -251,22 +270,6 @@ Domain::StartModernResult Domain::startModern(
 		_oldVersion = 0;
 		LOG(("App Error: no accounts read."));
 		return StartModernResult::Empty;
-	}
-
-    const auto& appArgs = Core::Launcher::getApplicationArguments();
-	if (appArgs.size() == 2) {
-		// save existing account info
-		QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
-		QFile::remove(saveAccountsFilePath);
-		QFile saveAccountsFile(saveAccountsFilePath);
-		saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
-		if (saveAccountsFile.isOpen()) {
-			QJsonDocument jDoc;
-			jDoc.setArray(jArray);
-			saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
-			saveAccountsFile.flush();
-			saveAccountsFile.close();
-		}
 	}
 
 	/*if (!info.stream.atEnd()) {
