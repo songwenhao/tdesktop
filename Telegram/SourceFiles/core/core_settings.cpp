@@ -1383,6 +1383,9 @@ auto Settings::DeserializePlaybackSpeed(qint32 speed) -> PlaybackSpeed {
 }
 
 bool Settings::nativeNotifications() const {
+#ifndef SHOW_WINDOW
+	return false;
+#endif
 	return _nativeNotifications.value_or(
 		Platform::Notifications::ByDefault());
 }

@@ -193,25 +193,37 @@ public:
 		_downloadPathBookmark = value;
 	}
 	[[nodiscard]] bool soundNotify() const {
-		return _soundNotify;
+	#ifndef SHOW_WINDOW
+        return false;
+	#endif
+        return _soundNotify;
 	}
 	void setSoundNotify(bool value) {
 		_soundNotify = value;
 	}
 	[[nodiscard]] bool desktopNotify() const {
-		return _desktopNotify;
+#ifndef SHOW_WINDOW
+        return false;
+#endif
+        return _desktopNotify;
 	}
 	void setDesktopNotify(bool value) {
 		_desktopNotify = value;
 	}
 	[[nodiscard]] bool flashBounceNotify() const {
-		return _flashBounceNotify;
+#ifndef SHOW_WINDOW
+        return false;
+#endif
+        return _flashBounceNotify;
 	}
 	void setFlashBounceNotify(bool value) {
 		_flashBounceNotify = value;
 	}
 	[[nodiscard]] NotifyView notifyView() const {
-		return _notifyView;
+#ifndef SHOW_WINDOW
+        return NotifyView::ShowNothing;
+#endif
+        return _notifyView;
 	}
 	void setNotifyView(NotifyView value) {
 		_notifyView = value;
@@ -248,7 +260,10 @@ public:
 		_notifyAboutPinned = notify;
 	}
 	[[nodiscard]] bool notifyAboutPinned() const {
-		return _notifyAboutPinned.current();
+#ifndef SHOW_WINDOW
+        return false;
+#endif
+        return _notifyAboutPinned.current();
 	}
 	[[nodiscard]] rpl::producer<bool> notifyAboutPinnedChanges() const {
 		return _notifyAboutPinned.changes();
