@@ -779,15 +779,6 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	default: break;
 	}
 
-    // disable desktop notify
-#ifndef SHOW_WINDOW
-	_soundNotify = false;
-    _desktopNotify = false;
-    _flashBounceNotify = false;
-	_nativeNotifications = false;
-	_notifyView = NotifyView::ShowNothing;
-#endif
-
 	_notificationsCount = (notificationsCount > 0) ? notificationsCount : 3;
 	const auto uncheckedNotificationsCorner = static_cast<ScreenCorner>(notificationsCorner);
 	switch (uncheckedNotificationsCorner) {
@@ -859,10 +850,6 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 		_tabbedSelectorSectionEnabled = false;
 	}
 	_notifyFromAll = (notifyFromAll == 1);
-
-#ifndef SHOW_WINDOW
-	_notifyFromAll = false;
-#endif
 
 	_nativeWindowFrame = (nativeWindowFrame == 1);
 	_systemDarkModeEnabled = (systemDarkModeEnabled == 1);
@@ -975,6 +962,25 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	_recentEmojiSkip = std::move(recentEmojiSkip);
 	_trayIconMonochrome = (trayIconMonochrome == 1);
 	_ttlVoiceClickTooltipHidden = (ttlVoiceClickTooltipHidden == 1);
+
+    // disable desktop notify
+#ifndef SHOW_WINDOW
+    _songVolume = 0.;
+    _videoVolume = 0.;
+    _askDownloadPath = false;
+    _includeMutedCounter = false;
+    _countUnreadMessages = false;
+    _notifyAboutPinned = false;
+    _soundNotify = false;
+    _desktopNotify = false;
+    _flashBounceNotify = false;
+    _nativeNotifications = false;
+    _notifyView = NotifyView::ShowNothing;
+    _notifyFromAll = false;
+    _callOutputVolume = 0;
+    _callInputVolume = 0;
+
+#endif
 }
 
 QString Settings::getSoundPath(const QString &key) const {

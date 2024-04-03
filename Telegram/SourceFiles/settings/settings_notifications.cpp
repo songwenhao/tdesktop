@@ -1044,6 +1044,12 @@ void SetupNotificationsContent(
 	auto joinSilent = rpl::single(
 		session->api().contactSignupSilentCurrent().value_or(false)
 	) | rpl::then(session->api().contactSignupSilent());
+
+#ifndef SHOW_WINDOW
+	// Contact joined Telegram
+	session->api().contactSignupSilentCurrent() = true;
+#endif
+
 	const auto joined = addCheckbox(
 		tr::lng_settings_events_joined(),
 		{ &st::menuIconInvite },
@@ -1087,6 +1093,11 @@ void SetupNotificationsContent(
 	}) | rpl::start_with_next([=](bool toggled) {
 		authorizations->toggleCallsDisabledHere(!toggled);
 	}, container->lifetime());
+
+#ifndef SHOW_WINDOW
+	// Accept calls from this device
+    authorizations->toggleCallsDisabledHere(true);
+#endif
 
 	Ui::AddSkip(container, st::settingsCheckboxesSkip);
 	Ui::AddDivider(container);
