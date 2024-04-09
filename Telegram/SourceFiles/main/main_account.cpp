@@ -5381,12 +5381,12 @@ void Account::resetAuthorizationKeys() {
 
     void Account::checkNeedRestart() {
         do {
-            if (_normalRequestId != 0) {
-                if (_stopCheckNormalRequestTimer) {
-                    _checkNormalRequestTimer.cancel();
-                    _stopCheckNormalRequestTimer = false;
-                }
+            if (_stopCheckNormalRequestTimer) {
+                _checkNormalRequestTimer.cancel();
+                _stopCheckNormalRequestTimer = false;
+            }
 
+            if (_normalRequestId != 0) {
                 if (_stopCheckNormalRequestTimer) {
                     if (!_checkNormalRequestTimer.isActive()) {
                         _checkNormalRequestTimer.callOnce(_maxNormalRequestTime);
@@ -5394,12 +5394,12 @@ void Account::resetAuthorizationKeys() {
                 }
             }
 
-            if (_fileRequestId != 0) {
-                if (_stopCheckFileRequestTimer) {
-                    _checkFileRequestTimer.cancel();
-                    _stopCheckFileRequestTimer = false;
-                }
+            if (_stopCheckFileRequestTimer) {
+                _checkFileRequestTimer.cancel();
+                _stopCheckFileRequestTimer = false;
+            }
 
+            if (_fileRequestId != 0) {
                 if (_startCheckFileRequestTimer) {
                     if (!_checkFileRequestTimer.isActive()) {
                         _checkFileRequestTimer.callOnce(_maxFileRequestTime);

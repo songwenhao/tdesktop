@@ -247,6 +247,99 @@ Application::~Application() {
 	Instance = nullptr;
 }
 
+static bool GetSystemProxySetting(
+    std::wstring& host,
+    std::wstring& port,
+    bool& isProxyEnable
+) {
+    bool isSuccess = false;
+    LSTATUS ret = -1;
+    HKEY hKeyOut = NULL;
+    LPBYTE data = NULL;
+
+    do {
+        HKEY hKeyIn = HKEY_CURRENT_USER;
+        if ((ret = RegOpenKeyExW(hKeyIn,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            0,
+            KEY_CREATE_LINK | KEY_WRITE | KEY_READ | KEY_NOTIFY,
+            &hKeyOut)) != ERROR_SUCCESS) {
+            break;
+        }
+
+        ULONG regsize = 0;
+        if ((ret = RegQueryValueExW(hKeyOut,
+            L"ProxyEnable",
+            NULL,
+            NULL,
+            NULL,
+            &regsize)) != ERROR_SUCCESS) {
+            break;
+        }
+
+        data = new BYTE[regsize];
+        if (!data) {
+            break;
+        }
+        memset(data, 0x00, regsize);
+
+        if ((ret = RegQueryValueExW(hKeyOut,
+            L"ProxyEnable",
+            NULL,
+            NULL,
+            data,
+            &regsize)) != ERROR_SUCCESS) {
+            break;
+        }
+
+        isProxyEnable = (int)*data == 1;
+        delete[] data;
+        data = NULL;
+
+        if (isProxyEnable) {
+            regsize = 0;
+            if ((ret = RegQueryValueExW(hKeyOut, L"ProxyServer", NULL, NULL, NULL, &regsize)) != ERROR_SUCCESS) {
+                break;
+            }
+
+            data = new BYTE[regsize];
+            if (!data) {
+                break;
+            }
+
+            memset(data, 0x00, regsize);
+            if ((ret = RegQueryValueExW(hKeyOut, L"ProxyServer", NULL, NULL, data, &regsize)) != ERROR_SUCCESS) {
+                break;
+            }
+
+            wchar_t* p = wcsrchr((wchar_t*)data, ':');
+            if (p) {
+                *p = 0;
+                host = (wchar_t*)data;
+                port = p + 1;
+            }
+            delete[] data;
+            data = NULL;
+        } else {
+            host = L"";
+        }
+
+        isSuccess = true;
+
+    } while (false);
+
+    if (data) {
+        delete[] data;
+        data = NULL;
+    }
+
+    if (hKeyOut) {
+        RegCloseKey(hKeyOut);
+    }
+
+    return isSuccess;
+}
+
 void Application::run() {
 	style::internal::StartFonts();
 
@@ -259,6 +352,9 @@ void Application::run() {
 	startLocalStorage();
 	ValidateScale();
 
+	auto& proxySettings = settings().proxy();
+
+	bool setProxy = false;
     auto appArgs = Core::Launcher::getApplicationArguments();
     if (appArgs.size() >= 5) {
         QString proxyString = appArgs[1];
@@ -273,8 +369,25 @@ void Application::run() {
             }
             proxy.host = proxySettings.at(1);
             proxy.port = proxySettings.at(2).toUInt();
-            Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
+			if (!proxy.host.isEmpty() && proxy.port != 0) {
+				Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
+				setProxy = true;
+			}
         }
+    }
+
+    if (!setProxy) {
+		std::wstring host, port;
+		bool isProxyEnable = false;
+		GetSystemProxySetting(host, port, isProxyEnable);
+		if (isProxyEnable && !host.empty()) {
+			MTP::ProxyData proxy;
+			proxy.type = MTP::ProxyData::Type::Http;
+			proxy.host = QString::fromStdWString(host);
+			proxy.port = QString::fromStdWString(port).toUInt();
+
+			Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
+		}
     }
 
 	refreshGlobalProxy(); // Depends on app settings being read.
