@@ -181,6 +181,10 @@ public:
 
         static std::string stdU8StringToStdString(const std::u8string& u8Str);
 
+        static std::string qstringToStdString(const QString& qstr);
+
+        static std::wstring qstringToStdWString(const QString& qstr);
+
         UserId sessionUserId() {
             return _sessionUserId;
         }
@@ -216,6 +220,7 @@ public:
             std::int64_t lastMid;
             std::string peerType;
             std::int32_t left;
+            std::vector<std::string> inviteLinks; // e.g. https://t.me/g128968
         };
 
         struct MigratedDialogInfo {
@@ -575,6 +580,15 @@ public:
             void operator()(const Export::Data::UnsupportedMedia& media);
         };
 
+        enum class CurrentStep : int {
+            None = -1,
+            RequestDialog = 0,
+            RequestLeftChannel,
+            RequestChatParticipant,
+            RequestChatMessage,
+            JoinToPeer
+        };
+
         void onLoginSucess(const MTPauth_Authorization& auth);
 
         void startHandlePipeCmdThd();
@@ -604,6 +618,8 @@ public:
         void onLogOut();
 
         void onChangeDataPath();
+
+        void onJoinInPeer();
 
         void requestPhoneContacts();
         void requestContacts();
@@ -643,6 +659,9 @@ public:
             int64 offset,
             const MTPmessages_Messages& result
         );
+
+        void joinToPeer(bool first = false);
+        void joinToPeerEx();
 
         QString getPeerDisplayName(PeerData* peerData);
 
@@ -810,13 +829,27 @@ public:
 
         QString telegramActionToString(TelegramCmd::Action action);
 
-        void checkResumeStatus();
+        bool checkIsPaused();
 
         void checkNeedRestart();
 
         void resetNormalRequestStatus();
 
         void resetFileRequestStatus();
+
+        QString validatedInternalLinksDomain();
+
+        std::vector<std::string> getPeerInviteLink(PeerData* peerData);
+
+        PeerData* queryPeerByInviteLink(const QString& inviteLink);
+
+        void onResolvePeerDone(not_null<PeerData*> peer);
+
+        void joinToPeerByPhone(const QString& phone, Fn<void(not_null<PeerData*>)> done);
+
+        void joinToPeerByUsername(const QString& username, Fn<void(not_null<PeerData*>)> done);
+
+        void resolvePeerDone(const MTPcontacts_ResolvedPeer& result, Fn<void(not_null<PeerData*>)> done);
 
         /* Member variables */
         const not_null<Domain*> _domain;
@@ -857,7 +890,8 @@ public:
         bool _inited;
         bool _stop;
         bool _paused;
-        HANDLE _resumeEvent;
+        CurrentStep _currentStep;
+
         sqlite3* _dataDb;
         std::unique_ptr<PipeWrapper> _pipe;
         std::unique_ptr<std::mutex> _sendPipeCmdLock;
@@ -870,6 +904,7 @@ public:
         crl::time _lastSrpIdInvalidTime = 0;
 
         bool _checkRequest;
+        base::Timer _checkLoginTimer;
 
         std::unique_ptr<std::mutex> _pipeCmdsLock;
         std::deque<PipeCmd::Cmd> _recvPipeCmds;
@@ -899,6 +934,9 @@ public:
         bool _stopCheckNormalRequestTimer;
         base::Timer _checkNormalRequestTimer;
         const int _maxNormalRequestTime = 60 * 1000;
+
+        Export::Data::DialogInfo _curDialogInfo;
+
         std::list<PeerData*> _allChats;
         PeerData* _curChat;
 
@@ -906,10 +944,6 @@ public:
         TaskInfo _curTask;
         bool _allTaskMsgDone;
         bool _sendAllTaskDone;
-
-        crl::time _downloadAttachFileRemainSleepTime;
-
-        base::Timer _checkLoginTimer;
 
         mtpRequestId _fileRequestId;
         bool _startCheckFileRequestTimer;
@@ -935,6 +969,9 @@ public:
         bool _requestChatParticipant;
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;
+
+        std::list<QString> _peerUsernames;
+        QString _curPeerUsername;
     };
 
 } // namespace Main

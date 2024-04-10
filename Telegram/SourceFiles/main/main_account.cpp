@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
 #include "core/shortcuts.h"
+#include "core/local_url_handlers.h"
 #include "core/mime_type.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
@@ -50,6 +51,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "base/unixtime.h"
 #include "base/debug_log.h"
+#include "base/qthelp_regex.h"
+#include "base/qthelp_url.h"
 #include "qr/qr_generate.h"
 #include "styles/style_intro.h"
 #include <QBuffer>
@@ -90,7 +93,7 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _inited(false)
         , _stop(false)
         , _paused(false)
-        , _resumeEvent(nullptr)
+        , _currentStep(CurrentStep::None)
         , _dataDb(nullptr)
         , _pipe(nullptr)
         , _sendPipeCmdLock(std::make_unique<std::mutex>())
@@ -107,7 +110,6 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _curChat(nullptr)
         , _allTaskMsgDone(false)
         , _sendAllTaskDone(false)
-        , _downloadAttachFileRemainSleepTime(0)
         , _fileRequestId(0)
         , _startCheckFileRequestTimer(false)
         , _stopCheckFileRequestTimer(false)
@@ -128,11 +130,6 @@ constexpr auto kWideIdsTag = ~uint64(0);
     }
 
     Account::~Account() {
-        if (_resumeEvent) {
-            CloseHandle(_resumeEvent);
-            _resumeEvent = nullptr;
-        }
-
         if (_dataDb) {
             sqlite3_close(_dataDb);
             _dataDb = nullptr;
@@ -733,7 +730,6 @@ void Account::resetAuthorizationKeys() {
     bool Account::connectPipe() {
         _pipeConnected = true;
         _stop = false;
-        _resumeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
@@ -753,14 +749,38 @@ void Account::resetAuthorizationKeys() {
                             );
 
                             _paused = true;
-
-                            if (_resumeEvent) {
-                                ResetEvent(_resumeEvent);
-                            }
                         } else if (action == TelegramCmd::Action::Resume) {
-                            if (_resumeEvent) {
-                                SetEvent(_resumeEvent);
+                            _paused = false;
+
+                            switch (_currentStep) {
+                            case Main::Account::CurrentStep::None:
+                                break;
+                            case Main::Account::CurrentStep::RequestDialog: {
+                                requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
+                                break;
                             }
+                            case Main::Account::CurrentStep::RequestLeftChannel: {
+                                requestLeftChannelEx();
+                                break;
+                            }
+                            case Main::Account::CurrentStep::RequestChatParticipant: {
+                                requestChatParticipantEx();
+                                break;
+                            }
+                            case Main::Account::CurrentStep::RequestChatMessage: {
+                                requestChatMessageEx();
+                                break;
+                            }
+                            case Main::Account::CurrentStep::JoinToPeer: {
+                                joinToPeerEx();
+                                break;
+                            }
+                            default:
+                                break;
+                            }
+
+                            downloadAttachFileEx();
+
                         } else if (action == TelegramCmd::Action::Stop) {
                             _stop = true;
                         }
@@ -822,18 +842,14 @@ void Account::resetAuthorizationKeys() {
                             checkNeedRestart();
 
                             if (_downloadAttach) {
-                                if (_downloadAttachFileRemainSleepTime > 0) {
-                                    --_downloadAttachFileRemainSleepTime;
-                                } else {
-                                    /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
+                                /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
                                         DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
                                         if (waitCode != WAIT_TIMEOUT) {
                                             requestAttachFile();
                                         }
                                     }*/
 
-                                    downloadAttachFile();
-                                }
+                                downloadAttachFile();
                             }
 
                             if (!_logined) {
@@ -959,6 +975,8 @@ void Account::resetAuthorizationKeys() {
                         onLogOut();
                     } else if (action == TelegramCmd::Action::ChangeDataPath) {
                         onChangeDataPath();
+                    } else if (action == TelegramCmd::Action::JoinInPeer) {
+                        onJoinInPeer();
                     } else if (action == TelegramCmd::Action::Stop ||
                         action == TelegramCmd::Action::Unknown) {
                         _stop = true;
@@ -1065,7 +1083,7 @@ void Account::resetAuthorizationKeys() {
 
                         } while (false);
                         }, [&](const MTPDauth_authorizationSignUpRequired& data) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", QString::fromStdWString(L"发送验证码失败！该手机号未注册Telegram!"));
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", QString::fromWCharArray(L"发送验证码失败！该手机号未注册Telegram!"));
                             }, [&](const auto&) {
                                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                                 });
@@ -1080,7 +1098,7 @@ void Account::resetAuthorizationKeys() {
                 QString type = error.type();
                 int index = type.indexOf("FLOOD_WAIT_");
                 if (index != -1) {
-                    desc = QString::fromStdWString(L"登录频繁！");
+                    desc = QString::fromWCharArray(L"登录频繁！");
 
                     int secs = type.mid(index + QString("FLOOD_WAIT_").size()).toInt();
                     if (secs > 0) {
@@ -1183,14 +1201,14 @@ void Account::resetAuthorizationKeys() {
                 _dataPath += L"\\";
             }
 
-            _utf8DataPath = Main::Account::utf16ToUtf8(_dataPath);
+            _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = appArgs[3].toUtf8().constData();
+            _utf8RootPath = qstringToStdString(appArgs[3]);
             if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
                 _utf8RootPath.pop_back();
             }
 
-            _attachPath = appArgs[4].toStdWString();
+            _attachPath = qstringToStdWString(appArgs[4]);
             if (!_attachPath.empty() && _attachPath.back() != '\\') {
                 _attachPath += L"\\";
             }
@@ -1238,12 +1256,15 @@ void Account::resetAuthorizationKeys() {
             .arg(_downloadPeerProfilePhoto ? "yes" : "no")
         );
 
-        uploadMsg(QString::fromStdWString(L"正在获取好友列表 ..."));
+        uploadMsg(QString::fromWCharArray(L"正在获取好友列表 ..."));
 
         if (!_inited) {
             init();
         }
 
+        _curDialogInfo.input = MTP_inputPeerEmpty();
+        _curDialogInfo.topMessageDate = 0;
+        _curDialogInfo.topMessageId = 0;
         requestContacts();
     }
 
@@ -1280,82 +1301,89 @@ void Account::resetAuthorizationKeys() {
                 const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
                 if (error.error == QJsonParseError::NoError) {
                     if (document.isObject()) {
-                        TaskInfo task;
+                        do {
+                            TaskInfo task;
 
-                        task.peerId = document["peerId"].toString().toULongLong();
-                        task.curPeerId = task.peerId;
+                            if (document["peerId"].isUndefined()) {
+                                break;
+                            }
 
-                        task.maxAttachFileSize = _maxAttachFileSize;
+                            QString peerId = document["peerId"].toString();
+                            task.peerId = peerId.toULongLong();
+                            task.curPeerId = task.peerId;
 
-                        std::int32_t msgMinDate = 0;
-                        if (!document["minDate"].isUndefined()) {
-                            task.msgMinDate = document["minDate"].toInt();
-                        }
+                            task.maxAttachFileSize = _maxAttachFileSize;
 
-                        std::int32_t msgMaxDate = 0;
-                        if (!document["maxDate"].isUndefined()) {
-                            task.msgMaxDate = document["maxDate"].toInt();
-                        }
+                            std::int32_t msgMinDate = 0;
+                            if (!document["minDate"].isUndefined()) {
+                                task.msgMinDate = document["minDate"].toInt();
+                            }
 
-                        if (!document["downloadAttach"].isUndefined()) {
-                            task.downloadAttach = document["downloadAttach"].toBool();
-                        }
+                            std::int32_t msgMaxDate = 0;
+                            if (!document["maxDate"].isUndefined()) {
+                                task.msgMaxDate = document["maxDate"].toInt();
+                            }
 
-                        // 不下载附件
-                        if (!task.downloadAttach) {
-                            task.getAttachDone = true;
-                        } else {
-                            _downloadAttach = true;
-                        }
+                            if (!document["downloadAttach"].isUndefined()) {
+                                task.downloadAttach = document["downloadAttach"].toBool();
+                            }
 
-                        if (!document["onlyMyMsg"].isUndefined()) {
-                            task.onlyMyMsg = document["onlyMyMsg"].toBool();
-                        }
+                            // 不下载附件
+                            if (!task.downloadAttach) {
+                                task.getAttachDone = true;
+                            } else {
+                                _downloadAttach = true;
+                            }
 
-                        if (_allLeftChannels.find(task.peerId) != _allLeftChannels.end()) {
-                            task.isLeftChannel = true;
-                            task.onlyMyMsg = true;
-                        }
+                            if (!document["onlyMyMsg"].isUndefined()) {
+                                task.onlyMyMsg = document["onlyMyMsg"].toBool();
+                            }
 
-                        if (task.onlyMyMsg) {
-                            task.inputPeer = MTP_inputPeerSelf();
-                        }
+                            if (_allLeftChannels.find(task.peerId) != _allLeftChannels.end()) {
+                                task.isLeftChannel = true;
+                                task.onlyMyMsg = true;
+                            }
 
-                        task.peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
+                            if (task.onlyMyMsg) {
+                                task.inputPeer = MTP_inputPeerSelf();
+                            }
 
-                        auto iter = _allMigratedDialogs.find(task.peerId);
-                        if (iter != _allMigratedDialogs.end()) {
-                            task.migratedPeerId = iter->second;
-                        }
+                            task.peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
 
-                        TaskInfo tmpTask;
-                        tmpTask.migratedPeerId = task.migratedPeerId;
-                        if (getTaskInfo(task.peerId, tmpTask)) {
-                            task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
-                            task.lastMigratedOffsetMsgId = tmpTask.lastMigratedOffsetMsgId;
-                            task.msgMinId = tmpTask.msgMinId;
-                            task.migratedMsgMinId = tmpTask.migratedMsgMinId;
-                            task.msgMaxId = tmpTask.msgMaxId;
-                            task.migratedMsgMaxId = tmpTask.migratedMsgMaxId;
-                            task.getMsgCount = tmpTask.getMsgCount;
-                            task.isExistInDb = true;
-                        }
+                            auto iter = _allMigratedDialogs.find(task.peerId);
+                            if (iter != _allMigratedDialogs.end()) {
+                                task.migratedPeerId = iter->second;
+                            }
 
-                        LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9")
-                            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                            .arg(task.peerId)
-                            .arg(task.downloadAttach ? "yes" : "no")
-                            .arg(task.onlyMyMsg ? "yes" : "no")
-                            .arg(getFormatFileSize(task.maxAttachFileSize))
-                            .arg(task.msgMinDate)
-                            .arg(task.msgMaxDate)
-                            .arg(task.lastOffsetMsgId)
-                            .arg(task.isExistInDb)
-                        );
+                            TaskInfo tmpTask;
+                            tmpTask.migratedPeerId = task.migratedPeerId;
+                            if (getTaskInfo(task.peerId, tmpTask)) {
+                                task.lastOffsetMsgId = tmpTask.lastOffsetMsgId;
+                                task.lastMigratedOffsetMsgId = tmpTask.lastMigratedOffsetMsgId;
+                                task.msgMinId = tmpTask.msgMinId;
+                                task.migratedMsgMinId = tmpTask.migratedMsgMinId;
+                                task.msgMaxId = tmpTask.msgMaxId;
+                                task.migratedMsgMaxId = tmpTask.migratedMsgMaxId;
+                                task.getMsgCount = tmpTask.getMsgCount;
+                                task.isExistInDb = true;
+                            }
 
-                        if (!task.getMsgDone || !task.getAttachDone) {
-                            _tasks.emplace_back(std::move(task));
-                        }
+                            LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9")
+                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                .arg(task.peerId)
+                                .arg(task.downloadAttach ? "yes" : "no")
+                                .arg(task.onlyMyMsg ? "yes" : "no")
+                                .arg(getFormatFileSize(task.maxAttachFileSize))
+                                .arg(task.msgMinDate)
+                                .arg(task.msgMaxDate)
+                                .arg(task.lastOffsetMsgId)
+                                .arg(task.isExistInDb)
+                            );
+
+                            if (!task.getMsgDone || !task.getAttachDone) {
+                                _tasks.emplace_back(std::move(task));
+                            }
+                        } while (false);
                     }
                 }
             }
@@ -1374,6 +1402,43 @@ void Account::resetAuthorizationKeys() {
             } else {
                 requestChatMessage(true);
             }
+        }
+    }
+
+    void Account::onJoinInPeer() {
+        if (!_inited) {
+            init();
+        }
+
+        _peerUsernames.clear();
+
+        ProtobufCmd::Content protobufContent;
+        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
+            for (const auto& extra : protobufContent.extra()) {
+                if (extra.key() == "peer") {
+                    const auto& extraString = extra.string_value();
+                    auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+                    const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
+                    if (error.error == QJsonParseError::NoError) {
+                        if (document.isObject()) {
+                            if (!document["username"].isUndefined()) {
+                                _peerUsernames.emplace_back(document["username"].toString());
+                            }
+
+                            LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 ")
+                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                .arg(_peerUsernames.back())
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if (_peerUsernames.empty()) {
+            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+        } else {
+            joinToPeer(true);
         }
     }
 
@@ -1505,7 +1570,7 @@ void Account::resetAuthorizationKeys() {
         int offsetId
     ) {
         _offset = 0;
-        uploadMsg(QString::fromStdWString(L"正在获取会话列表 ..."));
+        uploadMsg(QString::fromWCharArray(L"正在获取会话列表 ..."));
 
         requestDialogsEx((
             peer
@@ -1522,6 +1587,11 @@ void Account::resetAuthorizationKeys() {
         const auto hash = uint64(0);
 
         resetNormalRequestStatus();
+
+        if (checkIsPaused()) {
+            _currentStep = CurrentStep::RequestDialog;
+            return;
+        }
 
         _startCheckNormalRequestTimer = true;
         _normalRequestId = _session->api().request(MTPmessages_GetDialogs(
@@ -1568,10 +1638,10 @@ void Account::resetAuthorizationKeys() {
                 saveChatsToDb(chats);
 
                 _offset += dialogs.size();
-                uploadMsg(QString::fromStdWString(L"正在获取会话列表, 已获取 %1 条 ...")
+                uploadMsg(QString::fromWCharArray(L"正在获取会话列表, 已获取 %1 条 ...")
                     .arg(_offset));
 
-                const auto last = info.chats.empty()
+                _curDialogInfo = info.chats.empty()
                     ? Export::Data::DialogInfo()
                     : info.chats.back();
 
@@ -1584,7 +1654,7 @@ void Account::resetAuthorizationKeys() {
                         sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
                     }
                 } else {
-                    requestDialogsEx(last.input, last.topMessageDate, last.topMessageId);
+                    requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
                 }
             } else {
                 if (_exportLeftChannels) {
@@ -1623,9 +1693,12 @@ void Account::resetAuthorizationKeys() {
     void Account::requestLeftChannel() {
         resetNormalRequestStatus();
 
-        checkResumeStatus();
+        if (checkIsPaused()) {
+            _currentStep = CurrentStep::RequestLeftChannel;
+            return;
+        }
 
-        uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
+        uploadMsg(QString::fromWCharArray(L"正在获取已退出群聊信息 ..."));
         _offset = 0;
         _takeoutId = 0;
 
@@ -1741,18 +1814,16 @@ void Account::resetAuthorizationKeys() {
         } while (false);
 
         if (nextChat) {
-            checkResumeStatus();
-
             _offset = 0;
             _curChat = nextChat;
 
             if (_curChat->isChannel()) {
                 const auto channel = _curChat->asChannel();
-                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
+                uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表 ...")
                     .arg(getChannelDisplayName(channel)));
             } else if (_curChat->isChat()) {
                 const auto chat = _curChat->asChat();
-                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
+                uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表 ...")
                     .arg(getChatDisplayName(chat)));
             }
 
@@ -1764,6 +1835,11 @@ void Account::resetAuthorizationKeys() {
 
     void Account::requestChatParticipantEx() {
         resetNormalRequestStatus();
+
+        if (checkIsPaused()) {
+            _currentStep = CurrentStep::RequestChatParticipant;
+            return;
+        }
 
         if (!_curChat) {
             return;
@@ -1808,7 +1884,7 @@ void Account::resetAuthorizationKeys() {
 
                             _offset += size;
 
-                            uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表, 已获取 %2 条 ...")
+                            uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表, 已获取 %2 条 ...")
                                 .arg(getChannelDisplayName(channel)).arg(_offset));
 
                             requestChatParticipantEx();
@@ -1901,7 +1977,7 @@ void Account::resetAuthorizationKeys() {
 
             if (!first) {
                 _curTask.getMsgDone = true;
-                uploadMsg(QString::fromStdWString(L"[%1] 聊天记录已获取完毕 ...")
+                uploadMsg(QString::fromWCharArray(L"[%1] 聊天记录已获取完毕 ...")
                     .arg(getPeerDisplayName(_curTask.peerData)));
 
                 if (_curTask.attachFileCount <= 0) {
@@ -1929,11 +2005,11 @@ void Account::resetAuthorizationKeys() {
             if (!_curTask.getMsgDone || !_curTask.getAttachDone) {
                 if (!_curTask.getMsgDone) {
                     _offsetId = _curTask.lastOffsetMsgId;
-                    uploadMsg(QString::fromStdWString(L"开始获取 [%1] 聊天记录 ...")
+                    uploadMsg(QString::fromWCharArray(L"开始获取 [%1] 聊天记录 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 } else {
                     _offsetId = 0;
-                    uploadMsg(QString::fromStdWString(L"[%1] 聊天记录已获取完毕，开始搜索附件，请耐心等待 ...")
+                    uploadMsg(QString::fromWCharArray(L"[%1] 聊天记录已获取完毕，开始搜索附件，请耐心等待 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 }
 
@@ -1952,6 +2028,7 @@ void Account::resetAuthorizationKeys() {
             if (!_downloadAttach) {
                 resetFileRequestStatus();
 
+                _currentStep = CurrentStep::None;
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
             }
         }
@@ -1960,7 +2037,10 @@ void Account::resetAuthorizationKeys() {
     void Account::requestChatMessageEx() {
         resetNormalRequestStatus();
 
-        checkResumeStatus();
+        if (checkIsPaused()) {
+            _currentStep = CurrentStep::RequestChatMessage;
+            return;
+        }
 
         const auto offsetDate = 0;
         const auto addOffset = 0;
@@ -2043,7 +2123,7 @@ void Account::resetAuthorizationKeys() {
                                 if ((_curTask.searchMsgAttachCount - _curTask.prevSearchMsgAttachCount) >= 1000) {
                                     _curTask.prevSearchMsgAttachCount = _curTask.searchMsgAttachCount;
 
-                                    uploadMsg(QString::fromStdWString(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
+                                    uploadMsg(QString::fromWCharArray(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
                                         .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.searchMsgAttachCount));
                                 }
                             }
@@ -2056,7 +2136,7 @@ void Account::resetAuthorizationKeys() {
                                 if ((_curTask.getMsgCount - _curTask.prevGetMsgCount) >= 1000) {
                                     _curTask.prevGetMsgCount = _curTask.getMsgCount;
 
-                                    uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
+                                    uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
                                         .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.getMsgCount));
                                 }
                             }
@@ -2307,7 +2387,7 @@ void Account::resetAuthorizationKeys() {
             _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
             //_curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
 
-            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
+            uploadMsg(QString::fromWCharArray(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
             downloadAttachFileEx();
 
         } while (false);
@@ -2328,11 +2408,13 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::downloadAttachFileEx() {
-        if (!_curDownloadFile) {
+        if (checkIsPaused()) {
             return;
         }
 
-        checkResumeStatus();
+        if (!_curDownloadFile) {
+            return;
+        }
 
         // 暂时屏蔽这种用法
         if (false) {//!_curDownloadFile->fileReference.isEmpty()) {
@@ -2372,7 +2454,6 @@ void Account::resetAuthorizationKeys() {
                     }
 
                     _curFileDownloading = false;
-                    _downloadAttachFileRemainSleepTime = 1;
                 }
             };
 
@@ -2430,7 +2511,7 @@ void Account::resetAuthorizationKeys() {
                         hasErr = false;
                         _curDownloadFileOffset += rawDataSize;
                         if ((_curDownloadFileOffset - _curDownloadFilePreOffset) >= 2 * 1024 * 1024) {
-                            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
+                            uploadMsg(QString::fromWCharArray(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
                                 .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize).arg(getFormatFileSize(_curDownloadFileOffset)));
                         }
                         _curDownloadFilePreOffset = _curDownloadFileOffset;
@@ -2442,7 +2523,7 @@ void Account::resetAuthorizationKeys() {
 
         if (!hasErr) {
             if (_curDownloadFileOffset >= _curDownloadFile->fileSize) {
-                uploadMsg(QString::fromStdWString(L"文件 [%1]下载完毕, 总大小[%2] ...")
+                uploadMsg(QString::fromWCharArray(L"文件 [%1]下载完毕, 总大小[%2] ...")
                     .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize));
 
                 if (_curDownloadFile->downloadDoneSignal) {
@@ -2450,7 +2531,6 @@ void Account::resetAuthorizationKeys() {
                 }
 
                 _curFileDownloading = false;
-                _downloadAttachFileRemainSleepTime = 1;
             } else {
                 downloadAttachFileEx();
             }
@@ -2460,7 +2540,6 @@ void Account::resetAuthorizationKeys() {
             }
 
             _curFileDownloading = false;
-            _downloadAttachFileRemainSleepTime = 1;
         }
     }
 
@@ -2597,6 +2676,49 @@ void Account::resetAuthorizationKeys() {
                 });
     }
 
+    void Account::joinToPeer(bool first) {
+        QString peerUsername;
+
+        do {
+            if (_peerUsernames.empty()) {
+                break;
+            }
+
+            if (!first) {
+                _peerUsernames.pop_front();
+            }
+
+            if (_peerUsernames.empty()) {
+                break;
+            }
+
+            peerUsername = _peerUsernames.front();
+
+        } while (false);
+
+        if (!peerUsername.isEmpty()) {
+            _curPeerUsername = peerUsername;
+
+            uploadMsg(QString::fromWCharArray(L"正在尝试加入群组或频道 [%1] ...")
+                .arg(_curPeerUsername));
+
+            joinToPeerEx();
+        } else {
+            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+        }
+    }
+
+    void Account::joinToPeerEx() {
+        resetNormalRequestStatus();
+
+        if (checkIsPaused()) {
+            _currentStep = CurrentStep::JoinToPeer;
+            return;
+        }
+
+        joinToPeerByUsername(_curPeerUsername, std::bind(&Account::onResolvePeerDone, this, std::placeholders::_1));
+    }
+
     QString Account::getPeerDisplayName(PeerData* peerData) {
         QString name;
 
@@ -2696,11 +2818,19 @@ void Account::resetAuthorizationKeys() {
     }
 
     std::string Account::utf16ToUtf8(const std::wstring& utf16Str) {
-        return QString::fromStdWString(utf16Str).toUtf8().constData();
+        return QString::fromStdWString(utf16Str).toStdString();
     }
 
     std::string Account::stdU8StringToStdString(const std::u8string& u8Str) {
         return (const char*)u8Str.c_str();
+    }
+
+    std::string Account::qstringToStdString(const QString& qstr) {
+        return qstr.toStdString();
+    }
+
+    std::wstring Account::qstringToStdWString(const QString& qstr) {
+        return qstr.toStdWString();
     }
 
     QString Account::getFormatFileSize(double fileSize) {
@@ -2831,10 +2961,10 @@ void Account::resetAuthorizationKeys() {
             }
 
             contactInfo.id = userData->id.value;
-            contactInfo.firstName = userData->firstName.toUtf8().constData();
-            contactInfo.lastName = userData->lastName.toUtf8().constData();
-            contactInfo.userName = userData->username().toUtf8().constData();
-            contactInfo.phone = userData->phone().toUtf8().constData();
+            contactInfo.firstName = qstringToStdString(userData->firstName);
+            contactInfo.lastName = qstringToStdString(userData->lastName);
+            contactInfo.userName = qstringToStdString(userData->username());
+            contactInfo.phone = qstringToStdString(userData->phone());
 
             if (userData->flags() == UserDataFlag::Deleted) {
                 contactInfo.deleted = 1;
@@ -2888,21 +3018,24 @@ void Account::resetAuthorizationKeys() {
             if (const UserData* userData = peerData->asUser()) {
                 dialogInfo.id = userData->id.value;
 
-                dialogInfo.name = (userData->firstName + userData->lastName).toUtf8().constData();
+                dialogInfo.name = qstringToStdString(userData->firstName + userData->lastName);
                 if (dialogInfo.name.empty()) {
-                    dialogInfo.name = userData->username().toUtf8().constData();
+                    dialogInfo.name = qstringToStdString(userData->username());
                 }
             } else if (const ChatData* chatData = peerData->asChat()) {
                 dialogInfo.id = chatData->id.value;
-                dialogInfo.name = chatData->name().toUtf8().constData();
+                dialogInfo.name = qstringToStdString(chatData->name());
                 dialogInfo.date = chatData->date;
             } else if (const ChannelData* channelData = peerData->asChannel()) {
                 dialogInfo.id = channelData->id.value;
-                dialogInfo.name = channelData->name().toUtf8().constData();
+                dialogInfo.name = qstringToStdString(channelData->name());
                 dialogInfo.date = channelData->date;
+
+                // 群组或频道邀请链接
+                dialogInfo.inviteLinks = getPeerInviteLink(peerData);
             } else {
                 dialogInfo.id = peerData->id.value;
-                dialogInfo.name = peerData->name().toUtf8().constData();
+                dialogInfo.name = qstringToStdString(peerData->name());
             }
         }
 
@@ -2921,14 +3054,14 @@ void Account::resetAuthorizationKeys() {
             if (peerData->isChat()) {
                 if (const ChatData* chatData = peerData->asChat()) {
                     chatInfo.id = chatData->id.value;
-                    chatInfo.title = chatData->name().toUtf8().constData();
+                    chatInfo.title = qstringToStdString(chatData->name());
                     chatInfo.date = chatData->date;
                     chatInfo.membersCount = chatData->participants.size();
                 }
             } else if (peerData->isChannel()) {
                 if (const ChannelData* channelData = peerData->asChannel()) {
                     chatInfo.id = channelData->id.value;
-                    chatInfo.title = channelData->name().toUtf8().constData();
+                    chatInfo.title = qstringToStdString(channelData->name());
                     chatInfo.channelName = chatInfo.title;
                     chatInfo.date = channelData->date;
                     chatInfo.isChannel = 1;
@@ -2940,7 +3073,7 @@ void Account::resetAuthorizationKeys() {
                 }
             } else {
                 chatInfo.id = peerData->id.value;
-                chatInfo.title = peerData->name().toUtf8().constData();
+                chatInfo.title = qstringToStdString(peerData->name());
             }
         }
 
@@ -2952,10 +3085,10 @@ void Account::resetAuthorizationKeys() {
 
         if (userData) {
             participantInfo.id = userData->id.value;
-            participantInfo.firstName = userData->firstName.toUtf8().constData();
-            participantInfo.lastName = userData->lastName.toUtf8().constData();
-            participantInfo.userName = userData->username().toUtf8().constData();
-            participantInfo.phone = userData->phone().toUtf8().constData();
+            participantInfo.firstName = qstringToStdString(userData->firstName);
+            participantInfo.lastName = qstringToStdString(userData->lastName);
+            participantInfo.userName = qstringToStdString(userData->username());
+            participantInfo.phone = qstringToStdString(userData->phone());
 
             if (userData->isContact()) {
                 participantInfo._type = (const char*)std::u8string(u8"好友").c_str();
@@ -2986,22 +3119,22 @@ void Account::resetAuthorizationKeys() {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建群 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 创建群 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditTitle& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群标题为 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 修改群标题为 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditPhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群头像").arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 修改群头像").arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeletePhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 删除群头像").arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 删除群头像").arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatAddUser& actionContent) {
@@ -3016,62 +3149,62 @@ void Account::resetAuthorizationKeys() {
             msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
         }
 
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(_serviceFrom).arg(msgContent)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(_serviceFrom).arg(msgContent)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeleteUser& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 移除 %2").arg(_serviceFrom).arg(removedUserName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 移除 %2").arg(_serviceFrom).arg(removedUserName)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByLink& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.inviterId)));
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 通过%2的链接加入").arg(_serviceFrom).arg(userName)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 通过%2的链接加入").arg(_serviceFrom).arg(userName)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"创建频道 <%2>")
-            .arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"创建频道 <%2>")
+            .arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatMigrateTo& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 转换本群为超级群")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 转换本群为超级群")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelMigrateFrom& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 由普通群转换为超级群")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 由普通群转换为超级群")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPinMessage& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 固定本条消息")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 固定本条消息")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionHistoryClear& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 清空聊天记录")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 清空聊天记录")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGameScore& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 游戏得分%2")
-            .arg(_serviceFrom).arg(actionContent.score)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 游戏得分%2")
+            .arg(_serviceFrom).arg(actionContent.score)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPaymentSent& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         const auto amount = Export::Data::FormatMoneyAmount(actionContent.amount, actionContent.currency);
         if (actionContent.recurringUsed) {
-            _chatMessageInfo.content = QString("You were charged " + amount + " via recurring payment").toUtf8().constData();
+            _chatMessageInfo.content = QString("You were charged " + amount + " via recurring payment").toStdString();
         } else {
             QString result = "You have successfully transferred "
                 + amount
@@ -3093,35 +3226,35 @@ void Account::resetAuthorizationKeys() {
         switch (actionContent.discardReason) {
         case Export::Data::ActionPhoneCall::DiscardReason::Busy:
         {
-            discardReason = QString::fromStdWString(L"拒接");
+            discardReason = QString::fromWCharArray(L"拒接");
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Disconnect:
         {
-            discardReason = QString::fromStdWString(L"挂断");
+            discardReason = QString::fromWCharArray(L"挂断");
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Hangup:
         {
-            discardReason = QString::fromStdWString(L"通话时长: %1秒").arg(actionContent.duration);
+            discardReason = QString::fromWCharArray(L"通话时长: %1秒").arg(actionContent.duration);
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Missed:
         {
-            discardReason = QString::fromStdWString(L"未接通");
+            discardReason = QString::fromWCharArray(L"未接通");
         }
         break;
         default:
             break;
         }
 
-        _chatMessageInfo.content = (QString("%1 发起语音通话 %2").arg(userName).arg(discardReason)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发起语音通话 %2").arg(userName).arg(discardReason)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionScreenshotTaken& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 took a screenshot")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 took a screenshot")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionCustomAction& actionContent) {
@@ -3140,7 +3273,7 @@ void Account::resetAuthorizationKeys() {
                 + actionContent.domain);
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSecureValuesSent& actionContent) {
@@ -3187,19 +3320,19 @@ void Account::resetAuthorizationKeys() {
             + content;
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionContactSignUp& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined Telegram")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 joined Telegram")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneNumberRequest& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 requested your phone number")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 requested your phone number")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGeoProximityReached& actionContent) {
@@ -3234,12 +3367,12 @@ void Account::resetAuthorizationKeys() {
         }
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCall& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_CALL;
-        _chatMessageInfo.content = (QString("%1 发起群通话, 时长: %2秒").arg(_serviceFrom).arg(actionContent.duration)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发起群通话, 时长: %2秒").arg(_serviceFrom).arg(actionContent.duration)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionInviteToGroupCall& actionContent) {
@@ -3253,7 +3386,7 @@ void Account::resetAuthorizationKeys() {
             msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
         }
 
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2 进行语音通话").arg(_serviceFrom).arg(msgContent)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2 进行语音通话").arg(_serviceFrom).arg(msgContent)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetMessagesTTL& actionContent) {
@@ -3290,7 +3423,7 @@ void Account::resetAuthorizationKeys() {
                     + " disabled the auto-delete timer"));
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCallScheduled& actionContent) {
@@ -3300,19 +3433,19 @@ void Account::resetAuthorizationKeys() {
             : (_serviceFrom + " scheduled a voice chat for " + dateText);
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetChatTheme& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 设置聊天背景")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 设置聊天背景")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByRequest& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined group by request")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 joined group by request")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionWebViewDataSent& actionContent) {
@@ -3321,7 +3454,7 @@ void Account::resetAuthorizationKeys() {
             + "> button to the bot";
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiftPremium& actionContent) {
@@ -3343,55 +3476,55 @@ void Account::resetAuthorizationKeys() {
         } while (false);
 
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = content.toUtf8().constData();
+        _chatMessageInfo.content = content.toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发布公告: %2")
-            .arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发布公告: %2")
+            .arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicEdit& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 编辑公告: %2")
-            .arg(_serviceFrom).arg(actionContent.title.constData())).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 编辑公告: %2")
+            .arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSuggestProfilePhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromStdWString(L"%1 suggests to use this photo")
-            .arg(_serviceFrom)).toUtf8().constData();
+        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 suggests to use this photo")
+            .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionRequestedPeer& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetChatWallPaper& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiftCode& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiveawayLaunch& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiveawayResults& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionBoostApply& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = QString("requested: "_q).toUtf8().constData();
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
 
     Main::Account::MessageMediaVisitor::MessageMediaVisitor(
@@ -3430,7 +3563,7 @@ void Account::resetAuthorizationKeys() {
                 break;
             }
 
-            _chatMessageInfo.attachFileName = QString("%1.jpg").arg(_chatMessageInfo.id).toUtf8().constData();
+            _chatMessageInfo.attachFileName = QString("%1.jpg").arg(_chatMessageInfo.id).toStdString();
             _chatMessageInfo.msgType = IMMsgType::APP_MSG_PIC;
 
             file.relativePath = _account._curPeerAttachPath;
@@ -3448,10 +3581,10 @@ void Account::resetAuthorizationKeys() {
             downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
             downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
             
-            _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
+            _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toStdString());
 
             if (file.size == 0 || file.size > _account._maxAttachFileSize) {
-                _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
+                _account.uploadMsg(QString::fromWCharArray(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
@@ -3460,7 +3593,7 @@ void Account::resetAuthorizationKeys() {
 
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
-                _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
+                _account.uploadMsg(QString::fromWCharArray(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
@@ -3578,7 +3711,7 @@ void Account::resetAuthorizationKeys() {
             }
 
             if (file.size == 0 || file.size > _account._maxAttachFileSize) {
-                _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
+                _account.uploadMsg(QString::fromWCharArray(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
@@ -3587,7 +3720,7 @@ void Account::resetAuthorizationKeys() {
 
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
-                _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
+                _account.uploadMsg(QString::fromWCharArray(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
@@ -3839,6 +3972,20 @@ void Account::resetAuthorizationKeys() {
                     if (ret != SQLITE_OK) {
                         break;
                     }
+
+                    std::string inviteLinks;
+                    for (const auto& inviteLink : dialog.inviteLinks) {
+                        if (!inviteLinks.empty()) {
+                            inviteLinks += ",";
+                        }
+
+                        inviteLinks += inviteLink;
+                    }
+
+                    /*ret = sqlite3_bind_text(stmt, column++, inviteLinks.c_str(), inviteLinks.size(), SQLITE_STATIC);
+                    if (ret != SQLITE_OK) {
+                        break;
+                    }*/
 
                     ret = sqlite3_step(stmt);
 
@@ -4384,7 +4531,7 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.msgMinDate = sqlite3_column_int(stmt, 1);
                 taskInfo.msgMaxDate = sqlite3_column_int(stmt, 2);
                 //taskInfo.lastOffsetMsgId = sqlite3_column_int(stmt, 3);
-                taskInfo.getMsgCount = sqlite3_column_int64(stmt, 4);
+                //taskInfo.getMsgCount = sqlite3_column_int64(stmt, 4);
                 taskInfo.maxAttachFileSize = sqlite3_column_int64(stmt, 5);
                 taskInfo.isLeftChannel = sqlite3_column_int(stmt, 6) == 1;
                 taskInfo.onlyMyMsg = sqlite3_column_int(stmt, 7) == 1;
@@ -4393,6 +4540,18 @@ void Account::resetAuthorizationKeys() {
                 taskInfo.getAttachDone = sqlite3_column_int(stmt, 10) == 1;
                 if (!taskInfo.downloadAttach) {
                     taskInfo.getAttachDone = true;
+                }
+
+                std::string sql2 = "select count(mid) from messages where peer_id = '"
+                    + std::to_string(peerId) + "';";
+
+                sqlite3_stmt* stmt2 = nullptr;
+                int ret2 = sqlite3_prepare(_dataDb, sql2.c_str(), -1, &stmt2, nullptr);
+                if (ret2 == SQLITE_OK) {
+                    if ((ret2 = sqlite3_step(stmt2)) == SQLITE_ROW) {
+                        taskInfo.getMsgCount = sqlite3_column_int(stmt2, 0);
+                    }
+                    sqlite3_finalize(stmt2);
                 }
 
                 if (taskInfo.getMsgDone && taskInfo.getAttachDone) {
@@ -5088,7 +5247,7 @@ void Account::resetAuthorizationKeys() {
                             QString type = error.type();
                             int index = type.indexOf("FLOOD_WAIT_");
                             if (index != -1) {
-                                desc = QString::fromStdWString(L"登录频繁！");
+                                desc = QString::fromWCharArray(L"登录频繁！");
 
                                 int secs = type.mid(index + QString("FLOOD_WAIT_").size()).toInt();
                                 if (secs > 0) {
@@ -5366,35 +5525,32 @@ void Account::resetAuthorizationKeys() {
         return actionString;
     }
 
-    void Account::checkResumeStatus() {
+    bool Account::checkIsPaused() {
         if (_paused) {
-            if (_resumeEvent) {
-                while (!_stop) {
-                    if (WaitForSingleObject(_resumeEvent, 1000) != WAIT_TIMEOUT) {
-                        _paused = false;
-                        break;
-                    }
-                }
-            }
+            resetNormalRequestStatus();
+
+            resetFileRequestStatus();
         }
+
+        return _paused;
     }
 
     void Account::checkNeedRestart() {
         do {
-            if (_stopCheckNormalRequestTimer) {
+            if (_paused || _stopCheckNormalRequestTimer) {
                 _checkNormalRequestTimer.cancel();
                 _stopCheckNormalRequestTimer = false;
             }
 
             if (_normalRequestId != 0) {
-                if (_stopCheckNormalRequestTimer) {
+                if (_startCheckNormalRequestTimer) {
                     if (!_checkNormalRequestTimer.isActive()) {
                         _checkNormalRequestTimer.callOnce(_maxNormalRequestTime);
                     }
                 }
             }
 
-            if (_stopCheckFileRequestTimer) {
+            if (_paused || _stopCheckFileRequestTimer) {
                 _checkFileRequestTimer.cancel();
                 _stopCheckFileRequestTimer = false;
             }
@@ -5421,6 +5577,300 @@ void Account::resetAuthorizationKeys() {
         _startCheckFileRequestTimer = false;
         _stopCheckFileRequestTimer = true;
         _checkFileRequestTimer.cancel();
+    }
+
+    [[nodiscard]] QString Account::validatedInternalLinksDomain() {
+        QString dominLink = MTP::ConfigFields().internalLinksDomain;
+
+        // This domain should start with 'http[s]://' and end with '/'.
+        // Like 'https://telegram.me/' or 'https://t.me/'.
+        const auto& domain = _session->serverConfig().internalLinksDomain;
+        const auto prefixes = {
+            u"https://"_q,
+            u"http://"_q,
+        };
+        for (const auto& prefix : prefixes) {
+            if (domain.startsWith(prefix, Qt::CaseInsensitive)) {
+                dominLink = domain.endsWith('/')
+                    ? domain
+                    : MTP::ConfigFields().internalLinksDomain;
+                break;
+            }
+        }
+
+        return dominLink;
+    }
+
+    std::vector<std::string> Account::getPeerInviteLink(PeerData* peerData) {
+        std::vector<std::string> inviteLinks;
+        std::vector<QString> usernames;
+
+        if (const auto user = peerData->asUser()) {
+            usernames = user->usernames();
+        } else if (const auto channel = peerData->asChannel()) {
+            usernames = channel->usernames();
+        }
+        
+        QString dominLink = validatedInternalLinksDomain();
+        for (const auto& username : usernames) {
+            if (!username.isEmpty()) {
+                inviteLinks.emplace_back(qstringToStdString(dominLink + username));
+            }
+        }
+
+        return inviteLinks;
+    }
+
+    PeerData* Account::queryPeerByInviteLink(const QString& inviteLink) {
+        using namespace qthelp;
+
+        PeerData* peerData = nullptr;
+
+        do 
+        {
+            if (inviteLink.isEmpty()) {
+                break;
+            }
+
+            QString convertedUrl;
+
+            do {
+                const auto local = Core::TryConvertUrlToLocal(inviteLink);
+                if (Core::InternalPassportLink(local)) {
+                    break;
+                }
+
+                if (UrlClickHandler::IsEmail(inviteLink)) {
+                    break;
+                } else if (local.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
+                    convertedUrl = local;
+                    break;
+                } else if (local.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
+                    break;
+                }
+            } while (false);
+
+            if (convertedUrl.isEmpty()) {
+                break;
+            }
+
+            const QString regstr = QString::fromStdString(R"(^resolve/?\?(.+)(#|$))");
+            const auto match = regex_match(convertedUrl, regstr, RegExOption::CaseInsensitive);
+            if (!match) {
+                break;
+            }
+
+            const auto params = url_parse_params(
+                match->captured(1),
+                qthelp::UrlParamNameTransform::ToLower);
+            const auto domainParam = params.value(u"domain"_q);
+            const auto appnameParam = params.value(u"appname"_q);
+
+            // Fix t.me/s/username links.
+            const auto webChannelPreviewLink = (domainParam == u"s"_q)
+                && !appnameParam.isEmpty();
+            auto domain = webChannelPreviewLink ? appnameParam : domainParam;
+            auto phone = params.value(u"phone"_q);
+            const auto validDomain = [](QString& domain) {
+                bool valid = qthelp::regex_match(
+                    u"^[a-zA-Z0-9\\.\\_]+$"_q,
+                    domain,
+                    {}
+                ).valid();
+
+                if (!valid) {
+                    domain.clear();
+                }
+
+                return valid;
+                };
+            const auto validPhone = [](QString& phone) {
+                bool valid = qthelp::regex_match(u"^[0-9]+$"_q, phone, {}).valid();
+                if (!valid) {
+                    phone.clear();
+                }
+                return valid;
+                };
+
+            if (domain == u"telegrampassport"_q) {
+                break;
+            } else if (!validDomain(domain) && !validPhone(phone)) {
+                break;
+            }
+
+            /*if (!phone.isEmpty()) {
+                resolvePhone(info.phone, [=](not_null<PeerData*> peer) {
+                    showPeerByLinkResolved(peer, info);
+                    });
+            } else if (!domain.isEmpty()) {
+                resolveUsername(*name, [=](not_null<PeerData*> peer) {
+                    if (info.startAutoSubmit) {
+                        peer->session().api().blockedPeers().unblock(
+                            peer,
+                            [=](bool) { showPeerByLinkResolved(peer, info); },
+                            true);
+                    } else {
+                        showPeerByLinkResolved(peer, info);
+                    }
+                    });
+            } else if (const auto id = std::get_if<ChannelId>(&info.usernameOrId)) {
+                resolveChannelById(*id, [=](not_null<ChannelData*> channel) {
+                    showPeerByLinkResolved(channel, info);
+                    });
+            }*/
+
+        } while (false);
+
+        return peerData;
+    }
+
+    void Account::onResolvePeerDone(not_null<PeerData*> peer) {
+        bool sendJoinRequest = false;
+
+        do 
+        {
+            auto isJoinChannel = [](PeerData* peer) -> bool {
+                return peer && peer->isChannel() && !peer->asChannel()->amIn();
+                };
+
+            if (!peer || !peer->isChannel() || !isJoinChannel(peer)) {
+                break;
+            }
+
+            ChannelData* channel = peer->asChannel();
+            if (!channel) {
+                break;
+            }
+
+            if (channel->amIn()) {
+                session().changes().peerUpdated(
+                    channel,
+                    Data::PeerUpdate::Flag::ChannelAmIn);
+            } else {
+                sendJoinRequest = true;
+                _startCheckNormalRequestTimer = true;
+                _normalRequestId = _session->api().request(MTPchannels_JoinChannel(
+                    channel->inputChannel
+                )).done([=](const MTPUpdates& result) {
+                    _stopCheckNormalRequestTimer = true;
+                    session().api().applyUpdates(result);
+                    joinToPeer();
+                    }).fail([=](const MTP::Error& error) {
+                        _stopCheckNormalRequestTimer = true;
+                        const auto& type = error.type();
+
+                        if (type == u"CHANNEL_PRIVATE"_q
+                            && channel->invitePeekExpires()) {
+                            channel->privateErrorReceived();
+                        } else if (type == u"CHANNELS_TOO_MUCH"_q) {
+                            uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！达到人数上限！").arg(_curPeerUsername));
+                        } else {
+                            const QString text = [&] {
+                                if (type == u"INVITE_REQUEST_SENT"_q) {
+                                    return channel->isMegagroup()
+                                        ? QString::fromWCharArray(L"一旦群组管理员批准您的请求，您就会被添加到群组中。")
+                                        : QString::fromWCharArray(L"一旦频道管理员批准您的请求，您就会被添加到该频道。");
+                                } else if (type == u"CHANNEL_PRIVATE"_q
+                                    || type == u"CHANNEL_PUBLIC_GROUP_NA"_q
+                                    || type == u"USER_BANNED_IN_CHANNEL"_q) {
+                                    return channel->isMegagroup()
+                                        ? QString::fromWCharArray(L"该群组无法访问。")
+                                        : QString::fromWCharArray(L"该频道无法访问。");
+                                } else if (type == u"USERS_TOO_MUCH"_q) {
+                                    return QString::fromWCharArray(L"这个群已经满了。");
+                                }
+                                return QString();
+                                }();
+
+                                if (!text.isEmpty()) {
+                                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(text));
+                                }
+                        }
+                        
+                        joinToPeer();
+
+                        }).send();
+
+                        using Flag = ChannelDataFlag;
+                        channel->setFlags(channel->flags() | Flag::SimilarExpanded);
+            }
+
+        } while (false);
+
+        if (!sendJoinRequest) {
+            joinToPeer();
+        }
+    }
+
+    void Account::joinToPeerByPhone(
+        const QString& phone,
+        Fn<void(not_null<PeerData*>)> done) {
+        if (const auto peer = _session->data().userByPhone(phone)) {
+            done(peer);
+            return;
+        }
+
+        _startCheckNormalRequestTimer = true;
+        _session->api().request(base::take(_normalRequestId)).cancel();
+        _normalRequestId = _session->api().request(MTPcontacts_ResolvePhone(
+            MTP_string(phone)
+        )).done([=](const MTPcontacts_ResolvedPeer& result) {
+            resolvePeerDone(result, done);
+            }).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+                _normalRequestId = 0;
+                if (error.code() == 400) {
+                    
+                }
+
+                joinToPeer();
+
+                }).send();
+    }
+
+    void Account::joinToPeerByUsername(
+        const QString& username,
+        Fn<void(not_null<PeerData*>)> done) {
+        if (const auto peer = _session->data().peerByUsername(username)) {
+            done(peer);
+            return;
+        }
+        _session->api().request(base::take(_normalRequestId)).cancel();
+        _startCheckNormalRequestTimer = true;
+        _normalRequestId = _session->api().request(MTPcontacts_ResolveUsername(
+            MTP_string(username)
+        )).done([=](const MTPcontacts_ResolvedPeer& result) {
+            resolvePeerDone(result, done);
+            }).fail([=](const MTP::Error& error) {
+                _stopCheckNormalRequestTimer = true;
+                _normalRequestId = 0;
+                if (error.code() == 400) {
+                    
+                }
+
+                joinToPeer();
+
+                }).send();
+    }
+
+    void Account::resolvePeerDone(
+        const MTPcontacts_ResolvedPeer& result,
+        Fn<void(not_null<PeerData*>)> done) {
+        _stopCheckNormalRequestTimer = true;
+        _normalRequestId = 0;
+        bool ok = false;
+        result.match([&](const MTPDcontacts_resolvedPeer& data) {
+            _session->data().processUsers(data.vusers());
+            _session->data().processChats(data.vchats());
+            if (const auto peerId = peerFromMTP(data.vpeer())) {
+                done(_session->data().peer(peerId));
+                ok = true;
+            }
+            });
+
+        if (!ok) {
+            joinToPeer();
+        }
     }
 
 } // namespace Main

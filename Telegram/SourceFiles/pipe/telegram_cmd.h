@@ -26,7 +26,8 @@ namespace TelegramCmd {
         Resume,
         Stop,
         Restart,
-        LoginInvalid
+        LoginInvalid,
+        JoinInPeer
     };
 
     enum class Status : std::int32_t {
