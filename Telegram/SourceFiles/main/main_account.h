@@ -220,7 +220,7 @@ public:
             std::int64_t lastMid;
             std::string peerType;
             std::int32_t left;
-            std::vector<std::string> inviteLinks; // e.g. https://t.me/g128968
+            std::vector<QString> usernames; // e.g. name: 公开群组1 username: g128968
         };
 
         struct MigratedDialogInfo {

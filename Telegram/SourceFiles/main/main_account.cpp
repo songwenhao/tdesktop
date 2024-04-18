@@ -3031,8 +3031,13 @@ void Account::resetAuthorizationKeys() {
                 dialogInfo.name = qstringToStdString(channelData->name());
                 dialogInfo.date = channelData->date;
 
-                // 群组或频道邀请链接
-                dialogInfo.inviteLinks = getPeerInviteLink(peerData);
+                // 群组或频道的唯一名称
+                if (const auto user = peerData->asUser()) {
+                    dialogInfo.usernames = user->usernames();
+                } else if (const auto channel = peerData->asChannel()) {
+                    dialogInfo.usernames = channel->usernames();
+                }
+
             } else {
                 dialogInfo.id = peerData->id.value;
                 dialogInfo.name = qstringToStdString(peerData->name());
@@ -3929,7 +3934,7 @@ void Account::resetAuthorizationKeys() {
 
             beginTransaction = true;
 
-            ret = sqlite3_prepare(_dataDb, "insert into dialogs values (?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
+            ret = sqlite3_prepare(_dataDb, "insert into dialogs values (?, ?, ?, ?, ?, ?, ?, ?);", -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {
                 break;
             }
@@ -3973,19 +3978,19 @@ void Account::resetAuthorizationKeys() {
                         break;
                     }
 
-                    std::string inviteLinks;
-                    for (const auto& inviteLink : dialog.inviteLinks) {
-                        if (!inviteLinks.empty()) {
-                            inviteLinks += ",";
+                    std::string usernames;
+                    for (const auto& username : dialog.usernames) {
+                        if (!usernames.empty()) {
+                            usernames += "\n";
                         }
 
-                        inviteLinks += inviteLink;
+                        usernames += qstringToStdString(username);
                     }
 
-                    /*ret = sqlite3_bind_text(stmt, column++, inviteLinks.c_str(), inviteLinks.size(), SQLITE_STATIC);
+                    ret = sqlite3_bind_text(stmt, column++, usernames.c_str(), usernames.size(), SQLITE_STATIC);
                     if (ret != SQLITE_OK) {
                         break;
-                    }*/
+                    }
 
                     ret = sqlite3_step(stmt);
 
@@ -4894,7 +4899,7 @@ void Account::resetAuthorizationKeys() {
             }
 
             sql = "CREATE TABLE IF NOT EXISTS dialogs(did TEXT NOT NULL, name TEXT, date INTEGER, "
-                "unread_count INTEGER, last_mid INTEGER, peerType TEXT, left INTEGER);";
+                "unread_count INTEGER, last_mid INTEGER, peerType TEXT, left INTEGER, usernames TEXT);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
