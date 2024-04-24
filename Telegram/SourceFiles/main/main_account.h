@@ -971,6 +971,7 @@ public:
         bool _exportLeftChannels;
 
         std::list<QString> _peerUsernames;
+        std::map<QString, bool> _peerJoinedStatus;
         QString _curPeerUsername;
     };
 

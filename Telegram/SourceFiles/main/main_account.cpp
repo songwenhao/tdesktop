@@ -59,6 +59,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QFile>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QJsonArray>
 
 namespace Main {
 namespace {
@@ -1411,26 +1412,21 @@ void Account::resetAuthorizationKeys() {
         }
 
         _peerUsernames.clear();
+        _peerJoinedStatus.clear();
 
         ProtobufCmd::Content protobufContent;
         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
             for (const auto& extra : protobufContent.extra()) {
-                if (extra.key() == "peer") {
+                if (extra.key() == "peerUsername") {
                     const auto& extraString = extra.string_value();
-                    auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-                    const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
-                    if (error.error == QJsonParseError::NoError) {
-                        if (document.isObject()) {
-                            if (!document["username"].isUndefined()) {
-                                _peerUsernames.emplace_back(document["username"].toString());
-                            }
+                    _peerUsernames.emplace_back(QString::fromStdString(extraString));
 
-                            LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 ")
-                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                .arg(_peerUsernames.back())
-                            );
-                        }
-                    }
+                    _peerJoinedStatus.emplace(_peerUsernames.back(), false);
+
+                    LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 ")
+                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                        .arg(_peerUsernames.back())
+                    );
                 }
             }
         }
@@ -2704,7 +2700,19 @@ void Account::resetAuthorizationKeys() {
 
             joinToPeerEx();
         } else {
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+            QJsonArray jArray;
+
+            for (const auto& [peerUsername, status] : _peerJoinedStatus) {
+                QJsonObject jObj;
+                jObj["peerUsername"] = peerUsername;
+                jObj["status"] = status;
+
+                jArray.append(jObj);
+            }
+
+            QJsonDocument jDoc;
+            jDoc.setArray(jArray);
+            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, jDoc.toJson(QJsonDocument::JsonFormat::Compact).constData());
         }
     }
 
@@ -5523,6 +5531,10 @@ void Account::resetAuthorizationKeys() {
             actionString = "Stop";
             break;
         }
+        case TelegramCmd::Action::JoinInPeer: {
+            actionString = "JoinInPeer";
+            break;
+        }
         default:
             break;
         }
@@ -5738,7 +5750,7 @@ void Account::resetAuthorizationKeys() {
                 return peer && peer->isChannel() && !peer->asChannel()->amIn();
                 };
 
-            if (!peer || !peer->isChannel() || !isJoinChannel(peer)) {
+            if (!peer || !peer->isChannel()) {
                 break;
             }
 
@@ -5751,14 +5763,18 @@ void Account::resetAuthorizationKeys() {
                 session().changes().peerUpdated(
                     channel,
                     Data::PeerUpdate::Flag::ChannelAmIn);
+                _peerJoinedStatus[_curPeerUsername] = true;
+                uploadMsg(QString::fromWCharArray(L"已加入群组或频道 [%1] ！").arg(_curPeerUsername));
             } else {
                 sendJoinRequest = true;
                 _startCheckNormalRequestTimer = true;
                 _normalRequestId = _session->api().request(MTPchannels_JoinChannel(
                     channel->inputChannel
                 )).done([=](const MTPUpdates& result) {
+                    _peerJoinedStatus[_curPeerUsername] = true;
                     _stopCheckNormalRequestTimer = true;
                     session().api().applyUpdates(result);
+                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 成功！").arg(_curPeerUsername));
                     joinToPeer();
                     }).fail([=](const MTP::Error& error) {
                         _stopCheckNormalRequestTimer = true;
@@ -5828,6 +5844,8 @@ void Account::resetAuthorizationKeys() {
                     
                 }
 
+                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(error.description()));
+
                 joinToPeer();
 
                 }).send();
@@ -5852,6 +5870,8 @@ void Account::resetAuthorizationKeys() {
                 if (error.code() == 400) {
                     
                 }
+
+                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(error.description()));
 
                 joinToPeer();
 
