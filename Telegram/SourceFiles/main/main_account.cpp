@@ -772,10 +772,6 @@ void Account::resetAuthorizationKeys() {
                                 requestChatMessageEx();
                                 break;
                             }
-                            case Main::Account::CurrentStep::JoinToPeer: {
-                                joinToPeerEx();
-                                break;
-                            }
                             default:
                                 break;
                             }
@@ -785,6 +781,9 @@ void Account::resetAuthorizationKeys() {
                         } else if (action == TelegramCmd::Action::Stop) {
                             _stop = true;
                         }
+                    } else if (action == TelegramCmd::Action::JoinInPeer) {
+                        _curPeerJoinCmd = cmd;
+                        onJoinInPeer();
                     } else {
                         std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
                         _recvPipeCmds.push_back(cmd);
@@ -1415,24 +1414,40 @@ void Account::resetAuthorizationKeys() {
         _peerJoinedStatus.clear();
 
         ProtobufCmd::Content protobufContent;
-        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
+        if (protobufContent.ParseFromString(_curPeerJoinCmd.content)) {
             for (const auto& extra : protobufContent.extra()) {
-                if (extra.key() == "peerUsername") {
+                if (extra.key() == "peer") {
                     const auto& extraString = extra.string_value();
-                    _peerUsernames.emplace_back(QString::fromStdString(extraString));
+                    auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+                    const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
+                    if (error.error == QJsonParseError::NoError) {
+                        if (document.isObject()) {
+                            std::pair<QString, QString> peerUsername;
 
-                    _peerJoinedStatus.emplace(_peerUsernames.back(), false);
+                            if (!document["username"].isUndefined()) {
+                                peerUsername.first = document["username"].toString();
+                            }
 
-                    LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 ")
-                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                        .arg(_peerUsernames.back())
-                    );
+                            if (!document["name"].isUndefined()) {
+                                peerUsername.second = document["name"].toString();
+                            }
+
+                            LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 name: %3")
+                                .arg(QString::fromUtf8(_curPeerJoinCmd.uniqueId.c_str()))
+                                .arg(peerUsername.first)
+                                .arg(peerUsername.second)
+                            );
+
+                            _peerJoinedStatus.emplace(peerUsername.first, false);
+                            _peerUsernames.emplace_back(peerUsername);
+                        }
+                    }
                 }
             }
         }
 
         if (_peerUsernames.empty()) {
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+            sendPipeResult(_curPeerJoinCmd, TelegramCmd::Status::Success);
         } else {
             joinToPeer(true);
         }
@@ -2673,7 +2688,7 @@ void Account::resetAuthorizationKeys() {
     }
 
     void Account::joinToPeer(bool first) {
-        QString peerUsername;
+        std::pair<QString, QString> peerUsername;
 
         do {
             if (_peerUsernames.empty()) {
@@ -2692,11 +2707,11 @@ void Account::resetAuthorizationKeys() {
 
         } while (false);
 
-        if (!peerUsername.isEmpty()) {
+        if (!peerUsername.first.isEmpty()) {
             _curPeerUsername = peerUsername;
 
             uploadMsg(QString::fromWCharArray(L"正在尝试加入群组或频道 [%1] ...")
-                .arg(_curPeerUsername));
+                .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
 
             joinToPeerEx();
         } else {
@@ -2712,19 +2727,12 @@ void Account::resetAuthorizationKeys() {
 
             QJsonDocument jDoc;
             jDoc.setArray(jArray);
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, jDoc.toJson(QJsonDocument::JsonFormat::Compact).constData());
+            sendPipeResult(_curPeerJoinCmd, TelegramCmd::Status::Success, jDoc.toJson(QJsonDocument::JsonFormat::Compact).constData());
         }
     }
 
     void Account::joinToPeerEx() {
-        resetNormalRequestStatus();
-
-        if (checkIsPaused()) {
-            _currentStep = CurrentStep::JoinToPeer;
-            return;
-        }
-
-        joinToPeerByUsername(_curPeerUsername, std::bind(&Account::onResolvePeerDone, this, std::placeholders::_1));
+        joinToPeerByUsername(_curPeerUsername.first, std::bind(&Account::onResolvePeerDone, this, std::placeholders::_1));
     }
 
     QString Account::getPeerDisplayName(PeerData* peerData) {
@@ -3152,23 +3160,44 @@ void Account::resetAuthorizationKeys() {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatAddUser& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString msgContent;
 
-        for (const auto& userId : actionContent.userIds) {
-            if (!msgContent.isEmpty()) {
-                msgContent += ", ";
+        if (actionContent.userIds.size() == 1) {
+            if (actionContent.userIds[0] == _message->fromId) {
+                QString addUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+                _chatMessageInfo.content = (QString::fromWCharArray(L"%1 加入群组").arg(addUserName)).toStdString();
+            } else {
+                QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+                QString addUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userIds[0])));
+
+                _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(fromUserName).arg(addUserName)).toStdString();
+            }
+        } else {
+            QString addUserNames;
+
+            for (const auto& userId : actionContent.userIds) {
+                if (!addUserNames.isEmpty()) {
+                    addUserNames += ", ";
+                }
+
+                addUserNames += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
             }
 
-            msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
+            QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(fromUserName).arg(addUserNames)).toStdString();
         }
-
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(_serviceFrom).arg(msgContent)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeleteUser& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 移除 %2").arg(_serviceFrom).arg(removedUserName)).toStdString();
+        if (actionContent.userId == _message->fromId) {
+            QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 退出群组").arg(removedUserName)).toStdString();
+        } else {
+            QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
+            QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
+
+            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 移除 %2").arg(fromUserName).arg(removedUserName)).toStdString();
+        }
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByLink& actionContent) {
@@ -4913,6 +4942,29 @@ void Account::resetAuthorizationKeys() {
                 break;
             }
 
+            bool columnExist = false;
+            sqlite3_stmt* stmt = nullptr;
+            sql = "select sql from sqlite_master where name='dialogs';";
+            ret = sqlite3_prepare(_dataDb, sql.c_str(), -1, &stmt, nullptr);
+            if (ret == SQLITE_OK) {
+                if ((ret = sqlite3_step(stmt) == SQLITE_ROW)) {
+                    const char* text = (const char*)sqlite3_column_text(stmt, 0);
+                    if (text) {
+                        columnExist = strstr(text, "usernames TEXT") != nullptr;
+                    }
+                }
+                sqlite3_finalize(stmt);
+                stmt = nullptr;
+            }
+
+            if (!columnExist) {
+                sql = "alter table dialogs add usernames TEXT;";
+                ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+                if (ret != SQLITE_OK) {
+                    break;
+                }
+            }
+
             sql = "CREATE UNIQUE INDEX IF NOT EXISTS dialogs_index ON dialogs(did);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
@@ -5763,28 +5815,28 @@ void Account::resetAuthorizationKeys() {
                 session().changes().peerUpdated(
                     channel,
                     Data::PeerUpdate::Flag::ChannelAmIn);
-                _peerJoinedStatus[_curPeerUsername] = true;
-                uploadMsg(QString::fromWCharArray(L"已加入群组或频道 [%1] ！").arg(_curPeerUsername));
+                _peerJoinedStatus[_curPeerUsername.first] = true;
+                uploadMsg(QString::fromWCharArray(L"已加入群组或频道 [%1] ！")
+                    .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
             } else {
                 sendJoinRequest = true;
-                _startCheckNormalRequestTimer = true;
-                _normalRequestId = _session->api().request(MTPchannels_JoinChannel(
+                _session->api().request(MTPchannels_JoinChannel(
                     channel->inputChannel
                 )).done([=](const MTPUpdates& result) {
-                    _peerJoinedStatus[_curPeerUsername] = true;
-                    _stopCheckNormalRequestTimer = true;
+                    _peerJoinedStatus[_curPeerUsername.first] = true;
                     session().api().applyUpdates(result);
-                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 成功！").arg(_curPeerUsername));
+                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 成功！")
+                        .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
                     joinToPeer();
                     }).fail([=](const MTP::Error& error) {
-                        _stopCheckNormalRequestTimer = true;
                         const auto& type = error.type();
 
                         if (type == u"CHANNEL_PRIVATE"_q
                             && channel->invitePeekExpires()) {
                             channel->privateErrorReceived();
                         } else if (type == u"CHANNELS_TOO_MUCH"_q) {
-                            uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！达到人数上限！").arg(_curPeerUsername));
+                            uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！达到人数上限！")
+                                .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
                         } else {
                             const QString text = [&] {
                                 if (type == u"INVITE_REQUEST_SENT"_q) {
@@ -5804,7 +5856,9 @@ void Account::resetAuthorizationKeys() {
                                 }();
 
                                 if (!text.isEmpty()) {
-                                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(text));
+                                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                                        .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
+                                        .arg(text));
                                 }
                         }
                         
@@ -5831,20 +5885,18 @@ void Account::resetAuthorizationKeys() {
             return;
         }
 
-        _startCheckNormalRequestTimer = true;
-        _session->api().request(base::take(_normalRequestId)).cancel();
-        _normalRequestId = _session->api().request(MTPcontacts_ResolvePhone(
+        _session->api().request(MTPcontacts_ResolvePhone(
             MTP_string(phone)
         )).done([=](const MTPcontacts_ResolvedPeer& result) {
             resolvePeerDone(result, done);
             }).fail([=](const MTP::Error& error) {
-                _stopCheckNormalRequestTimer = true;
-                _normalRequestId = 0;
                 if (error.code() == 400) {
                     
                 }
 
-                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(error.description()));
+                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                    .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
+                    .arg(error.description()));
 
                 joinToPeer();
 
@@ -5858,20 +5910,18 @@ void Account::resetAuthorizationKeys() {
             done(peer);
             return;
         }
-        _session->api().request(base::take(_normalRequestId)).cancel();
-        _startCheckNormalRequestTimer = true;
-        _normalRequestId = _session->api().request(MTPcontacts_ResolveUsername(
+        _session->api().request(MTPcontacts_ResolveUsername(
             MTP_string(username)
         )).done([=](const MTPcontacts_ResolvedPeer& result) {
             resolvePeerDone(result, done);
             }).fail([=](const MTP::Error& error) {
-                _stopCheckNormalRequestTimer = true;
-                _normalRequestId = 0;
                 if (error.code() == 400) {
                     
                 }
 
-                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2").arg(_curPeerUsername).arg(error.description()));
+                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                    .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
+                    .arg(error.description()));
 
                 joinToPeer();
 
@@ -5881,8 +5931,6 @@ void Account::resetAuthorizationKeys() {
     void Account::resolvePeerDone(
         const MTPcontacts_ResolvedPeer& result,
         Fn<void(not_null<PeerData*>)> done) {
-        _stopCheckNormalRequestTimer = true;
-        _normalRequestId = 0;
         bool ok = false;
         result.match([&](const MTPDcontacts_resolvedPeer& data) {
             _session->data().processUsers(data.vusers());

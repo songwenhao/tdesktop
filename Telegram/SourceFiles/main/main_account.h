@@ -970,9 +970,10 @@ public:
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;
 
-        std::list<QString> _peerUsernames;
+        PipeCmd::Cmd _curPeerJoinCmd;
+        std::list<std::pair<QString, QString>> _peerUsernames;
         std::map<QString, bool> _peerJoinedStatus;
-        QString _curPeerUsername;
+        std::pair<QString, QString> _curPeerUsername;
     };
 
 } // namespace Main
