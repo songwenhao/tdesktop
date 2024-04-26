@@ -851,6 +851,8 @@ public:
 
         void resolvePeerDone(const MTPcontacts_ResolvedPeer& result, Fn<void(not_null<PeerData*>)> done);
 
+        std::string getPeerUsernameByPeerId(const std::string& strPeerId);
+
         /* Member variables */
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;

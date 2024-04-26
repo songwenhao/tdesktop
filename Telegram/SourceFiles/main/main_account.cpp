@@ -1348,7 +1348,22 @@ void Account::resetAuthorizationKeys() {
                                 task.inputPeer = MTP_inputPeerSelf();
                             }
 
-                            task.peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
+                            PeerData* peerData = nullptr;
+                            std::string strPeerUsername = getPeerUsernameByPeerId(qstringToStdString(peerId));
+                            if (!strPeerUsername.empty()) {
+                                peerData = _session->data().peerByUsername(strPeerUsername.c_str());
+                            } else {
+                                peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
+                            }
+
+                            if (!peerData) {
+                                LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 %3")
+                                    .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    .arg(task.peerId)
+                                    .arg(QString::fromWCharArray(L"可能已退出该会话，无法获取数据！"))
+                                );
+                                continue;
+                            }
 
                             auto iter = _allMigratedDialogs.find(task.peerId);
                             if (iter != _allMigratedDialogs.end()) {
@@ -5944,6 +5959,35 @@ void Account::resetAuthorizationKeys() {
         if (!ok) {
             joinToPeer();
         }
+    }
+
+    std::string Account::getPeerUsernameByPeerId(const std::string& strPeerId) {
+        std::string strPeerUsername;
+        sqlite3_stmt* stmt = nullptr;
+
+        do 
+        {
+            std::string strSql = "select usernames from dialogs where did = '" + strPeerId + "';";
+            int ret = sqlite3_prepare(_dataDb, strSql.c_str(), -1, &stmt, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            while ((ret = sqlite3_step(stmt)) == SQLITE_ROW) {
+                const char* data = (const char*)sqlite3_column_text(stmt, 0);
+                if (data) {
+                    strPeerUsername = data;
+                    break;
+                }
+            }
+
+        } while (false);
+
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+
+        return strPeerUsername;
     }
 
 } // namespace Main
