@@ -610,6 +610,7 @@ public:
         void onGetLoginUserPhone();
 
         void onGetContactAndChat();
+        void onGetContactAndChatDone();
 
         void onGetChatMessage();
 
@@ -853,6 +854,8 @@ public:
 
         std::string getPeerUsernameByPeerId(const std::string& strPeerId);
 
+        void readExistDialogsId(std::set<std::string>& existDialogsId);
+
         /* Member variables */
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
@@ -938,6 +941,8 @@ public:
         const int _maxNormalRequestTime = 60 * 1000;
 
         Export::Data::DialogInfo _curDialogInfo;
+        std::set<std::string> _existDialogsId;
+        std::set<std::string> _newExistDialogsId;
 
         std::list<PeerData*> _allChats;
         PeerData* _curChat;

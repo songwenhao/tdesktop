@@ -1262,10 +1262,46 @@ void Account::resetAuthorizationKeys() {
             init();
         }
 
+        // 读取已存在的会话ID
+        _existDialogsId.clear();
+        _newExistDialogsId.clear();
+        readExistDialogsId(_existDialogsId);
+
         _curDialogInfo.input = MTP_inputPeerEmpty();
         _curDialogInfo.topMessageDate = 0;
         _curDialogInfo.topMessageId = 0;
         requestContacts();
+    }
+
+    void Account::onGetContactAndChatDone() {
+        // 剔除已经退出的会话
+        sqlite3_stmt* stmt = nullptr;
+
+        do {
+            if (!_dataDb) {
+                break;
+            }
+
+            if (_stop) {
+                break;
+            }
+
+            std::string sql;
+            for (const auto& existDialogId : _existDialogsId) {
+                if (_newExistDialogsId.find(existDialogId) == _newExistDialogsId.end()) {
+                    sql = "delete from dialogs where did = '" + existDialogId + "';";
+                    sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
+                }
+            }
+
+        } while (false);
+
+        if (!stmt) {
+            sqlite3_finalize(stmt);
+            stmt = nullptr;
+        }
+
+        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
     }
 
     void Account::onGetChatMessage() {
@@ -1677,7 +1713,7 @@ void Account::resetAuthorizationKeys() {
                     } else {
                         resetNormalRequestStatus();
 
-                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                        onGetContactAndChatDone();
                     }
                 } else {
                     requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
@@ -1688,11 +1724,17 @@ void Account::resetAuthorizationKeys() {
                 } else {
                     resetNormalRequestStatus();
 
-                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                    onGetContactAndChatDone();
                 }
             }
             }).fail([=](const MTP::Error& error) {
-                _stopCheckNormalRequestTimer = true;
+                if (_exportLeftChannels) {
+                    requestLeftChannel();
+                } else {
+                    resetNormalRequestStatus();
+
+                    onGetContactAndChatDone();
+                }
                 }).send();
     }
 
@@ -1714,6 +1756,8 @@ void Account::resetAuthorizationKeys() {
         protobufContent.SerializeToString(&resultCmd.content);
 
         sendPipeCmd(resultCmd, false);
+
+        onGetContactAndChatDone();
     }
 
     void Account::requestLeftChannel() {
@@ -3995,7 +4039,10 @@ void Account::resetAuthorizationKeys() {
                 int column = 1;
 
                 do {
-                    int ret = sqlite3_bind_text(stmt, column++, QString::number(dialog.id).toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                    std::string dialogId = qstringToStdString(QString::number(dialog.id));
+                    _newExistDialogsId.emplace(dialogId);
+
+                    int ret = sqlite3_bind_text(stmt, column++, dialogId.c_str(), -1, SQLITE_TRANSIENT);
                     if (ret != SQLITE_OK) {
                         break;
                     }
@@ -5988,6 +6035,39 @@ void Account::resetAuthorizationKeys() {
         }
 
         return strPeerUsername;
+    }
+
+    void Account::readExistDialogsId(std::set<std::string>& existDialogsId) {
+        sqlite3_stmt* stmt = nullptr;
+
+        do {
+            if (!_dataDb) {
+                break;
+            }
+
+            int ret = sqlite3_prepare(_dataDb, "select did from dialogs;", -1, &stmt, nullptr);
+            if (ret != SQLITE_OK) {
+                break;
+            }
+
+            const char* text = nullptr;
+            while ((ret = sqlite3_step(stmt)) == SQLITE_ROW) {
+                if (_stop) {
+                    break;
+                }
+
+                text = (const char*)sqlite3_column_text(stmt, 0);
+                if (text) {
+                    existDialogsId.emplace(text);
+                }
+            }
+
+        } while (false);
+
+        if (!stmt) {
+            sqlite3_finalize(stmt);
+            stmt = nullptr;
+        }
     }
 
 } // namespace Main
