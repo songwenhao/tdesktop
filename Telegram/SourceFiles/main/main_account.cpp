@@ -1401,6 +1401,8 @@ void Account::resetAuthorizationKeys() {
                                 continue;
                             }
 
+                            task.peerData = peerData;
+
                             auto iter = _allMigratedDialogs.find(task.peerId);
                             if (iter != _allMigratedDialogs.end()) {
                                 task.migratedPeerId = iter->second;
@@ -1728,6 +1730,10 @@ void Account::resetAuthorizationKeys() {
                 }
             }
             }).fail([=](const MTP::Error& error) {
+                LOG(("[Account][requestDialogsEx] error: %1")
+                    .arg(error.description())
+                );
+
                 if (_exportLeftChannels) {
                     requestLeftChannel();
                 } else {
