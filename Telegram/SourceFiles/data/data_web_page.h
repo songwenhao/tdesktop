@@ -17,13 +17,19 @@ namespace Data {
 class Session;
 } // namespace Data
 
+namespace Iv {
+class Data;
+} // namespace Iv
+
 enum class WebPageType : uint8 {
 	None,
 
 	Message,
+	Album,
 
 	Group,
 	GroupWithRequest,
+	GroupBoost,
 	Channel,
 	ChannelWithRequest,
 	ChannelBoost,
@@ -41,6 +47,7 @@ enum class WebPageType : uint8 {
 	WallPaper,
 	Theme,
 	Story,
+	StickerSet,
 
 	Article,
 	ArticleWithIV,
@@ -49,6 +56,7 @@ enum class WebPageType : uint8 {
 	Livestream,
 };
 [[nodiscard]] WebPageType ParseWebPageType(const MTPDwebPage &type);
+[[nodiscard]] bool IgnoreIv(WebPageType type);
 
 struct WebPageCollage {
 	using Item = std::variant<PhotoData*, DocumentData*>;
@@ -62,8 +70,18 @@ struct WebPageCollage {
 
 };
 
+struct WebPageStickerSet {
+	WebPageStickerSet() = default;
+
+	std::vector<not_null<DocumentData*>> items;
+	bool isEmoji = false;
+	bool isTextColor = false;
+
+};
+
 struct WebPageData {
 	WebPageData(not_null<Data::Session*> owner, const WebPageId &id);
+	~WebPageData();
 
 	[[nodiscard]] Data::Session &owner() const;
 	[[nodiscard]] Main::Session &session() const;
@@ -79,6 +97,8 @@ struct WebPageData {
 		PhotoData *newPhoto,
 		DocumentData *newDocument,
 		WebPageCollage &&newCollage,
+		std::unique_ptr<Iv::Data> newIv,
+		std::unique_ptr<WebPageStickerSet> newStickerSet,
 		int newDuration,
 		const QString &newAuthor,
 		bool newHasLargeMedia,
@@ -105,6 +125,8 @@ struct WebPageData {
 	PhotoData *photo = nullptr;
 	DocumentData *document = nullptr;
 	WebPageCollage collage;
+	std::unique_ptr<Iv::Data> iv;
+	std::unique_ptr<WebPageStickerSet> stickerSet;
 	int duration = 0;
 	TimeId pendingTill = 0;
 	uint32 version : 30 = 0;

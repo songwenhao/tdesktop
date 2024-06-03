@@ -89,6 +89,7 @@ class NamespaceGeneratorImpl : private GeneratorBase, public NamespaceGenerator
   pt::ptree tree_;
   // helper exp
   std::regex re_unqualify_;
+  bool allow_deprecated_{};
 
 public:
   NamespaceGeneratorImpl(GeneratorContext &ctx, const std::string &filename)
@@ -118,9 +119,34 @@ public:
   std::vector<std::string> get_dependencies() const { return deps_; }
 
 private:
-  static std::string make_declare(
-      bool decl_ctype, const std::string &cpptype, const std::string &ctype)
+  // in most cases no problems arise if both M1.SomeName and M2.SomeOtherName
+  // both map to GSomeName
+  // but some generated code, like declare_XXX template specialization assumes
+  // a 1-to-1 mapping, as should be the case in with sane GIR
+  // however, if the latter are somehow not sane, then duplicate definitions
+  // might arise (ODR and all that), although it *really is* a GIR bug
+  //
+  // so try to mitigate that here
+  // check that only 1 (qualified) girname/cppname claims/maps to a ctype
+  void check_odr(const std::string &cpptype, const std::string &ctype) const
   {
+    // verify this ctype has not been seen before
+    // a particular ctype can only be defined/claimed by one GIR symbol
+    // (in one module), otherwise lots of things will go wrong
+    // GIRs also have an "alias" concept, so that should be used instead
+    auto conflict = ctx.repo.check_odr(cpptype, ctype);
+    if (!conflict.empty()) {
+      throw std::runtime_error(
+          fmt::format("{} maps to {}, already claimed by {};\n"
+                      "Please verify/fix GIRs and/or add ignore as needed.",
+              cpptype, ctype, conflict));
+    }
+  }
+
+  std::string make_declare(bool decl_ctype, const std::string &cpptype,
+      const std::string &ctype) const
+  {
+    check_odr(cpptype, ctype);
     return fmt::format(
         "template<> struct declare_{}_of<{}>\n{{ typedef {} type; }}; ",
         (decl_ctype ? "ctype" : "cpptype"), (decl_ctype ? cpptype : ctype),
@@ -468,7 +494,7 @@ private:
       std::set<std::string> &deps) const
   {
     return ::process_element_function(
-        ctx, ns, entry, out, impl, klass, klasstype, deps);
+        ctx, ns, entry, out, impl, klass, klasstype, deps, allow_deprecated_);
   }
 
   // unqualify (current ns qualifed) type
@@ -1254,10 +1280,13 @@ GI_INLINE_DECL std::vector<const char*> _libs()
 public:
   std::string process_tree(const std::vector<std::string> &dep_headers)
   {
-    logger(Log::INFO, "processing namespace {}", ns);
+    logger(Log::INFO, "processing namespace {} {}", ns, version_);
     // set state for ns processing
     ctx.repo.set_ns(ns);
     File::set_root(ctx.options.rootdir);
+
+    // check if deprecated should pass for this ns
+    allow_deprecated_ = ctx.match_ignore.matches("deprecated", ns, {version_});
 
     // optionally process libs
     auto h_libs = ctx.options.dl ? process_libs() : "";
@@ -1269,6 +1298,9 @@ public:
     // also gather alias/type info
     entry_processor proc_index = [&](const pt::ptree::value_type &n) {
       const auto &name = get_name(n.second, std::nothrow);
+      auto deprecated = get_attribute<int>(n.second, AT_DEPRECATED, 0);
+      if (deprecated && !allow_deprecated_)
+        return;
       auto &el = n.first;
       // redirect to oblivion
       // empty name might originate from a glib:boxed with glib:name attribute
@@ -1303,9 +1335,6 @@ public:
     File functions_impl(ns, h_functions_impl);
 
     entry_processor proc_pass_1 = [&](const pt::ptree::value_type &n) {
-      auto deprecated = get_attribute<int>(n.second, AT_DEPRECATED, 0);
-      if (deprecated)
-        return;
       auto &el = n.first;
       if (el == EL_ENUM && visit_ok(n)) {
         process_element_enum(n, enums, nullptr);
@@ -1369,6 +1398,18 @@ public:
       return make_conditional_include(fpath, false);
     };
 
+    auto add_stub_define = [this](bool impl, bool begin) {
+      auto nsu = toupper(ns);
+      auto infix = impl ? "IMPL_" : "";
+      auto suffix = begin ? "BEGIN" : "END";
+      auto macro = fmt::format("GI_INCLUDE_{}{}_{}", infix, nsu, suffix);
+      // avoid deprecated warning floods
+      auto guard = begin ? GI_DISABLE_DEPRECATED_WARN_BEGIN
+                         : GI_DISABLE_DEPRECATED_WARN_END;
+      // also allow for custom/override tweak
+      return fmt::format("{}\n\n#ifdef {}\n{}\n#endif", guard, macro, macro);
+    };
+
     auto h_ns = tolower(ns) + ".hpp";
     auto h_ns_impl = tolower(ns) + "_impl.hpp";
 
@@ -1421,8 +1462,8 @@ public:
     nsh << add_stub_include("_setup_post.hpp") << std::endl;
     nsh << std::endl;
 
-    // no deprecated warning floods
-    nsh << GI_DISABLE_DEPRECATED_WARN_BEGIN << std::endl;
+    // guard begin
+    nsh << add_stub_define(false, true) << std::endl;
     nsh << std::endl;
 
     // various basic declaration parts
@@ -1442,8 +1483,8 @@ public:
     nsh << add_stub_include("_extra_def.hpp") << std::endl;
     // user supplied
     nsh << add_stub_include("_extra.hpp") << std::endl;
-    // end deprecated warn
-    nsh << GI_DISABLE_DEPRECATED_WARN_END << std::endl;
+    // guard end
+    nsh << add_stub_define(false, false) << std::endl;
     nsh << std::endl;
     // include implementation header in inline case
     nsh << "#if defined(GI_INLINE) || defined(GI_INCLUDE_IMPL)" << std::endl;
@@ -1455,8 +1496,8 @@ public:
     // include declaration
     nsh_impl << make_include(h_ns, true) << std::endl;
     nsh_impl << std::endl;
-    // warn disable begin
-    nsh_impl << GI_DISABLE_DEPRECATED_WARN_BEGIN << std::endl;
+    // guard begin
+    nsh_impl << add_stub_define(true, true) << std::endl;
     nsh_impl << std::endl;
     // lib helper for symbol load
     nsh_impl << make_include(h_libs, true) << std::endl;
@@ -1474,8 +1515,8 @@ public:
     // user supplied
     nsh_impl << add_stub_include("_extra_impl.hpp") << std::endl;
     nsh_impl << std::endl;
-    // warn disable end
-    nsh_impl << GI_DISABLE_DEPRECATED_WARN_END << std::endl;
+    // guard end
+    nsh_impl << add_stub_define(false, true) << std::endl;
     nsh_impl << std::endl;
 
     // a convenience cpp for non-inline

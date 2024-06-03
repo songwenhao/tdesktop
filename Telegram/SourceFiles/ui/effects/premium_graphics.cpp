@@ -1063,7 +1063,7 @@ void AddAccountsRow(
 		});
 		const auto index = int(state->accounts.size()) - 1;
 		state->accounts[index].checkbox.setChecked(
-			index == group->value(),
+			index == group->current(),
 			anim::type::instant);
 
 		widget->paintRequest(
@@ -1199,7 +1199,7 @@ void ShowListBox(
 		const auto title = content->add(
 			object_ptr<Ui::FlatLabel>(
 				content,
-				base::take(entry.title) | rpl::map(Ui::Text::Bold),
+				base::take(entry.title) | Ui::Text::ToBold(),
 				stLabel),
 			entry.icon ? iconTitlePadding : titlePadding);
 		content->add(
@@ -1303,7 +1303,7 @@ void AddGiftOptions(
 		int nowIndex = 0;
 		Ui::Animations::Simple animation;
 	};
-	const auto wasGroupValue = group->value();
+	const auto wasGroupValue = group->current();
 	const auto animation = parent->lifetime().make_state<Animation>();
 	animation->nowIndex = wasGroupValue;
 
@@ -1324,7 +1324,7 @@ void AddGiftOptions(
 		const auto &stCheckbox = st::defaultBoxCheckbox;
 		auto radioView = std::make_unique<GradientRadioView>(
 			st::defaultRadio,
-			(group->hasValue() && group->value() == index));
+			(group->hasValue() && group->current() == index));
 		const auto radioViewRaw = radioView.get();
 		const auto radio = Ui::CreateChild<Ui::Radiobutton>(
 			row,
@@ -1468,7 +1468,7 @@ void AddGiftOptions(
 
 		row->setClickedCallback([=, duration = st::defaultCheck.duration] {
 			group->setValue(index);
-			animation->nowIndex = group->value();
+			animation->nowIndex = group->current();
 			animation->animation.stop();
 			animation->animation.start(
 				[=] { parent->update(); },

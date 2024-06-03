@@ -115,6 +115,10 @@ public:
   const mapped_type::tree_type &tree(const std::string &girname) const;
 
   const mapped_type *lookup(const std::string &girname) const;
+
+  // check for duplicate definition for ctype
+  // if ctype already claimed, returns non-empty claiming cpptype
+  std::string check_odr(const std::string &cpptype, const std::string &ctype);
 };
 
 #endif // REPOSITORY_HPP

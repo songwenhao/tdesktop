@@ -35,10 +35,6 @@ PRIVATE
     base/platform/linux/base_linux_dbus_utilities.h
     base/platform/linux/base_linux_library.cpp
     base/platform/linux/base_linux_library.h
-    base/platform/linux/base_linux_wayland_integration.cpp
-    base/platform/linux/base_linux_wayland_integration_dummy.cpp
-    base/platform/linux/base_linux_wayland_integration.h
-    base/platform/linux/base_linux_wayland_utilities.h
     base/platform/linux/base_linux_xcb_utilities.cpp
     base/platform/linux/base_linux_xcb_utilities.h
     base/platform/linux/base_linux_xdg_activation_token.cpp
@@ -111,8 +107,6 @@ PRIVATE
     base/platform/win/base_windows_winrt.h
     base/platform/win/base_windows_wrl.cpp
     base/platform/win/base_windows_wrl.h
-    base/platform/win/utils.h
-    base/platform/win/utils.cpp
     base/platform/win/wrl/wrl_implements_h.h
     base/platform/win/wrl/wrl_module_h.h
     base/platform/base_platform_custom_app_icon.h
@@ -233,17 +227,6 @@ if (DESKTOP_APP_DISABLE_X11_INTEGRATION)
     )
 endif()
 
-if (DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-    remove_target_sources(lib_base ${src_loc}
-        base/platform/linux/base_linux_wayland_integration.cpp
-        base/platform/linux/base_linux_wayland_utilities.h
-    )
-else()
-    remove_target_sources(lib_base ${src_loc}
-        base/platform/linux/base_linux_wayland_integration_dummy.cpp
-    )
-endif()
-
 target_include_directories(lib_base
 PUBLIC
     ${src_loc}
@@ -268,12 +251,20 @@ if (WIN32)
 elseif (LINUX)
     target_link_libraries(lib_base
     PUBLIC
-        desktop-app::external_glibmm
         desktop-app::external_kcoreaddons
     )
 
     include(${cmake_helpers_loc}/external/glib/generate_dbus.cmake)
+    generate_dbus(lib_base org.freedesktop. XdgDBus ${src_loc}/base/platform/linux/org.freedesktop.DBus.xml)
+    generate_dbus(lib_base org.freedesktop.portal. XdpInhibit ${third_party_loc}/xdg-desktop-portal/data/org.freedesktop.portal.Inhibit.xml)
+    generate_dbus(lib_base org.freedesktop.portal. XdpOpenURI ${third_party_loc}/xdg-desktop-portal/data/org.freedesktop.portal.OpenURI.xml)
+    generate_dbus(lib_base org.freedesktop.portal. XdpRequest ${third_party_loc}/xdg-desktop-portal/data/org.freedesktop.portal.Request.xml)
+    generate_dbus(lib_base org.freedesktop.portal. XdpSettings ${third_party_loc}/xdg-desktop-portal/data/org.freedesktop.portal.Settings.xml)
+    generate_dbus(lib_base org.freedesktop. XdgFileManager1 ${src_loc}/base/platform/linux/org.freedesktop.FileManager1.xml)
+    generate_dbus(lib_base org.freedesktop. XdgScreenSaver ${src_loc}/base/platform/linux/org.freedesktop.ScreenSaver.xml)
+    generate_dbus(lib_base org.gnome.Mutter. MutterIdleMonitor ${src_loc}/base/platform/linux/org.gnome.Mutter.IdleMonitor.xml)
     generate_dbus(lib_base org.mpris. Mpris ${src_loc}/base/platform/linux/mpris.xml)
+    generate_dbus(lib_base io.snapcraft. Snapcraft ${src_loc}/base/platform/linux/io.snapcraft.Settings.xml)
 
     if (NOT DESKTOP_APP_DISABLE_X11_INTEGRATION)
         target_link_libraries(lib_base
@@ -282,19 +273,6 @@ elseif (LINUX)
             desktop-app::external_xcb_record
             desktop-app::external_xcb_screensaver
             desktop-app::external_xcb
-        )
-    endif()
-
-    if (NOT DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-        qt_generate_wayland_protocol_client_sources(lib_base
-        FILES
-            ${third_party_loc}/wayland/protocol/wayland.xml
-            ${third_party_loc}/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml
-        )
-
-        target_link_libraries(lib_base
-        PUBLIC
-            desktop-app::external_wayland_client
         )
     endif()
 endif()

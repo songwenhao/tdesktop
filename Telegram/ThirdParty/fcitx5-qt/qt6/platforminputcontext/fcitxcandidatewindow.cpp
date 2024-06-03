@@ -17,11 +17,37 @@
 #include <QResizeEvent>
 #include <QScreen>
 #include <QTextLayout>
+#include <QVariant>
 #include <QtMath>
-#include <qpa/qplatformnativeinterface.h>
 #include <utility>
 
+#if defined(FCITX_ENABLE_QT6_WAYLAND_WORKAROUND) &&                            \
+    QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#include <QtGui/private/qhighdpiscaling_p.h>
+#include <QtWaylandClient/private/qwayland-xdg-shell.h>
+#include <QtWaylandClient/private/qwaylanddisplay_p.h>
+#include <QtWaylandClient/private/qwaylandintegration_p.h>
+#include <QtWaylandClient/private/qwaylandwindow_p.h>
+#include <QtWaylandClient/private/wayland-xdg-shell-client-protocol.h>
+#include <qpa/qplatformnativeinterface.h>
+#endif
+
 namespace fcitx {
+
+namespace {
+
+#if defined(FCITX_ENABLE_QT6_WAYLAND_WORKAROUND) &&                            \
+    QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+class XdgWmBase : public QtWayland::xdg_wm_base {
+public:
+    using xdg_wm_base::xdg_wm_base;
+
+protected:
+    // This is required for all xdg_wm_base bind.
+    void xdg_wm_base_ping(uint32_t serial) override { pong(serial); }
+};
+
+#endif
 
 void doLayout(QTextLayout &layout) {
     QFontMetrics fontMetrics(layout.font());
@@ -43,6 +69,8 @@ void doLayout(QTextLayout &layout) {
     }
     layout.endLayout();
 }
+
+} // namespace
 
 class MultilineText {
 public:
@@ -85,7 +113,8 @@ private:
 
 FcitxCandidateWindow::FcitxCandidateWindow(QWindow *window,
                                            QFcitxPlatformInputContext *context)
-    : QWindow(), context_(context), theme_(context->theme()), parent_(window) {
+    : QRasterWindow(), context_(context), theme_(context->theme()),
+      parent_(window) {
     constexpr Qt::WindowFlags commonFlags = Qt::FramelessWindowHint |
                                             Qt::WindowDoesNotAcceptFocus |
                                             Qt::NoDropShadowWindowHint;
@@ -94,6 +123,29 @@ FcitxCandidateWindow::FcitxCandidateWindow(QWindow *window,
         // Not using Qt::BypassWindowManagerHint ensures wayland handle
         // fractional scale.
         setFlags(Qt::ToolTip | commonFlags);
+#if defined(FCITX_ENABLE_QT6_WAYLAND_WORKAROUND) &&                            \
+    QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        if (auto instance = QtWaylandClient::QWaylandIntegration::instance()) {
+            for (QtWaylandClient::QWaylandDisplay::RegistryGlobal global :
+                 instance->display()->globals()) {
+                if (global.interface == QLatin1String("xdg_wm_base")) {
+                    xdgWmBase_.reset(
+                        new XdgWmBase(instance->display()->wl_registry(),
+                                      global.id, global.version));
+                    break;
+                }
+            }
+        }
+        setProperty("_q_waylandPopupAnchor",
+                    QVariant::fromValue(Qt::BottomEdge | Qt::LeftEdge));
+        setProperty("_q_waylandPopupGravity",
+                    QVariant::fromValue(Qt::BottomEdge | Qt::RightEdge));
+        setProperty(
+            "_q_waylandPopupConstraintAdjustment",
+            static_cast<unsigned int>(
+                QtWayland::xdg_positioner::constraint_adjustment_slide_x |
+                QtWayland::xdg_positioner::constraint_adjustment_flip_y));
+#endif
     } else {
         // Qt::Popup ensures X11 doesn't apply tooltip animation under kwin.
         setFlags(Qt::Popup | Qt::BypassWindowManagerHint | commonFlags);
@@ -104,49 +156,20 @@ FcitxCandidateWindow::FcitxCandidateWindow(QWindow *window,
     QSurfaceFormat surfaceFormat = format();
     surfaceFormat.setAlphaBufferSize(8);
     setFormat(surfaceFormat);
-    backingStore_ = new QBackingStore(this);
     connect(this, &QWindow::visibleChanged, this, [this] { hoverIndex_ = -1; });
 }
 
 FcitxCandidateWindow::~FcitxCandidateWindow() {}
 
 bool FcitxCandidateWindow::event(QEvent *event) {
-    if (event->type() == QEvent::UpdateRequest) {
-        renderNow();
-        return true;
-    }
     if (event->type() == QEvent::Leave) {
         auto oldHighlight = highlight();
         hoverIndex_ = -1;
         if (highlight() != oldHighlight) {
-            renderNow();
+            update();
         }
     }
-    return QWindow::event(event);
-}
-
-void FcitxCandidateWindow::renderLater() { requestUpdate(); }
-
-void FcitxCandidateWindow::resizeEvent(QResizeEvent *) { renderNow(); }
-
-void FcitxCandidateWindow::exposeEvent(QExposeEvent *) { renderNow(); }
-
-void FcitxCandidateWindow::renderNow() {
-    if (!isExposed() || !theme_) {
-        return;
-    }
-
-    QRect rect(0, 0, width(), height());
-    backingStore_->beginPaint(rect);
-
-    QPaintDevice *device = backingStore_->paintDevice();
-    QPainter painter(device);
-    painter.fillRect(rect, Qt::transparent);
-    render(&painter);
-    painter.end();
-
-    backingStore_->endPaint();
-    backingStore_->flush(rect);
+    return QRasterWindow::event(event);
 }
 
 void FcitxCandidateWindow::render(QPainter *painter) {
@@ -355,7 +378,9 @@ void UpdateLayout(QTextLayout &layout, const FcitxTheme &theme,
                   std::initializer_list<
                       std::reference_wrapper<const FcitxQtFormattedPreeditList>>
                       texts) {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     layout.clearFormats();
+#endif
     layout.setFont(theme.font());
     QVector<QTextLayout::FormatRange> formats;
     QString str;
@@ -386,7 +411,9 @@ void UpdateLayout(QTextLayout &layout, const FcitxTheme &theme,
         }
     }
     layout.setText(str);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     layout.setFormats(formats);
+#endif
 }
 
 void FcitxCandidateWindow::updateClientSideUI(
@@ -458,8 +485,109 @@ void FcitxCandidateWindow::updateClientSideUI(
         sizeWithoutShadow.setHeight(0);
     }
 
+    if (size() != actualSize_) {
+        resize(actualSize_);
+    }
+    update();
+
     QRect cursorRect = context_->cursorRectangleWrapper();
     QRect screenGeometry;
+
+#if defined(FCITX_ENABLE_QT6_WAYLAND_WORKAROUND) &&                            \
+    QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    if (isWayland_) {
+        auto *waylandWindow =
+            static_cast<QtWaylandClient::QWaylandWindow *>(window->handle());
+        const auto windowMargins = waylandWindow->windowContentMargins() -
+                                   waylandWindow->clientSideMargins();
+        auto windowGeometry = waylandWindow->windowContentGeometry();
+        if (!cursorRect.isValid()) {
+            if (cursorRect.width() <= 0) {
+                cursorRect.setWidth(1);
+            }
+            if (cursorRect.height() <= 0) {
+                cursorRect.setHeight(1);
+            }
+        }
+        QRect nativeCursorRect = QHighDpi::toNativePixels(cursorRect, this);
+        // valid the anchor rect.
+        if (!nativeCursorRect.intersects(windowGeometry)) {
+            if (nativeCursorRect.right() < windowGeometry.left()) {
+                nativeCursorRect.setLeft(windowGeometry.left());
+                nativeCursorRect.setWidth(1);
+            }
+            if (nativeCursorRect.left() > windowGeometry.right()) {
+                nativeCursorRect.setLeft(windowGeometry.right());
+                nativeCursorRect.setWidth(1);
+            }
+            if (nativeCursorRect.bottom() < windowGeometry.top()) {
+                nativeCursorRect.setTop(windowGeometry.top());
+                nativeCursorRect.setWidth(1);
+            }
+            if (nativeCursorRect.top() > windowGeometry.bottom()) {
+                nativeCursorRect.setTop(windowGeometry.bottom());
+                nativeCursorRect.setWidth(1);
+            }
+        }
+        bool wasVisible = isVisible();
+        bool cursorRectChanged = false;
+        if (property("_q_waylandPopupAnchorRect") != nativeCursorRect) {
+            cursorRectChanged = true;
+            setProperty("_q_waylandPopupAnchorRect", nativeCursorRect);
+        }
+        // This try to ensure xdg_popup is available.
+        show();
+        xdg_popup *xdgPopup = static_cast<xdg_popup *>(
+            QGuiApplication::platformNativeInterface()->nativeResourceForWindow(
+                "xdg_popup", this));
+        if (xdgWmBase_ && xdgPopup &&
+            xdg_popup_get_version(xdgPopup) >=
+                XDG_POPUP_REPOSITION_SINCE_VERSION) {
+            nativeCursorRect.translate(-windowMargins.left(),
+                                       -windowMargins.top());
+            auto *positioner =
+                new QtWayland::xdg_positioner(xdgWmBase_->create_positioner());
+            positioner->set_anchor_rect(
+                nativeCursorRect.x(), nativeCursorRect.y(),
+                nativeCursorRect.width(), nativeCursorRect.height());
+            positioner->set_anchor(
+                QtWayland::xdg_positioner::anchor_bottom_left);
+            positioner->set_gravity(
+                QtWayland::xdg_positioner::gravity_bottom_right);
+
+            auto *waylandCandidateWindow =
+                static_cast<QtWaylandClient::QWaylandWindow *>(handle());
+            QRect nativeGeometry =
+                waylandCandidateWindow->windowContentGeometry();
+            positioner->set_size(nativeGeometry.width(),
+                                 nativeGeometry.height());
+            positioner->set_reactive();
+            positioner->set_constraint_adjustment(
+                QtWayland::xdg_positioner::constraint_adjustment_slide_x |
+                QtWayland::xdg_positioner::constraint_adjustment_flip_y);
+            xdg_popup_reposition(xdgPopup, positioner->object(),
+                                 repositionToken_++);
+            positioner->destroy();
+            return;
+        }
+        // Check if we need remap.
+        // If it was invisible, nothing need to be done.
+        // If cursor rect changed, the window must be remapped.
+        // If adjustment is already happening (flip/slide), then remap.
+        // If we predict adjustment may be happening, then remap.
+        const auto predictGeometry =
+            QRect(QPoint(cursorRect.x(), cursorRect.y() + cursorRect.height()),
+                  actualSize_);
+
+        if (wasVisible &&
+            (cursorRectChanged || position() != predictGeometry.topLeft() ||
+             !windowGeometry.contains(predictGeometry))) {
+            hide();
+            show();
+        }
+        return;
+    }
+#endif
     // Try to apply the screen edge detection over the window, because if we
     // intent to use this with wayland. It we have no information above screen
     // edge.
@@ -474,7 +602,8 @@ void FcitxCandidateWindow::updateClientSideUI(
         cursorRect.moveTo(pos);
     }
 
-    int x = cursorRect.left(), y = cursorRect.bottom();
+    int x = cursorRect.left();
+    int y = cursorRect.bottom();
     if (cursorRect.left() + sizeWithoutShadow.width() >
         screenGeometry.right()) {
         x = screenGeometry.right() - sizeWithoutShadow.width() + 1;
@@ -497,19 +626,15 @@ void FcitxCandidateWindow::updateClientSideUI(
         y = screenGeometry.top();
     }
 
-    backingStore_->resize(actualSize_);
-    resize(actualSize_);
-    // hide();
     QPoint newPosition(x, y);
     newPosition -=
         QPoint(theme_->shadowMargin().left(), theme_->shadowMargin().top());
     if (newPosition != position()) {
-        if (isVisible()) {
+        if (isWayland_ && isVisible()) {
             hide();
         }
         setPosition(newPosition);
     }
-    renderNow();
     show();
 }
 
@@ -542,7 +667,7 @@ void FcitxCandidateWindow::mouseMoveEvent(QMouseEvent *event) {
 
     needRepaint = needRepaint || oldHighlight != highlight();
     if (needRepaint) {
-        renderNow();
+        update();
     }
 }
 
@@ -659,4 +784,8 @@ void FcitxCandidateWindow::wheelEvent(QWheelEvent *event) {
     }
 }
 
+void FcitxCandidateWindow::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    render(&p);
+}
 } // namespace fcitx

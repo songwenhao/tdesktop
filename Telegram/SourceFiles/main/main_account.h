@@ -39,119 +39,117 @@ namespace Export {
 }
 
 namespace Storage {
-class Account;
-class Domain;
-enum class StartResult : uchar;
+    class Account;
+    class Domain;
+    enum class StartResult : uchar;
 } // namespace Storage
 
 namespace MTP {
-class AuthKey;
-class Config;
+    class AuthKey;
+    class Config;
 } // namespace MTP
 
 namespace Main {
 
-class Domain;
-class Session;
-class SessionSettings;
-class AppConfig;
+    class Domain;
+    class Session;
+    class SessionSettings;
+    class AppConfig;
 
-class Account final : public base::has_weak_ptr {
-public:
-    Account(not_null<Domain*> domain, const QString& dataName, int index);
-    ~Account();
+    class Account final : public base::has_weak_ptr {
+    public:
+        Account(not_null<Domain*> domain, const QString& dataName, int index);
+        ~Account();
 
-    [[nodiscard]] Domain& domain() const {
-        return *_domain;
-    }
-
-    [[nodiscard]] Storage::Domain& domainLocal() const;
-
-    [[nodiscard]] Storage::StartResult legacyStart(
-        const QByteArray& passcode);
-    [[nodiscard]] std::unique_ptr<MTP::Config> prepareToStart(
-        std::shared_ptr<MTP::AuthKey> localKey);
-    void prepareToStartAdded(
-        std::shared_ptr<MTP::AuthKey> localKey);
-    void start(std::unique_ptr<MTP::Config> config);
-
-    [[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config* config) const;
-    void createSession(
-        const MTPUser& user,
-        std::unique_ptr<SessionSettings> settings = nullptr);
-    void createSession(
-        UserId id,
-        QByteArray serialized,
-        int streamVersion,
-        std::unique_ptr<SessionSettings> settings);
-
-    void logOut();
-    void forcedLogOut();
-    [[nodiscard]] bool loggingOut() const;
-
-    [[nodiscard]] AppConfig& appConfig() const {
-        Expects(_appConfig != nullptr);
-
-        return *_appConfig;
-    }
-
-    [[nodiscard]] Storage::Account& local() const {
-        return *_local;
-    }
-
-    [[nodiscard]] bool sessionExists() const;
-    [[nodiscard]] Session& session() const;
-    [[nodiscard]] Session* maybeSession() const;
-    [[nodiscard]] rpl::producer<Session*> sessionValue() const;
-    [[nodiscard]] rpl::producer<Session*> sessionChanges() const;
-
-    [[nodiscard]] MTP::Instance& mtp() const {
-        return *_mtp;
-    }
-
-    MTP::Sender& api() const {
-        if (!_api.has_value()) {
-            _api.emplace(&mtp());
+        [[nodiscard]] Domain& domain() const {
+            return *_domain;
         }
 
-        return _api.value();
-    }
+        [[nodiscard]] Storage::Domain& domainLocal() const;
 
-    [[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
+        [[nodiscard]] Storage::StartResult legacyStart(
+            const QByteArray& passcode);
+        [[nodiscard]] std::unique_ptr<MTP::Config> prepareToStart(
+            std::shared_ptr<MTP::AuthKey> localKey);
+        void prepareToStartAdded(
+            std::shared_ptr<MTP::AuthKey> localKey);
+        void start(std::unique_ptr<MTP::Config> config);
 
-    // Each time the main session changes a new copy of the pointer is fired.
-    // This allows to resend the requests that were not requiring auth, and
-    // which could be forgotten without calling .done() or .fail() because
-    // of the main dc changing.
-    [[nodiscard]] auto mtpMainSessionValue() const
-        ->rpl::producer<not_null<MTP::Instance*>>;
+        [[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config* config) const;
+        void createSession(
+            const MTPUser& user,
+            std::unique_ptr<SessionSettings> settings = nullptr);
+        void createSession(
+            UserId id,
+            QByteArray serialized,
+            int streamVersion,
+            std::unique_ptr<SessionSettings> settings);
 
-    // Set from legacy storage.
-    void setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key);
+        void logOut();
+        void forcedLogOut();
+        [[nodiscard]] bool loggingOut() const;
 
-    void setMtpMainDcId(MTP::DcId mainDcId);
-    void setSessionUserId(UserId userId);
-    void setSessionFromStorage(
-        std::unique_ptr<SessionSettings> data,
-        QByteArray&& selfSerialized,
-        int32 selfStreamVersion);
-    [[nodiscard]] SessionSettings* getSessionSettings();
-    [[nodiscard]] rpl::producer<> mtpNewSessionCreated() const;
-    [[nodiscard]] rpl::producer<MTPUpdates> mtpUpdates() const;
+        [[nodiscard]] AppConfig& appConfig() const {
+            Expects(_appConfig != nullptr);
 
-    // Serialization.
-    [[nodiscard]] QByteArray serializeMtpAuthorization() const;
-    void setMtpAuthorization(const QByteArray& serialized);
+            return *_appConfig;
+        }
 
-    void suggestMainDcId(MTP::DcId mainDcId);
-    void destroyStaleAuthorizationKeys();
+        [[nodiscard]] Storage::Account& local() const {
+            return *_local;
+        }
 
-    void setHandleLoginCode(Fn<void(QString)> callback);
-    void handleLoginCode(const QString& code) const;
+        [[nodiscard]] bool sessionExists() const;
+        [[nodiscard]] Session& session() const;
+        [[nodiscard]] Session* maybeSession() const;
+        [[nodiscard]] rpl::producer<Session*> sessionValue() const;
+        [[nodiscard]] rpl::producer<Session*> sessionChanges() const;
 
-    [[nodiscard]] rpl::lifetime& lifetime() {
-        return _lifetime;
-    }
+        [[nodiscard]] MTP::Instance& mtp() const {
+            return *_mtp;
+        }
+        MTP::Sender& api() const {
+            if (!_api.has_value()) {
+                _api.emplace(&mtp());
+            }
+
+            return _api.value();
+        }
+        [[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
+
+        // Each time the main session changes a new copy of the pointer is fired.
+        // This allows to resend the requests that were not requiring auth, and
+        // which could be forgotten without calling .done() or .fail() because
+        // of the main dc changing.
+        [[nodiscard]] auto mtpMainSessionValue() const
+            ->rpl::producer<not_null<MTP::Instance*>>;
+
+        // Set from legacy storage.
+        void setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key);
+
+        void setMtpMainDcId(MTP::DcId mainDcId);
+        void setSessionUserId(UserId userId);
+        void setSessionFromStorage(
+            std::unique_ptr<SessionSettings> data,
+            QByteArray&& selfSerialized,
+            int32 selfStreamVersion);
+        [[nodiscard]] SessionSettings* getSessionSettings();
+        [[nodiscard]] rpl::producer<> mtpNewSessionCreated() const;
+        [[nodiscard]] rpl::producer<MTPUpdates> mtpUpdates() const;
+
+        // Serialization.
+        [[nodiscard]] QByteArray serializeMtpAuthorization() const;
+        void setMtpAuthorization(const QByteArray& serialized);
+
+        void suggestMainDcId(MTP::DcId mainDcId);
+        void destroyStaleAuthorizationKeys();
+
+        void setHandleLoginCode(Fn<void(QString)> callback);
+        void handleLoginCode(const QString& code) const;
+
+        [[nodiscard]] rpl::lifetime& lifetime() {
+            return _lifetime;
+        }
 
         bool pipeConnected();
 

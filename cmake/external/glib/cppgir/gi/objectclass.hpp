@@ -296,6 +296,12 @@ typedef std::map<std::string, std::pair<PropertyBase *, ParamSpec>> properties;
 inline void property_class_init(
     ObjectClass *impl, gpointer g_class, gpointer class_data);
 
+inline gi::cstring_v
+klass_type_name(const std::type_info &ti, gi::cstring_v klassname)
+{
+  return (klassname && klassname.at(0)) ? klassname : ti.name();
+}
+
 class ObjectClass : public virtual ObjectBaseClass
 {
 public:
@@ -423,18 +429,21 @@ private:
   void init(GType parent, const gi::cstring_v klassname,
       const ClassInitNode *node,
       const repository::GObject::construct_params &params,
-      const properties &props)
+      const properties &props, gpointer instance = nullptr)
   {
     GType gtype = register_type(
         parent, klassname, {class_init, nullptr, node}, itfs, props);
     itfs.clear();
     // create and link object instance
-    GObject *obj = gobject_ = (GObject *)Object::new_(gtype, params);
+    // if needed, that is, otherwise use provided instance and tie onto that one
+    GObject *obj = gobject_ =
+        (GObject *)(instance ? instance : Object::new_(gtype, params));
     // should still be floating, then we assume ownership
     // if it is no longer, then it has already been stolen (e.g. GtkWindow),
     // and we need to add one here
-    if (g_type_is_a(gtype, G_TYPE_INITIALLY_UNOWNED))
+    if (!instance && g_type_is_a(gtype, G_TYPE_INITIALLY_UNOWNED))
       g_object_ref_sink(gobject_);
+    // mark this as associated wrapper object as retrieved by .instance()
     g_object_set_qdata_full(obj, object_data_quark(), this, destroy_notify);
   }
 
@@ -458,9 +467,9 @@ protected:
   ObjectClass(const void *, GType parent, const gi::cstring_v klassname,
       const ClassInitNode &node,
       const repository::GObject::construct_params &params,
-      const properties &props)
+      const properties &props, gpointer instance)
   {
-    init(parent, klassname, &node, params, props);
+    init(parent, klassname, &node, params, props, instance);
   }
 
   ~ObjectClass()
@@ -494,10 +503,12 @@ public:
   template<typename SubClass>
   ObjectClass(const SubClass *,
       const repository::GObject::construct_params &params = {},
-      const properties &props = {})
+      const properties &props = {}, gpointer instance = nullptr,
+      const gi::cstring_v klassname = nullptr)
   {
     const auto &ti = typeid(SubClass);
-    init(instance_type::get_type_(), ti.name(), nullptr, params, props);
+    init(instance_type::get_type_(), klass_type_name(ti, klassname), nullptr,
+        params, props, instance);
   }
 
   operator Object() { return gi::wrap(gobject_, transfer_none); }
@@ -557,13 +568,15 @@ protected:
   template<typename SubClass>
   ClassTemplate(const SubClass *sub,
       const repository::GObject::construct_params &params = {},
-      const properties &props = {})
+      const properties &props = {}, gpointer instance = nullptr,
+      const gi::cstring_v klassname = nullptr)
       : Interfaces(instance_type_t::get_type_(),
             gpointer(make_type_init_data<Interfaces, SubClass>()))...,
-        BaseClass(sub, instance_type_t::get_type_(), typeid(SubClass).name(),
+        BaseClass(sub, instance_type_t::get_type_(),
+            klass_type_name(typeid(SubClass), klassname),
             {&ClassDef::class_init, make_type_init_data<ClassDef, SubClass>(),
                 nullptr},
-            params, props)
+            params, props, instance)
   {}
 
   // constructor for inner inheritance chain
@@ -571,12 +584,13 @@ protected:
   ClassTemplate(const SubClass *sub, GType base, const gi::cstring_v klassname,
       const ObjectClass::ClassInitNode &node,
       const repository::GObject::construct_params &params,
-      const properties &props)
-      : Interfaces(instance_type_t::get_type_())...,
+      const properties &props, gpointer instance = nullptr)
+      : Interfaces(instance_type_t::get_type_(),
+            gpointer(make_type_init_data<Interfaces, SubClass>()))...,
         BaseClass(sub, base, klassname,
             {&ClassDef::class_init, make_type_init_data<ClassDef, SubClass>(),
                 &node},
-            params, props)
+            params, props, instance)
   {}
 
 public:
@@ -622,6 +636,22 @@ protected:
           repository::GObject::construct_params{},
       const properties &props = properties{})
       : ClassT(sub, params, props)
+  { // link object ptrs (untracked by ObjectBase)
+    this->data_ = this->gobject_;
+  }
+
+  // special advanced case (for internal/override use) by custom subclass
+  // where constructed instance is associated with provided object instance
+  // (rather than the latter created as part of construction, as usual)
+  // if klassname KlassName is specified,
+  // registered typename is GOBJECT__KlassName
+  template<typename SubClass>
+  ObjectImpl(ObjectT instance, const SubClass *sub,
+      const gi::cstring_v klassname = nullptr,
+      const repository::GObject::construct_params &params =
+          repository::GObject::construct_params{},
+      const properties &props = properties{})
+      : ClassT(sub, params, props, instance.gobj_(), klassname)
   { // link object ptrs (untracked by ObjectBase)
     this->data_ = this->gobject_;
   }
@@ -1003,7 +1033,11 @@ class ref_ptr : public std::unique_ptr<T, ObjectDeleter<T>>
   typedef typename T::baseclass_type baseclass_type;
 
 public:
-  ref_ptr(T *ptr = nullptr) : super(ptr) {}
+  ref_ptr(T *ptr = nullptr, bool own = true) : super(ptr)
+  {
+    if (ptr && !own)
+      g_object_ref(ptr->gobj_());
+  }
 
   ref_ptr(ref_ptr &&other) = default;
   ref_ptr(const ref_ptr &other) : super(nullptr)
@@ -1029,6 +1063,7 @@ template<typename T, typename... Args>
 ref_ptr<T>
 make_ref(Args &&...args)
 {
+  // move ownership of ref acquired during creation
   return ref_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
@@ -1042,8 +1077,8 @@ ref_ptr_cast(Object ob)
     if (instance) {
       auto obj = dynamic_cast<T *>(instance);
       if (obj) {
-        g_object_ref(ob.gobj_());
-        return ref_ptr<T>(obj);
+        // arrange to obtain an extra ref
+        return ref_ptr<T>(obj, false);
       }
     }
   }

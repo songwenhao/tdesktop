@@ -31,9 +31,12 @@ option(BUILD_EMBED_IGNORE "embed default ignore" OFF)
 option(EXAMPLES_EXPECTED "use expected<> in examples" OFF)
 option(EXAMPLES_DL "use dynamic symbol load in examples" OFF)
 option(INTERNAL_EXPECTED "use internal expected-lite" ON)
+option(LINK_STDFS "link to stdc++fs" OFF)
 set(BUILD_FMT AUTO CACHE STRING "format library")
 set_property(CACHE BUILD_FMT PROPERTY STRINGS AUTO FMTLIB STDFORMAT)
-set(GIR_DIR ${CMAKE_INSTALL_FULL_DATADIR} CACHE STRING "extra GIR search directory")
+set(GTK_MAJOR GTK3 CACHE STRING "gtk version")
+set_property(CACHE GTK_MAJOR PROPERTY STRINGS GTK3 GTK4)
+set(GIR_DIR ${CMAKE_INSTALL_FULL_DATADIR}/gir-1.0 CACHE STRING "extra GIR search directory")
 
 ## CONTENT ##
 
@@ -119,6 +122,11 @@ if (USE_FMTLIB)
 else()
     set_property(TARGET cppgir PROPERTY CXX_STANDARD 20)
 endif()
+if (LINK_STDFS)
+    # some older gcc might sometimes (?) need this, even in c++17 mode
+    # see issue #80
+    target_link_libraries(cppgir stdc++fs)
+endif ()
 add_executable(CppGir::cppgir ALIAS cppgir)
 
 add_library(gi INTERFACE)
@@ -158,7 +166,15 @@ endif ()
 if (BUILD_EXAMPLES)
     pkg_check_modules(GIO gio-2.0 gio-unix-2.0)
     pkg_check_modules(GST gstreamer-1.0)
-    pkg_check_modules(GTK gtk+-3.0)
+    if (GTK_MAJOR STREQUAL "GTK3")
+        pkg_check_modules(GTK gtk+-3.0)
+        set(GTK_GIR Gtk-3.0)
+    endif ()
+    if (GTK_MAJOR STREQUAL "GTK4")
+        # only plain gio is a dependency, but GIR requires other gio parts
+        pkg_check_modules(GTK gtk4 gtk4-unix-print gio-unix-2.0)
+        set(GTK_GIR Gtk-4.0)
+    endif ()
 endif ()
 
 ## TEST ##
@@ -289,13 +305,18 @@ if (GTK_FOUND AND PLAIN_API)
     add_executable(example-gtk EXCLUDE_FROM_ALL examples/gtk.cpp examples/gtk-obj.cpp)
     target_compile_options(example-gtk PRIVATE ${GTK_CFLAGS})
     target_link_libraries(example-gtk PRIVATE ${GTK_LIBRARIES})
+    target_compile_options(example-gtk PRIVATE -DEXAMPLES_DIR=${CMAKE_CURRENT_LIST_DIR}/examples)
     if (NEEDS_LARGE_GOT)
         set_property(SOURCE examples/gtk-obj.cpp APPEND PROPERTY COMPILE_OPTIONS "-mxgot")
     endif ()
 
-    message(STATUS "adding Gtk example")
+    # sanity check
+    if (NOT GTK_GIR)
+        message(FATAL_ERROR "unknown Gtk GIR")
+    endif ()
+    message(STATUS "adding Gtk example ${GTK_GIR}")
     set(EXAMPLE_TARGETS ${EXAMPLE_TARGETS} example-gtk)
-    set(EXAMPLE_NS ${EXAMPLE_NS} Gtk-3.0)
+    set(EXAMPLE_NS ${EXAMPLE_NS} ${GTK_GIR})
 endif ()
 
 # optional Qt example

@@ -49,6 +49,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     INTERFACE
         $<IF:$<CONFIG:Debug>,/NODEFAULTLIB:LIBCMT,/DEBUG;/OPT:REF>
         $<$<BOOL:${DESKTOP_APP_NO_PDB}>:/DEBUG:NONE>
+        /INCREMENTAL:NO
     )
 
     if (DESKTOP_APP_ASAN)
@@ -144,6 +145,7 @@ INTERFACE
     Wtsapi32
     Crypt32
     Propsys
+    Bcrypt
 )
 
 if (build_winstore)

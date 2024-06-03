@@ -132,6 +132,11 @@ private:
 				Gio::impl::internal::DBusInterfaceSkeletonClassDef,
 				get_info,
 				true)
+
+			GI_DEFINES_MEMBER(
+				Gio::impl::internal::DBusInterfaceIfaceDef,
+				get_info,
+				false)
 		};
 
 		Player(not_null<Private*> parent)
@@ -368,7 +373,9 @@ void SystemMediaControls::setTitle(const QString &title) {
 void SystemMediaControls::setArtist(const QString &artist) {
 	auto metadata = GLib::VariantDict::new_(
 		_private->player().get_metadata());
-	metadata.insert_value("xesam:artist", Q2V(artist));
+	metadata.insert_value(
+		"xesam:artist",
+		GLib::Variant::new_array({ Q2V(artist) }));
 	_private->player().set_metadata(metadata.end());
 }
 

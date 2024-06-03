@@ -30,6 +30,7 @@ struct FunctionGenerator : public GeneratorBase
   // tweak debug level upon error
   bool ignored = false;
   bool introspectable = true;
+  bool allow_deprecated = false;
 
   // also detect various function generation alternatives
   enum class opt_except {
@@ -100,15 +101,23 @@ struct FunctionGenerator : public GeneratorBase
 public:
   FunctionGenerator(GeneratorContext &_ctx, const std::string _ns,
       const ElementFunction &_func, const std::string &_klass,
-      const std::string &_klasstype, std::set<std::string> &_deps)
+      const std::string &_klasstype, std::set<std::string> &_deps,
+      bool _allow_deprecated = false)
       : GeneratorBase(_ctx, _ns), func(_func), kind(func.kind), klass(_klass),
-        klasstype(_klasstype), deps(_deps)
+        klasstype(_klasstype), deps(_deps), allow_deprecated(_allow_deprecated)
   {
     assert(func.name.size());
     assert(func.kind.size());
     assert(func.c_id.size());
     assert(func.functionexp.size());
   }
+
+  static bool ends_with(std::string const &value, std::string const &ending)
+  {
+    if (ending.size() > value.size())
+      return false;
+    return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
+  };
 
   void handle_skip(const skip &ex)
   {
@@ -192,7 +201,7 @@ public:
       auto deprecated = get_attribute<int>(node, AT_DEPRECATED, 0);
       if (ctx.match_ignore.matches(ns, kind, {func.name, func.c_id}))
         throw skip("marked ignore", skip::IGNORE);
-      if (deprecated)
+      if (deprecated && !allow_deprecated)
         throw skip("deprecated", skip::IGNORE);
       // there are a few nice-to-have in this case (e.g. some _get_source)
       // so let's try anyway but not complain too much if it goes wrong
@@ -1252,6 +1261,8 @@ public:
           p.callerallocates ? ",ca" : "");
     };
 
+    int callbacks = 0;
+    Parameter *callback = nullptr;
     for (auto &p : paraminfo) {
       try {
         auto &pinfo = p.second;
@@ -1324,8 +1335,39 @@ public:
           if (*p >= 0)
             referenced.insert(*p);
         array_sizes[pinfo.tinfo.length] = p.first;
+        // check if (single) callback parameter
+        if (flags & TYPE_CALLBACK) {
+          ++callbacks;
+          if (pinfo.closure < 0)
+            callback = &pinfo;
+        }
       } catch (skip &ex) {
         handle_skip(ex);
+      }
+    }
+
+    // userdata parameter may not be properly annotated
+    // (especially for functions considered not introspectable)
+    // so, in case of only 1 callback parameter, try to guess userdata
+    // (see also issue #85;
+    // only limited cases so far, e.g. g_bytes_new_with_free_func)
+    // as there is no way to guess the annotated scope,
+    // we either have to hope that at least that one is properly annotated,
+    // or alternatively let's only guess in specific circumstances
+    if (callbacks == 1 && callback &&
+        callback->tinfo.girname == GIR_GDESTROYNOTIFY &&
+        callback->scope == SCOPE_ASYNC) {
+      auto &e = *paraminfo.rbegin();
+      // check last parameter
+      auto &pinfo = e.second;
+      if ((pinfo.name == "data" || ends_with(pinfo.name, "_data")) &&
+          (pinfo.tinfo.girname == "gpointer")) {
+        // assign as userdata to single callback
+        callback->closure = e.first;
+        // callback->
+        referenced.insert(e.first);
+        logger(Log::DEBUG, "{}; guessed {} userdata parameter {}", func.c_id,
+            callback->name, pinfo.name);
       }
     }
 
@@ -1499,10 +1541,11 @@ public:
         if (symbol_name.size()) {
           std::string check_exp;
           if (options.except == opt_except::EXPECTED) {
-            check_exp = fmt::format("if (!{}) "
-                                    "gi::detail::make_unexpected(gi::detail::"
-                                    "missing_symbol_error({}))",
-                call_wrap_v, symbol_name);
+            check_exp =
+                fmt::format("if (!{}) "
+                            "return gi::detail::make_unexpected(gi::detail::"
+                            "missing_symbol_error({}))",
+                    call_wrap_v, symbol_name);
           } else if (options.except == opt_except::THROW) {
             check_exp = fmt::format(
                 "if (!{}) "
@@ -1550,12 +1593,6 @@ public:
           }
         }
       }
-
-      auto ends_with = [](std::string const &value, std::string const &ending) {
-        if (ending.size() > value.size())
-          return false;
-        return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
-      };
 
       // if userdata/closure not specified for a closure,
       // accept last parameter as userdata based on name
@@ -1642,7 +1679,7 @@ public:
           } else {
             // terminating ; added later
             def.post_call.push_back(
-                "if (error) gi::detail::make_unexpected (error)");
+                "if (error) return gi::detail::make_unexpected (error)");
           }
           break;
         case opt_except::GERROR: {
@@ -1852,7 +1889,7 @@ FunctionDefinition
 process_element_function(GeneratorContext &_ctx, const std::string _ns,
     const pt::ptree::value_type &entry, std::ostream &out, std::ostream &impl,
     const std::string &klass, const std::string &klasstype,
-    std::set<std::string> &deps)
+    std::set<std::string> &deps, bool allow_deprecated)
 {
   ElementFunction func;
 
@@ -1878,7 +1915,8 @@ process_element_function(GeneratorContext &_ctx, const std::string _ns,
   func.lib_symbol =
       (kind == EL_FUNCTION || kind == EL_METHOD || kind == EL_CONSTRUCTOR);
 
-  FunctionGenerator gen(_ctx, _ns, func, klass, klasstype, deps);
+  FunctionGenerator gen(
+      _ctx, _ns, func, klass, klasstype, deps, allow_deprecated);
   return gen.process(&entry, nullptr, out, impl);
 }
 

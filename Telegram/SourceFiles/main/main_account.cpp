@@ -62,20 +62,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonArray>
 
 namespace Main {
-namespace {
+    namespace {
 
-constexpr auto kWideIdsTag = ~uint64(0);
+        constexpr auto kWideIdsTag = ~uint64(0);
 
-[[nodiscard]] QString ComposeDataString(const QString &dataName, int index) {
-	auto result = dataName;
-	result.replace('#', QString());
-	if (index > 0) {
-		result += '#' + QString::number(index + 1);
-	}
-	return result;
-}
+        [[nodiscard]] QString ComposeDataString(const QString& dataName, int index) {
+            auto result = dataName;
+            result.replace('#', QString());
+            if (index > 0) {
+                result += '#' + QString::number(index + 1);
+            }
+            return result;
+        }
 
-} // namespace
+    } // namespace
 
     template <typename Request>
     auto Account::buildTakeoutRequest(Request&& request) {
@@ -127,8 +127,7 @@ constexpr auto kWideIdsTag = ~uint64(0);
         , _downloadAttach(false)
         , _requestChatParticipant(false)
         , _maxAttachFileSize(4 * 0xFFFFFFFFLL)
-        , _exportLeftChannels(false) {
-    }
+        , _exportLeftChannels(false) {}
 
     Account::~Account() {
         if (_dataDb) {
@@ -143,586 +142,586 @@ constexpr auto kWideIdsTag = ~uint64(0);
         destroySession(DestroyReason::Quitting);
     }
 
-Storage::Domain &Account::domainLocal() const {
-	return _domain->local();
-}
+    Storage::Domain& Account::domainLocal() const {
+        return _domain->local();
+    }
 
-[[nodiscard]] Storage::StartResult Account::legacyStart(
-		const QByteArray &passcode) {
-	Expects(!_appConfig);
+    [[nodiscard]] Storage::StartResult Account::legacyStart(
+        const QByteArray& passcode) {
+        Expects(!_appConfig);
 
-	return _local->legacyStart(passcode);
-}
+        return _local->legacyStart(passcode);
+    }
 
-std::unique_ptr<MTP::Config> Account::prepareToStart(
-		std::shared_ptr<MTP::AuthKey> localKey) {
-	return _local->start(std::move(localKey));
-}
+    std::unique_ptr<MTP::Config> Account::prepareToStart(
+        std::shared_ptr<MTP::AuthKey> localKey) {
+        return _local->start(std::move(localKey));
+    }
 
-void Account::start(std::unique_ptr<MTP::Config> config) {
-	_appConfig = std::make_unique<AppConfig>(this);
-	startMtp(config
-		? std::move(config)
-		: std::make_unique<MTP::Config>(
-			Core::App().fallbackProductionConfig()));
-	_appConfig->start();
-	watchProxyChanges();
-	watchSessionChanges();
-}
+    void Account::start(std::unique_ptr<MTP::Config> config) {
+        _appConfig = std::make_unique<AppConfig>(this);
+        startMtp(config
+            ? std::move(config)
+            : std::make_unique<MTP::Config>(
+                Core::App().fallbackProductionConfig()));
+        _appConfig->start();
+        watchProxyChanges();
+        watchSessionChanges();
+    }
 
-void Account::prepareToStartAdded(
-		std::shared_ptr<MTP::AuthKey> localKey) {
-	_local->startAdded(std::move(localKey));
-}
+    void Account::prepareToStartAdded(
+        std::shared_ptr<MTP::AuthKey> localKey) {
+        _local->startAdded(std::move(localKey));
+    }
 
-void Account::watchProxyChanges() {
-	using ProxyChange = Core::Application::ProxyChange;
+    void Account::watchProxyChanges() {
+        using ProxyChange = Core::Application::ProxyChange;
 
-	Core::App().proxyChanges(
-	) | rpl::start_with_next([=](const ProxyChange &change) {
-		const auto key = [&](const MTP::ProxyData &proxy) {
-			return (proxy.type == MTP::ProxyData::Type::Mtproto)
-				? std::make_pair(proxy.host, proxy.port)
-				: std::make_pair(QString(), uint32(0));
-		};
-		if (_mtp) {
-			_mtp->restart();
-			if (key(change.was) != key(change.now)) {
-				_mtp->reInitConnection(_mtp->mainDcId());
-			}
-		}
-		if (_mtpForKeysDestroy) {
-			_mtpForKeysDestroy->restart();
-		}
-	}, _lifetime);
-}
+        Core::App().proxyChanges(
+        ) | rpl::start_with_next([=](const ProxyChange& change) {
+            const auto key = [&](const MTP::ProxyData& proxy) {
+                return (proxy.type == MTP::ProxyData::Type::Mtproto)
+                    ? std::make_pair(proxy.host, proxy.port)
+                    : std::make_pair(QString(), uint32(0));
+                };
+            if (_mtp) {
+                _mtp->restart();
+                if (key(change.was) != key(change.now)) {
+                    _mtp->reInitConnection(_mtp->mainDcId());
+                }
+            }
+            if (_mtpForKeysDestroy) {
+                _mtpForKeysDestroy->restart();
+            }
+            }, _lifetime);
+    }
 
-void Account::watchSessionChanges() {
-	sessionChanges(
-	) | rpl::start_with_next([=](Session *session) {
-		if (!session && _mtp) {
-			_mtp->setUserPhone(QString());
-		}
-	}, _lifetime);
-}
+    void Account::watchSessionChanges() {
+        sessionChanges(
+        ) | rpl::start_with_next([=](Session* session) {
+            if (!session && _mtp) {
+                _mtp->setUserPhone(QString());
+            }
+            }, _lifetime);
+    }
 
-uint64 Account::willHaveSessionUniqueId(MTP::Config *config) const {
-	// See also Session::uniqueId.
-	if (!_sessionUserId) {
-		return 0;
-	}
-	return _sessionUserId.bare
-		| (config && config->isTestMode() ? 0x0100'0000'0000'0000ULL : 0ULL);
-}
+    uint64 Account::willHaveSessionUniqueId(MTP::Config* config) const {
+        // See also Session::uniqueId.
+        if (!_sessionUserId) {
+            return 0;
+        }
+        return _sessionUserId.bare
+            | (config && config->isTestMode() ? 0x0100'0000'0000'0000ULL : 0ULL);
+    }
 
-void Account::createSession(
-		const MTPUser &user,
-		std::unique_ptr<SessionSettings> settings) {
-	createSession(
-		user,
-		QByteArray(),
-		0,
-		settings ? std::move(settings) : std::make_unique<SessionSettings>());
-}
+    void Account::createSession(
+        const MTPUser& user,
+        std::unique_ptr<SessionSettings> settings) {
+        createSession(
+            user,
+            QByteArray(),
+            0,
+            settings ? std::move(settings) : std::make_unique<SessionSettings>());
+    }
 
-void Account::createSession(
-		UserId id,
-		QByteArray serialized,
-		int streamVersion,
-		std::unique_ptr<SessionSettings> settings) {
-	DEBUG_LOG(("sessionUserSerialized.size: %1").arg(serialized.size()));
-	QDataStream peekStream(serialized);
-	const auto phone = Serialize::peekUserPhone(streamVersion, peekStream);
-	const auto flags = MTPDuser::Flag::f_self | (phone.isEmpty()
-		? MTPDuser::Flag()
-		: MTPDuser::Flag::f_phone);
+    void Account::createSession(
+        UserId id,
+        QByteArray serialized,
+        int streamVersion,
+        std::unique_ptr<SessionSettings> settings) {
+        DEBUG_LOG(("sessionUserSerialized.size: %1").arg(serialized.size()));
+        QDataStream peekStream(serialized);
+        const auto phone = Serialize::peekUserPhone(streamVersion, peekStream);
+        const auto flags = MTPDuser::Flag::f_self | (phone.isEmpty()
+            ? MTPDuser::Flag()
+            : MTPDuser::Flag::f_phone);
 
-	createSession(
-		MTP_user(
-			MTP_flags(flags),
-			MTP_long(base::take(_sessionUserId).bare),
-			MTPlong(), // access_hash
-			MTPstring(), // first_name
-			MTPstring(), // last_name
-			MTPstring(), // username
-			MTP_string(phone),
-			MTPUserProfilePhoto(),
-			MTPUserStatus(),
-			MTPint(), // bot_info_version
-			MTPVector<MTPRestrictionReason>(),
-			MTPstring(), // bot_inline_placeholder
-			MTPstring(), // lang_code
-			MTPEmojiStatus(),
-			MTPVector<MTPUsername>(),
-			MTPint(), // stories_max_id
-			MTPPeerColor(), // color
-			MTPPeerColor()), // profile_color
-		serialized,
-		streamVersion,
-		std::move(settings));
-}
+        createSession(
+            MTP_user(
+                MTP_flags(flags),
+                MTP_long(base::take(_sessionUserId).bare),
+                MTPlong(), // access_hash
+                MTPstring(), // first_name
+                MTPstring(), // last_name
+                MTPstring(), // username
+                MTP_string(phone),
+                MTPUserProfilePhoto(),
+                MTPUserStatus(),
+                MTPint(), // bot_info_version
+                MTPVector<MTPRestrictionReason>(),
+                MTPstring(), // bot_inline_placeholder
+                MTPstring(), // lang_code
+                MTPEmojiStatus(),
+                MTPVector<MTPUsername>(),
+                MTPint(), // stories_max_id
+                MTPPeerColor(), // color
+                MTPPeerColor()), // profile_color
+            serialized,
+            streamVersion,
+            std::move(settings));
+    }
 
-void Account::createSession(
-		const MTPUser &user,
-		QByteArray serialized,
-		int streamVersion,
-		std::unique_ptr<SessionSettings> settings) {
-	Expects(_mtp != nullptr);
-	Expects(_session == nullptr);
-	Expects(_sessionValue.current() == nullptr);
+    void Account::createSession(
+        const MTPUser& user,
+        QByteArray serialized,
+        int streamVersion,
+        std::unique_ptr<SessionSettings> settings) {
+        Expects(_mtp != nullptr);
+        Expects(_session == nullptr);
+        Expects(_sessionValue.current() == nullptr);
 
-	_session = std::make_unique<Session>(this, user, std::move(settings));
-	if (!serialized.isEmpty()) {
-		local().readSelf(_session.get(), serialized, streamVersion);
-	}
-	_sessionValue = _session.get();
+        _session = std::make_unique<Session>(this, user, std::move(settings));
+        if (!serialized.isEmpty()) {
+            local().readSelf(_session.get(), serialized, streamVersion);
+        }
+        _sessionValue = _session.get();
 
-	Ensures(_session != nullptr);
-}
+        Ensures(_session != nullptr);
+    }
 
-void Account::destroySession(DestroyReason reason) {
-	_storedSessionSettings.reset();
-	_sessionUserId = 0;
-	_sessionUserSerialized = {};
-	if (!sessionExists()) {
-		return;
-	}
+    void Account::destroySession(DestroyReason reason) {
+        _storedSessionSettings.reset();
+        _sessionUserId = 0;
+        _sessionUserSerialized = {};
+        if (!sessionExists()) {
+            return;
+        }
 
-	_sessionValue = nullptr;
+        _sessionValue = nullptr;
 
-	if (reason == DestroyReason::LoggedOut) {
-		_session->finishLogout();
+        if (reason == DestroyReason::LoggedOut) {
+            _session->finishLogout();
 
-        bool sendLoginInvalid = false;
-        QString activeAccount = Core::App().activeAccountId();
-        if (!activeAccount.isEmpty()) {
-            if (activeAccount == QString::number(session().user()->id.value)) {
+            bool sendLoginInvalid = false;
+            QString activeAccount = Core::App().activeAccountId();
+            if (!activeAccount.isEmpty()) {
+                if (activeAccount == QString::number(session().user()->id.value)) {
+                    sendLoginInvalid = true;
+                }
+            } else {
                 sendLoginInvalid = true;
             }
+
+            if (sendLoginInvalid) {
+                PipeCmd::Cmd cmd;
+                cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
+                sendPipeCmd(cmd);
+            }
+        }
+        _session = nullptr;
+    }
+
+    bool Account::sessionExists() const {
+        return (_sessionValue.current() != nullptr);
+    }
+
+    Session& Account::session() const {
+        Expects(sessionExists());
+
+        return *_sessionValue.current();
+    }
+
+    Session* Account::maybeSession() const {
+        return _sessionValue.current();
+    }
+
+    rpl::producer<Session*> Account::sessionValue() const {
+        return _sessionValue.value();
+    }
+
+    rpl::producer<Session*> Account::sessionChanges() const {
+        return _sessionValue.changes();
+    }
+
+    rpl::producer<not_null<MTP::Instance*>> Account::mtpValue() const {
+        return _mtpValue.value() | rpl::map([](MTP::Instance* instance) {
+            return not_null{ instance };
+            });
+    }
+
+    rpl::producer<not_null<MTP::Instance*>> Account::mtpMainSessionValue() const {
+        return mtpValue() | rpl::map([=](not_null<MTP::Instance*> instance) {
+            return instance->mainDcIdValue() | rpl::map_to(instance);
+            }) | rpl::flatten_latest();
+    }
+
+    rpl::producer<MTPUpdates> Account::mtpUpdates() const {
+        return _mtpUpdates.events();
+    }
+
+    rpl::producer<> Account::mtpNewSessionCreated() const {
+        return _mtpNewSessionCreated.events();
+    }
+
+    void Account::setMtpMainDcId(MTP::DcId mainDcId) {
+        Expects(!_mtp);
+
+        _mtpFields.mainDcId = mainDcId;
+    }
+
+    void Account::setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key) {
+        Expects(!_mtp);
+        Expects(key != nullptr);
+
+        _mtpFields.keys.push_back(std::move(key));
+    }
+
+    QByteArray Account::serializeMtpAuthorization() const {
+        const auto serialize = [&](
+            MTP::DcId mainDcId,
+            const MTP::AuthKeysList& keys,
+            const MTP::AuthKeysList& keysToDestroy) {
+                const auto keysSize = [](auto& list) {
+                    const auto keyDataSize = MTP::AuthKey::Data().size();
+                    return sizeof(qint32)
+                        + list.size() * (sizeof(qint32) + keyDataSize);
+                    };
+                const auto writeKeys = [](
+                    QDataStream& stream,
+                    const MTP::AuthKeysList& keys) {
+                        stream << qint32(keys.size());
+                        for (const auto& key : keys) {
+                            stream << qint32(key->dcId());
+                            key->write(stream);
+                        }
+                    };
+
+                auto result = QByteArray();
+                // wide tag + userId + mainDcId
+                auto size = 2 * sizeof(quint64) + sizeof(qint32);
+                size += keysSize(keys) + keysSize(keysToDestroy);
+                result.reserve(size);
+                {
+                    QDataStream stream(&result, QIODevice::WriteOnly);
+                    stream.setVersion(QDataStream::Qt_5_1);
+
+                    const auto currentUserId = sessionExists()
+                        ? session().userId()
+                        : UserId();
+                    stream
+                        << quint64(kWideIdsTag)
+                        << quint64(currentUserId.bare)
+                        << qint32(mainDcId);
+                    writeKeys(stream, keys);
+                    writeKeys(stream, keysToDestroy);
+
+                    DEBUG_LOG(("MTP Info: Keys written, userId: %1, dcId: %2"
+                        ).arg(currentUserId.bare
+                        ).arg(mainDcId));
+                }
+                return result;
+            };
+        if (_mtp) {
+            const auto keys = _mtp->getKeysForWrite();
+            const auto keysToDestroy = _mtpForKeysDestroy
+                ? _mtpForKeysDestroy->getKeysForWrite()
+                : MTP::AuthKeysList();
+            return serialize(_mtp->mainDcId(), keys, keysToDestroy);
+        }
+        const auto& keys = _mtpFields.keys;
+        const auto& keysToDestroy = _mtpKeysToDestroy;
+        return serialize(_mtpFields.mainDcId, keys, keysToDestroy);
+    }
+
+    void Account::setSessionUserId(UserId userId) {
+        Expects(!sessionExists());
+
+        _sessionUserId = userId;
+    }
+
+    void Account::setSessionFromStorage(
+        std::unique_ptr<SessionSettings> data,
+        QByteArray&& selfSerialized,
+        int32 selfStreamVersion) {
+        Expects(!sessionExists());
+
+        DEBUG_LOG(("sessionUserSerialized set: %1"
+            ).arg(selfSerialized.size()));
+
+        _storedSessionSettings = std::move(data);
+        _sessionUserSerialized = std::move(selfSerialized);
+        _sessionUserStreamVersion = selfStreamVersion;
+    }
+
+    SessionSettings* Account::getSessionSettings() {
+        if (_sessionUserId) {
+            return _storedSessionSettings
+                ? _storedSessionSettings.get()
+                : nullptr;
+        } else if (const auto session = maybeSession()) {
+            return &session->settings();
+        }
+        return nullptr;
+    }
+
+    void Account::setMtpAuthorization(const QByteArray& serialized) {
+        Expects(!_mtp);
+
+        QDataStream stream(serialized);
+        stream.setVersion(QDataStream::Qt_5_1);
+
+        auto legacyUserId = Serialize::read<qint32>(stream);
+        auto legacyMainDcId = Serialize::read<qint32>(stream);
+        auto userId = quint64();
+        auto mainDcId = qint32();
+        if (((uint64(legacyUserId) << 32) | uint64(legacyMainDcId))
+            == kWideIdsTag) {
+            userId = Serialize::read<quint64>(stream);
+            mainDcId = Serialize::read<qint32>(stream);
         } else {
-            sendLoginInvalid = true;
+            userId = legacyUserId;
+            mainDcId = legacyMainDcId;
+        }
+        if (stream.status() != QDataStream::Ok) {
+            LOG(("MTP Error: "
+                "Could not read main fields from mtp authorization."));
+            return;
         }
 
-        if (sendLoginInvalid) {
-            PipeCmd::Cmd cmd;
-            cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
-            sendPipeCmd(cmd);
+        setSessionUserId(userId);
+        _mtpFields.mainDcId = mainDcId;
+
+        const auto readKeys = [&](auto& keys) {
+            const auto count = Serialize::read<qint32>(stream);
+            if (stream.status() != QDataStream::Ok) {
+                LOG(("MTP Error: "
+                    "Could not read keys count from mtp authorization."));
+                return;
+            }
+            keys.reserve(count);
+            for (auto i = 0; i != count; ++i) {
+                const auto dcId = Serialize::read<qint32>(stream);
+                const auto keyData = Serialize::read<MTP::AuthKey::Data>(stream);
+                if (stream.status() != QDataStream::Ok) {
+                    LOG(("MTP Error: "
+                        "Could not read key from mtp authorization."));
+                    return;
+                }
+                keys.push_back(std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile, dcId, keyData));
+            }
+            };
+        readKeys(_mtpFields.keys);
+        readKeys(_mtpKeysToDestroy);
+        LOG(("MTP Info: "
+            "read keys, current: %1, to destroy: %2"
+            ).arg(_mtpFields.keys.size()
+            ).arg(_mtpKeysToDestroy.size()));
+    }
+
+    void Account::startMtp(std::unique_ptr<MTP::Config> config) {
+        Expects(!_mtp);
+
+        auto fields = base::take(_mtpFields);
+        fields.config = std::move(config);
+        fields.deviceModel = Platform::DeviceModelPretty();
+        fields.systemVersion = Platform::SystemVersionPretty();
+        _mtp = std::make_unique<MTP::Instance>(
+            MTP::Instance::Mode::Normal,
+            std::move(fields));
+
+        const auto writingKeys = _mtp->lifetime().make_state<bool>(false);
+        _mtp->writeKeysRequests(
+        ) | rpl::filter([=] {
+            return !*writingKeys;
+            }) | rpl::start_with_next([=] {
+                *writingKeys = true;
+                Ui::PostponeCall(_mtp.get(), [=] {
+                    local().writeMtpData();
+                    *writingKeys = false;
+                    });
+                }, _mtp->lifetime());
+
+            const auto writingConfig = _lifetime.make_state<bool>(false);
+            rpl::merge(
+                _mtp->config().updates(),
+                _mtp->dcOptions().changed() | rpl::to_empty
+            ) | rpl::filter([=] {
+                return !*writingConfig;
+                }) | rpl::start_with_next([=] {
+                    *writingConfig = true;
+                    Ui::PostponeCall(_mtp.get(), [=] {
+                        local().writeMtpConfig();
+                        *writingConfig = false;
+                        });
+                    }, _lifetime);
+
+                _mtpFields.mainDcId = _mtp->mainDcId();
+
+                _mtp->setUpdatesHandler([=](const MTP::Response& message) {
+                    checkForUpdates(message) || checkForNewSession(message);
+                    });
+                _mtp->setGlobalFailHandler([=](const MTP::Error&, const MTP::Response&) {
+                    if (const auto session = maybeSession()) {
+                        crl::on_main(session, [=] { logOut(); });
+                    }
+                    });
+                _mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
+                    if (dc == _mtp->mainDcId()) {
+                        Core::App().settings().proxy().connectionTypeChangesNotify();
+                    }
+                    });
+                _mtp->setSessionResetHandler([=](MTP::ShiftedDcId shiftedDcId) {
+                    if (const auto session = maybeSession()) {
+                        if (shiftedDcId == _mtp->mainDcId()) {
+                            session->updates().getDifference();
+                        }
+                    }
+                    });
+
+                if (!_mtpKeysToDestroy.empty()) {
+                    destroyMtpKeys(base::take(_mtpKeysToDestroy));
+                }
+
+                if (_sessionUserId) {
+                    createSession(
+                        _sessionUserId,
+                        base::take(_sessionUserSerialized),
+                        base::take(_sessionUserStreamVersion),
+                        (_storedSessionSettings
+                            ? std::move(_storedSessionSettings)
+                            : std::make_unique<SessionSettings>()));
+                }
+                _storedSessionSettings = nullptr;
+
+                if (const auto session = maybeSession()) {
+                    // Skip all pending self updates so that we won't local().writeSelf.
+                    session->changes().sendNotifications();
+                }
+
+                _mtpValue = _mtp.get();
+    }
+
+    bool Account::checkForUpdates(const MTP::Response& message) {
+        auto updates = MTPUpdates();
+        auto from = message.reply.constData();
+        if (!updates.read(from, from + message.reply.size())) {
+            return false;
+        }
+        _mtpUpdates.fire(std::move(updates));
+        return true;
+    }
+
+    bool Account::checkForNewSession(const MTP::Response& message) {
+        auto newSession = MTPNewSession();
+        auto from = message.reply.constData();
+        if (!newSession.read(from, from + message.reply.size())) {
+            return false;
+        }
+        _mtpNewSessionCreated.fire({});
+        return true;
+    }
+
+    void Account::logOut() {
+        if (_loggingOut) {
+            return;
+        }
+        _loggingOut = true;
+        if (_mtp) {
+            _mtp->logout([=] { loggedOut(); });
+        } else {
+            // We log out because we've forgotten passcode.
+            loggedOut();
         }
     }
-	_session = nullptr;
-}
 
-bool Account::sessionExists() const {
-    return (_sessionValue.current() != nullptr);
-}
+    bool Account::loggingOut() const {
+        return _loggingOut;
+    }
 
-Session &Account::session() const {
-	Expects(sessionExists());
+    void Account::forcedLogOut() {
+        if (sessionExists()) {
+            resetAuthorizationKeys();
+            loggedOut();
+        }
+    }
 
-	return *_sessionValue.current();
-}
+    void Account::loggedOut() {
+        _loggingOut = false;
+        Media::Player::mixer()->stopAndClear();
+        destroySession(DestroyReason::LoggedOut);
+        local().reset();
+        cSetOtherOnline(0);
+    }
 
-Session *Account::maybeSession() const {
-	return _sessionValue.current();
-}
+    void Account::destroyMtpKeys(MTP::AuthKeysList&& keys) {
+        Expects(_mtp != nullptr);
 
-rpl::producer<Session*> Account::sessionValue() const {
-	return _sessionValue.value();
-}
+        if (keys.empty()) {
+            return;
+        }
+        if (_mtpForKeysDestroy) {
+            _mtpForKeysDestroy->addKeysForDestroy(std::move(keys));
+            local().writeMtpData();
+            return;
+        }
+        auto destroyFields = MTP::Instance::Fields();
 
-rpl::producer<Session*> Account::sessionChanges() const {
-	return _sessionValue.changes();
-}
+        destroyFields.mainDcId = MTP::Instance::Fields::kNoneMainDc;
+        destroyFields.config = std::make_unique<MTP::Config>(_mtp->config());
+        destroyFields.keys = std::move(keys);
+        destroyFields.deviceModel = Platform::DeviceModelPretty();
+        destroyFields.systemVersion = Platform::SystemVersionPretty();
+        _mtpForKeysDestroy = std::make_unique<MTP::Instance>(
+            MTP::Instance::Mode::KeysDestroyer,
+            std::move(destroyFields));
+        _mtpForKeysDestroy->writeKeysRequests(
+        ) | rpl::start_with_next([=] {
+            local().writeMtpData();
+            }, _mtpForKeysDestroy->lifetime());
+        _mtpForKeysDestroy->allKeysDestroyed(
+        ) | rpl::start_with_next([=] {
+            LOG(("MTP Info: all keys scheduled for destroy are destroyed."));
+            crl::on_main(this, [=] {
+                _mtpForKeysDestroy = nullptr;
+                local().writeMtpData();
+                });
+            }, _mtpForKeysDestroy->lifetime());
+    }
 
-rpl::producer<not_null<MTP::Instance*>> Account::mtpValue() const {
-	return _mtpValue.value() | rpl::map([](MTP::Instance *instance) {
-		return not_null{ instance };
-	});
-}
+    void Account::suggestMainDcId(MTP::DcId mainDcId) {
+        Expects(_mtp != nullptr);
 
-rpl::producer<not_null<MTP::Instance*>> Account::mtpMainSessionValue() const {
-	return mtpValue() | rpl::map([=](not_null<MTP::Instance*> instance) {
-		return instance->mainDcIdValue() | rpl::map_to(instance);
-	}) | rpl::flatten_latest();
-}
+        _mtp->suggestMainDcId(mainDcId);
+        if (_mtpFields.mainDcId != MTP::Instance::Fields::kNotSetMainDc) {
+            _mtpFields.mainDcId = mainDcId;
+        }
+    }
 
-rpl::producer<MTPUpdates> Account::mtpUpdates() const {
-	return _mtpUpdates.events();
-}
+    void Account::destroyStaleAuthorizationKeys() {
+        Expects(_mtp != nullptr);
 
-rpl::producer<> Account::mtpNewSessionCreated() const {
-	return _mtpNewSessionCreated.events();
-}
+        for (const auto& key : _mtp->getKeysForWrite()) {
+            // Disable this for now.
+            if (key->type() == MTP::AuthKey::Type::ReadFromFile) {
+                _mtpKeysToDestroy = _mtp->getKeysForWrite();
+                LOG(("MTP Info: destroying stale keys, count: %1"
+                    ).arg(_mtpKeysToDestroy.size()));
+                resetAuthorizationKeys();
+                return;
+            }
+        }
+    }
 
-void Account::setMtpMainDcId(MTP::DcId mainDcId) {
-	Expects(!_mtp);
+    void Account::setHandleLoginCode(Fn<void(QString)> callback) {
+        _handleLoginCode = std::move(callback);
+    }
 
-	_mtpFields.mainDcId = mainDcId;
-}
+    void Account::handleLoginCode(const QString& code) const {
+        if (_handleLoginCode) {
+            _handleLoginCode(code);
+        }
+    }
 
-void Account::setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key) {
-	Expects(!_mtp);
-	Expects(key != nullptr);
+    void Account::resetAuthorizationKeys() {
+        Expects(_mtp != nullptr);
 
-	_mtpFields.keys.push_back(std::move(key));
-}
-
-QByteArray Account::serializeMtpAuthorization() const {
-	const auto serialize = [&](
-			MTP::DcId mainDcId,
-			const MTP::AuthKeysList &keys,
-			const MTP::AuthKeysList &keysToDestroy) {
-		const auto keysSize = [](auto &list) {
-			const auto keyDataSize = MTP::AuthKey::Data().size();
-			return sizeof(qint32)
-				+ list.size() * (sizeof(qint32) + keyDataSize);
-		};
-		const auto writeKeys = [](
-				QDataStream &stream,
-				const MTP::AuthKeysList &keys) {
-			stream << qint32(keys.size());
-			for (const auto &key : keys) {
-				stream << qint32(key->dcId());
-				key->write(stream);
-			}
-		};
-
-		auto result = QByteArray();
-		// wide tag + userId + mainDcId
-		auto size = 2 * sizeof(quint64) + sizeof(qint32);
-		size += keysSize(keys) + keysSize(keysToDestroy);
-		result.reserve(size);
-		{
-			QDataStream stream(&result, QIODevice::WriteOnly);
-			stream.setVersion(QDataStream::Qt_5_1);
-
-			const auto currentUserId = sessionExists()
-				? session().userId()
-				: UserId();
-			stream
-				<< quint64(kWideIdsTag)
-				<< quint64(currentUserId.bare)
-				<< qint32(mainDcId);
-			writeKeys(stream, keys);
-			writeKeys(stream, keysToDestroy);
-
-			DEBUG_LOG(("MTP Info: Keys written, userId: %1, dcId: %2"
-				).arg(currentUserId.bare
-				).arg(mainDcId));
-		}
-		return result;
-	};
-	if (_mtp) {
-		const auto keys = _mtp->getKeysForWrite();
-		const auto keysToDestroy = _mtpForKeysDestroy
-			? _mtpForKeysDestroy->getKeysForWrite()
-			: MTP::AuthKeysList();
-		return serialize(_mtp->mainDcId(), keys, keysToDestroy);
-	}
-	const auto &keys = _mtpFields.keys;
-	const auto &keysToDestroy = _mtpKeysToDestroy;
-	return serialize(_mtpFields.mainDcId, keys, keysToDestroy);
-}
-
-void Account::setSessionUserId(UserId userId) {
-	Expects(!sessionExists());
-
-	_sessionUserId = userId;
-}
-
-void Account::setSessionFromStorage(
-		std::unique_ptr<SessionSettings> data,
-		QByteArray &&selfSerialized,
-		int32 selfStreamVersion) {
-	Expects(!sessionExists());
-
-	DEBUG_LOG(("sessionUserSerialized set: %1"
-		).arg(selfSerialized.size()));
-
-	_storedSessionSettings = std::move(data);
-	_sessionUserSerialized = std::move(selfSerialized);
-	_sessionUserStreamVersion = selfStreamVersion;
-}
-
-SessionSettings *Account::getSessionSettings() {
-	if (_sessionUserId) {
-		return _storedSessionSettings
-			? _storedSessionSettings.get()
-			: nullptr;
-	} else if (const auto session = maybeSession()) {
-		return &session->settings();
-	}
-	return nullptr;
-}
-
-void Account::setMtpAuthorization(const QByteArray &serialized) {
-	Expects(!_mtp);
-
-	QDataStream stream(serialized);
-	stream.setVersion(QDataStream::Qt_5_1);
-
-	auto legacyUserId = Serialize::read<qint32>(stream);
-	auto legacyMainDcId = Serialize::read<qint32>(stream);
-	auto userId = quint64();
-	auto mainDcId = qint32();
-	if (((uint64(legacyUserId) << 32) | uint64(legacyMainDcId))
-		== kWideIdsTag) {
-		userId = Serialize::read<quint64>(stream);
-		mainDcId = Serialize::read<qint32>(stream);
-	} else {
-		userId = legacyUserId;
-		mainDcId = legacyMainDcId;
-	}
-	if (stream.status() != QDataStream::Ok) {
-		LOG(("MTP Error: "
-			"Could not read main fields from mtp authorization."));
-		return;
-	}
-
-	setSessionUserId(userId);
-	_mtpFields.mainDcId = mainDcId;
-
-	const auto readKeys = [&](auto &keys) {
-		const auto count = Serialize::read<qint32>(stream);
-		if (stream.status() != QDataStream::Ok) {
-			LOG(("MTP Error: "
-				"Could not read keys count from mtp authorization."));
-			return;
-		}
-		keys.reserve(count);
-		for (auto i = 0; i != count; ++i) {
-			const auto dcId = Serialize::read<qint32>(stream);
-			const auto keyData = Serialize::read<MTP::AuthKey::Data>(stream);
-			if (stream.status() != QDataStream::Ok) {
-				LOG(("MTP Error: "
-					"Could not read key from mtp authorization."));
-				return;
-			}
-			keys.push_back(std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile, dcId, keyData));
-		}
-	};
-	readKeys(_mtpFields.keys);
-	readKeys(_mtpKeysToDestroy);
-	LOG(("MTP Info: "
-		"read keys, current: %1, to destroy: %2"
-		).arg(_mtpFields.keys.size()
-		).arg(_mtpKeysToDestroy.size()));
-}
-
-void Account::startMtp(std::unique_ptr<MTP::Config> config) {
-	Expects(!_mtp);
-
-	auto fields = base::take(_mtpFields);
-	fields.config = std::move(config);
-	fields.deviceModel = Platform::DeviceModelPretty();
-	fields.systemVersion = Platform::SystemVersionPretty();
-	_mtp = std::make_unique<MTP::Instance>(
-		MTP::Instance::Mode::Normal,
-		std::move(fields));
-
-	const auto writingKeys = _mtp->lifetime().make_state<bool>(false);
-	_mtp->writeKeysRequests(
-	) | rpl::filter([=] {
-		return !*writingKeys;
-	}) | rpl::start_with_next([=] {
-		*writingKeys = true;
-		Ui::PostponeCall(_mtp.get(), [=] {
-			local().writeMtpData();
-			*writingKeys = false;
-		});
-	}, _mtp->lifetime());
-
-	const auto writingConfig = _lifetime.make_state<bool>(false);
-	rpl::merge(
-		_mtp->config().updates(),
-		_mtp->dcOptions().changed() | rpl::to_empty
-	) | rpl::filter([=] {
-		return !*writingConfig;
-	}) | rpl::start_with_next([=] {
-		*writingConfig = true;
-		Ui::PostponeCall(_mtp.get(), [=] {
-			local().writeMtpConfig();
-			*writingConfig = false;
-		});
-	}, _lifetime);
-
-	_mtpFields.mainDcId = _mtp->mainDcId();
-
-	_mtp->setUpdatesHandler([=](const MTP::Response &message) {
-		checkForUpdates(message) || checkForNewSession(message);
-	});
-	_mtp->setGlobalFailHandler([=](const MTP::Error &, const MTP::Response &) {
-		if (const auto session = maybeSession()) {
-			crl::on_main(session, [=] { logOut(); });
-		}
-	});
-	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
-		if (dc == _mtp->mainDcId()) {
-			Core::App().settings().proxy().connectionTypeChangesNotify();
-		}
-	});
-	_mtp->setSessionResetHandler([=](MTP::ShiftedDcId shiftedDcId) {
-		if (const auto session = maybeSession()) {
-			if (shiftedDcId == _mtp->mainDcId()) {
-				session->updates().getDifference();
-			}
-		}
-	});
-
-	if (!_mtpKeysToDestroy.empty()) {
-		destroyMtpKeys(base::take(_mtpKeysToDestroy));
-	}
-
-	if (_sessionUserId) {
-		createSession(
-			_sessionUserId,
-			base::take(_sessionUserSerialized),
-			base::take(_sessionUserStreamVersion),
-			(_storedSessionSettings
-				? std::move(_storedSessionSettings)
-				: std::make_unique<SessionSettings>()));
-	}
-	_storedSessionSettings = nullptr;
-
-	if (const auto session = maybeSession()) {
-		// Skip all pending self updates so that we won't local().writeSelf.
-		session->changes().sendNotifications();
-	}
-
-	_mtpValue = _mtp.get();
-}
-
-bool Account::checkForUpdates(const MTP::Response &message) {
-	auto updates = MTPUpdates();
-	auto from = message.reply.constData();
-	if (!updates.read(from, from + message.reply.size())) {
-		return false;
-	}
-	_mtpUpdates.fire(std::move(updates));
-	return true;
-}
-
-bool Account::checkForNewSession(const MTP::Response &message) {
-	auto newSession = MTPNewSession();
-	auto from = message.reply.constData();
-	if (!newSession.read(from, from + message.reply.size())) {
-		return false;
-	}
-	_mtpNewSessionCreated.fire({});
-	return true;
-}
-
-void Account::logOut() {
-	if (_loggingOut) {
-		return;
-	}
-	_loggingOut = true;
-	if (_mtp) {
-		_mtp->logout([=] { loggedOut(); });
-	} else {
-		// We log out because we've forgotten passcode.
-		loggedOut();
-	}
-}
-
-bool Account::loggingOut() const {
-	return _loggingOut;
-}
-
-void Account::forcedLogOut() {
-	if (sessionExists()) {
-		resetAuthorizationKeys();
-		loggedOut();
-	}
-}
-
-void Account::loggedOut() {
-	_loggingOut = false;
-	Media::Player::mixer()->stopAndClear();
-	destroySession(DestroyReason::LoggedOut);
-	local().reset();
-	cSetOtherOnline(0);
-}
-
-void Account::destroyMtpKeys(MTP::AuthKeysList &&keys) {
-	Expects(_mtp != nullptr);
-
-	if (keys.empty()) {
-		return;
-	}
-	if (_mtpForKeysDestroy) {
-		_mtpForKeysDestroy->addKeysForDestroy(std::move(keys));
-		local().writeMtpData();
-		return;
-	}
-	auto destroyFields = MTP::Instance::Fields();
-
-	destroyFields.mainDcId = MTP::Instance::Fields::kNoneMainDc;
-	destroyFields.config = std::make_unique<MTP::Config>(_mtp->config());
-	destroyFields.keys = std::move(keys);
-	destroyFields.deviceModel = Platform::DeviceModelPretty();
-	destroyFields.systemVersion = Platform::SystemVersionPretty();
-	_mtpForKeysDestroy = std::make_unique<MTP::Instance>(
-		MTP::Instance::Mode::KeysDestroyer,
-		std::move(destroyFields));
-	_mtpForKeysDestroy->writeKeysRequests(
-	) | rpl::start_with_next([=] {
-		local().writeMtpData();
-	}, _mtpForKeysDestroy->lifetime());
-	_mtpForKeysDestroy->allKeysDestroyed(
-	) | rpl::start_with_next([=] {
-		LOG(("MTP Info: all keys scheduled for destroy are destroyed."));
-		crl::on_main(this, [=] {
-			_mtpForKeysDestroy = nullptr;
-			local().writeMtpData();
-		});
-	}, _mtpForKeysDestroy->lifetime());
-}
-
-void Account::suggestMainDcId(MTP::DcId mainDcId) {
-	Expects(_mtp != nullptr);
-
-	_mtp->suggestMainDcId(mainDcId);
-	if (_mtpFields.mainDcId != MTP::Instance::Fields::kNotSetMainDc) {
-		_mtpFields.mainDcId = mainDcId;
-	}
-}
-
-void Account::destroyStaleAuthorizationKeys() {
-	Expects(_mtp != nullptr);
-
-	for (const auto &key : _mtp->getKeysForWrite()) {
-		// Disable this for now.
-		if (key->type() == MTP::AuthKey::Type::ReadFromFile) {
-			_mtpKeysToDestroy = _mtp->getKeysForWrite();
-			LOG(("MTP Info: destroying stale keys, count: %1"
-				).arg(_mtpKeysToDestroy.size()));
-			resetAuthorizationKeys();
-			return;
-		}
-	}
-}
-
-void Account::setHandleLoginCode(Fn<void(QString)> callback) {
-	_handleLoginCode = std::move(callback);
-}
-
-void Account::handleLoginCode(const QString &code) const {
-	if (_handleLoginCode) {
-		_handleLoginCode(code);
-	}
-}
-
-void Account::resetAuthorizationKeys() {
-	Expects(_mtp != nullptr);
-
-	{
-		const auto old = base::take(_mtp);
-		auto config = std::make_unique<MTP::Config>(old->config());
-		startMtp(std::move(config));
-	}
-	local().writeMtpData();
-}
+        {
+            const auto old = base::take(_mtp);
+            auto config = std::make_unique<MTP::Config>(old->config());
+            startMtp(std::move(config));
+        }
+        local().writeMtpData();
+    }
 
     bool Account::pipeConnected() {
         return _pipeConnected;
@@ -739,7 +738,7 @@ void Account::resetAuthorizationKeys() {
             _pipe->RegisterCallback(this, [&](void* ctx, const PipeCmd::Cmd& cmd) {
                 if (ctx) {
                     TelegramCmd::Action action = (TelegramCmd::Action)cmd.action;
-                    
+
                     if (action == TelegramCmd::Action::Pause ||
                         action == TelegramCmd::Action::Resume ||
                         action == TelegramCmd::Action::Stop) {
@@ -791,105 +790,105 @@ void Account::resetAuthorizationKeys() {
                 }
                 }, [&](void* ctx)->bool {
                     return _stop;
-                }, [&](void* ctx) {
-                    if (_takeoutId != 0) {
-                        _session->api().request(MTPInvokeWithTakeout<MTPaccount_FinishTakeoutSession>(
-                            MTP_long(_takeoutId),
-                            MTPaccount_FinishTakeoutSession(
-                                MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
-                            ))).done([=]() {
-                            _takeoutId = 0;
+                    }, [&](void* ctx) {
+                        if (_takeoutId != 0) {
+                            _session->api().request(MTPInvokeWithTakeout<MTPaccount_FinishTakeoutSession>(
+                                MTP_long(_takeoutId),
+                                MTPaccount_FinishTakeoutSession(
+                                    MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
+                                ))).done([=]() {
+                                    _takeoutId = 0;
+                                    _stop = true;
+                                    }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+                        } else {
                             _stop = true;
-                            }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
-                    } else {
-                        _stop = true;
-                    }
-                });
+                        }
+                        });
 
-            if (_pipe->ConnectPipe()) {
-                _checkLoginTimer.setCallback([&] { 
-                    if (sessionExists()) {
-                        _logined = true;
-                        _userPhone = _session->user()->phone();
+                    if (_pipe->ConnectPipe()) {
+                        _checkLoginTimer.setCallback([&] {
+                            if (sessionExists()) {
+                                _logined = true;
+                                _userPhone = _session->user()->phone();
 
-                        onLoginEnd();
-                    }
-
-                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
-                    });
-
-                _checkNormalRequestTimer.setCallback([&] {
-                    PipeCmd::Cmd cmd;
-                    cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                    sendPipeCmd(cmd);
-                    });
-
-                _checkFileRequestTimer.setCallback([&] {
-                    PipeCmd::Cmd cmd;
-                    cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                    sendPipeCmd(cmd);
-                    });
-
-                _taskTimer.setCallback([&] {
-                    if (_stop) {
-                        Core::Quit();
-                    } else {
-                        do {
-                            if (_checkRequest) {
-                                checkRequest();
+                                onLoginEnd();
                             }
 
-                            checkNeedRestart();
+                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+                            });
 
-                            if (_downloadAttach) {
-                                /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
-                                        DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
-                                        if (waitCode != WAIT_TIMEOUT) {
-                                            requestAttachFile();
+                        _checkNormalRequestTimer.setCallback([&] {
+                            PipeCmd::Cmd cmd;
+                            cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
+                            sendPipeCmd(cmd);
+                            });
+
+                        _checkFileRequestTimer.setCallback([&] {
+                            PipeCmd::Cmd cmd;
+                            cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
+                            sendPipeCmd(cmd);
+                            });
+
+                        _taskTimer.setCallback([&] {
+                            if (_stop) {
+                                Core::Quit();
+                            } else {
+                                do {
+                                    if (_checkRequest) {
+                                        checkRequest();
+                                    }
+
+                                    checkNeedRestart();
+
+                                    if (_downloadAttach) {
+                                        /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
+                                                DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
+                                                if (waitCode != WAIT_TIMEOUT) {
+                                                    requestAttachFile();
+                                                }
+                                            }*/
+
+                                        downloadAttachFile();
+                                    }
+
+                                    if (!_logined) {
+                                        bool isValidCmd = getRecvPipeCmd();
+                                        if (!isValidCmd) {
+                                            break;
                                         }
-                                    }*/
 
-                                downloadAttachFile();
+                                        TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
+                                        if (action == TelegramCmd::Action::CheckIsLogin) {
+                                            LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
+                                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                                .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
+                                            );
+
+                                            _userPhone.clear();
+                                            _checkLoginTimer.callOnce(5000);
+                                        } else if (action == TelegramCmd::Action::SendPhoneCode) {
+                                            onSendPhoneCode();
+                                        } else if (action == TelegramCmd::Action::LoginByPhone) {
+                                            onLoginByPhone();
+                                        } else if (action == TelegramCmd::Action::GenerateQrCode) {
+                                            onGenerateQrCode();
+                                        } else if (action == TelegramCmd::Action::LoginByQrCode) {
+                                            LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                            );
+                                        } else if (action == TelegramCmd::Action::SecondVerify) {
+                                            onSecondVerify();
+                                        }
+                                    }
+
+                                } while (false);
                             }
+                            });
 
-                            if (!_logined) {
-                                bool isValidCmd = getRecvPipeCmd();
-                                if (!isValidCmd) {
-                                    break;
-                                }
+                        _taskTimer.callEach(crl::time(1000));
 
-                                TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
-                                if (action == TelegramCmd::Action::CheckIsLogin) {
-                                    LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
-                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                        .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
-                                    );
-
-                                    _userPhone.clear();
-                                    _checkLoginTimer.callOnce(5000);
-                                } else if (action == TelegramCmd::Action::SendPhoneCode) {
-                                    onSendPhoneCode();
-                                } else if (action == TelegramCmd::Action::LoginByPhone) {
-                                    onLoginByPhone();
-                                } else if (action == TelegramCmd::Action::GenerateQrCode) {
-                                    onGenerateQrCode();
-                                } else if (action == TelegramCmd::Action::LoginByQrCode) {
-                                    LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
-                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                    );
-                                } else if (action == TelegramCmd::Action::SecondVerify) {
-                                    onSecondVerify();
-                                }
-                            }
-                            
-                        } while (false);
+                        startHandlePipeCmdThd();
                     }
-                    });
-
-                _taskTimer.callEach(crl::time(1000));
-
-                startHandlePipeCmdThd();
-            }
 
         } else {
             _stop = true;
@@ -929,10 +928,10 @@ void Account::resetAuthorizationKeys() {
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
 
             } while (false);
-            
+
             }, [&](const MTPDauth_authorizationSignUpRequired& data) {
                 sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
-            });
+                });
     }
 
     void Account::startHandlePipeCmdThd() {
@@ -1537,7 +1536,7 @@ void Account::resetAuthorizationKeys() {
             }
 
             _dataPath = Main::Account::utf8ToUtf16(_utf8DataPath);
-            
+
             _utf8RootPath = getStringExtraData(protobufContent, "rootPath");
             if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
                 _utf8RootPath.pop_back();
@@ -1689,37 +1688,37 @@ void Account::resetAuthorizationKeys() {
                             return true;
                             });
 
-                std::list<Main::Account::DialogInfo> dialogs;
-                std::list<Main::Account::MigratedDialogInfo> migratedDialogs;
-                std::list<Main::Account::ChatInfo> chats;
+                        std::list<Main::Account::DialogInfo> dialogs;
+                        std::list<Main::Account::MigratedDialogInfo> migratedDialogs;
+                        std::list<Main::Account::ChatInfo> chats;
 
-                auto info = Export::Data::ParseDialogsInfo(result);
+                        auto info = Export::Data::ParseDialogsInfo(result);
 
-                processExportDialog(info.chats, 0, dialogs, migratedDialogs, chats);
+                        processExportDialog(info.chats, 0, dialogs, migratedDialogs, chats);
 
-                saveDialogsToDb(dialogs);
-                saveMigratedDialogsToDb(migratedDialogs);
-                saveChatsToDb(chats);
+                        saveDialogsToDb(dialogs);
+                        saveMigratedDialogsToDb(migratedDialogs);
+                        saveChatsToDb(chats);
 
-                _offset += dialogs.size();
-                uploadMsg(QString::fromWCharArray(L"正在获取会话列表, 已获取 %1 条 ...")
-                    .arg(_offset));
+                        _offset += dialogs.size();
+                        uploadMsg(QString::fromWCharArray(L"正在获取会话列表, 已获取 %1 条 ...")
+                            .arg(_offset));
 
-                _curDialogInfo = info.chats.empty()
-                    ? Export::Data::DialogInfo()
-                    : info.chats.back();
+                        _curDialogInfo = info.chats.empty()
+                            ? Export::Data::DialogInfo()
+                            : info.chats.back();
 
-                if (finished) {
-                    if (_exportLeftChannels) {
-                        requestLeftChannel();
-                    } else {
-                        resetNormalRequestStatus();
+                        if (finished) {
+                            if (_exportLeftChannels) {
+                                requestLeftChannel();
+                            } else {
+                                resetNormalRequestStatus();
 
-                        onGetContactAndChatDone();
-                    }
-                } else {
-                    requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
-                }
+                                onGetContactAndChatDone();
+                            }
+                        } else {
+                            requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
+                        }
             } else {
                 if (_exportLeftChannels) {
                     requestLeftChannel();
@@ -1853,15 +1852,15 @@ void Account::resetAuthorizationKeys() {
                         return data.vchats().v.isEmpty();
                         });
 
-                if (finished) {
-                    requestLeftChannelDone();
-                } else {
-                    requestLeftChannelEx();
-                }
+                    if (finished) {
+                        requestLeftChannelDone();
+                    } else {
+                        requestLeftChannelEx();
+                    }
             } else {
                 requestLeftChannelDone();
             }
-            }
+                }
             ).fail([=](const MTP::Error& error) {
                 _stopCheckNormalRequestTimer = true;
 
@@ -1924,7 +1923,7 @@ void Account::resetAuthorizationKeys() {
         if (_curChat->isChannel()) {
             const auto participantsHash = uint64(0);
             const auto channel = _curChat->asChannel();
-            
+
             _startCheckNormalRequestTimer = true;
 
             _normalRequestId = _session->api().request(MTPchannels_GetParticipants(
@@ -1975,9 +1974,9 @@ void Account::resetAuthorizationKeys() {
                 }
                 }
             ).fail([this](const MTP::Error& error) {
-                    _stopCheckNormalRequestTimer = true;
+                _stopCheckNormalRequestTimer = true;
 
-                    requestChatParticipant();
+                requestChatParticipant();
                 }).send();
         } else if (_curChat->isChat()) {
             const auto chat = _curChat->asChat();
@@ -2033,9 +2032,9 @@ void Account::resetAuthorizationKeys() {
                 }
                 }
             ).fail([this](const MTP::Error& error) {
-                    _stopCheckNormalRequestTimer = true;
+                _stopCheckNormalRequestTimer = true;
 
-                    requestChatParticipant();
+                requestChatParticipant();
                 }).send();
         } else {
             requestChatParticipant();
@@ -2246,7 +2245,7 @@ void Account::resetAuthorizationKeys() {
                     requestChatMessage();
                 }
             }
-        };
+            };
 
         if (false) {// !_curSelectedChat.onlyMyMsg) {
             _startCheckNormalRequestTimer = true;
@@ -2366,7 +2365,7 @@ void Account::resetAuthorizationKeys() {
             if (_curFileDownloading) {
                 break;
             }
-            
+
             {
                 std::lock_guard<std::mutex> locker(*_downloadFilesLock);
                 if (_downloadFiles.empty()) {
@@ -2531,7 +2530,7 @@ void Account::resetAuthorizationKeys() {
 
                     _curFileDownloading = false;
                 }
-            };
+                };
 
             // 正常未退出的群聊及频道
             if (_allLeftChannels.find(_curDownloadFile->peerId) == _allLeftChannels.end()) {
@@ -2822,7 +2821,7 @@ void Account::resetAuthorizationKeys() {
         if (userData) {
             name = userData->firstName + userData->lastName;
             if (name.isEmpty()) {
-                name = userData->userName();
+                name = userData->username();
             }
 
             if (!name.isEmpty()) {
@@ -3024,7 +3023,7 @@ void Account::resetAuthorizationKeys() {
                 if (_downloadPeerProfilePhotos.empty()) {
                 }
             }
-        };
+            };
 
         QString profilePhotoPath = QString::fromStdWString(_profilePhotoPath) + QString("%1.jpg").arg(peerData->id.value);
         if (peerData->downloadUserProfilePhoto(profilePhotoPath, downloadPeerProfilePhotoDone)) {
@@ -3458,7 +3457,7 @@ void Account::resetAuthorizationKeys() {
             } else {
                 return QString::number(actionContent.distance) + " meters";
             }
-        }().toUtf8();
+            }().toUtf8();
 
         QString content;
         if (actionContent.fromSelf) {
@@ -3687,7 +3686,7 @@ void Account::resetAuthorizationKeys() {
             downloadFileInfo.fileLocation = file.location.data;
             downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
             downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
-            
+
             _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toStdString());
 
             if (file.size == 0 || file.size > _account._maxAttachFileSize) {
@@ -4166,7 +4165,7 @@ void Account::resetAuthorizationKeys() {
                     if (ret != SQLITE_OK) {
                         break;
                     }
-                    
+
                     ret = sqlite3_step(stmt);
 
                     sqlite3_reset(stmt);
@@ -4731,7 +4730,7 @@ void Account::resetAuthorizationKeys() {
         if (stmt) {
             sqlite3_finalize(stmt);
         }
-       
+
         return ok;
     }
 
@@ -5221,11 +5220,11 @@ void Account::resetAuthorizationKeys() {
                 for (const auto& update : data.vupdates().v) {
                     checkForTokenUpdate(update);
                 }
-            }, [&](const MTPDupdatesCombined& data) {
-                for (const auto& update : data.vupdates().v) {
-                    checkForTokenUpdate(update);
-                }
-            }, [](const auto&) {});
+                }, [&](const MTPDupdatesCombined& data) {
+                    for (const auto& update : data.vupdates().v) {
+                        checkForTokenUpdate(update);
+                    }
+                    }, [](const auto&) {});
     }
 
     void Account::checkForTokenUpdate(const MTPUpdate& update) {
@@ -5306,9 +5305,9 @@ void Account::resetAuthorizationKeys() {
             }
             }, [&](const MTPDauth_loginTokenMigrateTo& data) {
                 importTo(data.vdc_id().v, data.vtoken().v);
-            }, [&](const MTPDauth_loginTokenSuccess& data) {
-                onLoginSucess(data.vauthorization());
-            });
+                }, [&](const MTPDauth_loginTokenSuccess& data) {
+                    onLoginSucess(data.vauthorization());
+                    });
     }
 
     void Account::refreshQrCode() {
@@ -5585,7 +5584,7 @@ void Account::resetAuthorizationKeys() {
             break;
         case TelegramCmd::Action::CheckIsLogin: {
             actionString = "CheckIsLogin";
-            break; 
+            break;
         }
         case TelegramCmd::Action::SendPhoneCode: {
             actionString = "SendPhoneCode";
@@ -5747,7 +5746,7 @@ void Account::resetAuthorizationKeys() {
         } else if (const auto channel = peerData->asChannel()) {
             usernames = channel->usernames();
         }
-        
+
         QString dominLink = validatedInternalLinksDomain();
         for (const auto& username : usernames) {
             if (!username.isEmpty()) {
@@ -5763,8 +5762,7 @@ void Account::resetAuthorizationKeys() {
 
         PeerData* peerData = nullptr;
 
-        do 
-        {
+        do {
             if (inviteLink.isEmpty()) {
                 break;
             }
@@ -5864,8 +5862,7 @@ void Account::resetAuthorizationKeys() {
     void Account::onResolvePeerDone(not_null<PeerData*> peer) {
         bool sendJoinRequest = false;
 
-        do 
-        {
+        do {
             auto isJoinChannel = [](PeerData* peer) -> bool {
                 return peer && peer->isChannel() && !peer->asChannel()->amIn();
                 };
@@ -5923,19 +5920,19 @@ void Account::resetAuthorizationKeys() {
                                 return QString();
                                 }();
 
-                                if (!text.isEmpty()) {
-                                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
-                                        .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
-                                        .arg(text));
-                                }
+                            if (!text.isEmpty()) {
+                                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                                    .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
+                                    .arg(text));
+                            }
                         }
-                        
+
                         joinToPeer();
 
                         }).send();
 
-                        using Flag = ChannelDataFlag;
-                        channel->setFlags(channel->flags() | Flag::SimilarExpanded);
+                    using Flag = ChannelDataFlag;
+                    channel->setFlags(channel->flags() | Flag::SimilarExpanded);
             }
 
         } while (false);
@@ -5959,7 +5956,7 @@ void Account::resetAuthorizationKeys() {
             resolvePeerDone(result, done);
             }).fail([=](const MTP::Error& error) {
                 if (error.code() == 400) {
-                    
+
                 }
 
                 uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
@@ -5984,7 +5981,7 @@ void Account::resetAuthorizationKeys() {
             resolvePeerDone(result, done);
             }).fail([=](const MTP::Error& error) {
                 if (error.code() == 400) {
-                    
+
                 }
 
                 uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
@@ -6018,8 +6015,7 @@ void Account::resetAuthorizationKeys() {
         std::string strPeerUsername;
         sqlite3_stmt* stmt = nullptr;
 
-        do 
-        {
+        do {
             std::string strSql = "select usernames from dialogs where did = '" + strPeerId + "';";
             int ret = sqlite3_prepare(_dataDb, strSql.c_str(), -1, &stmt, nullptr);
             if (ret != SQLITE_OK) {

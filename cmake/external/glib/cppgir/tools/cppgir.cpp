@@ -372,11 +372,11 @@ Supported options and environment variables
         xdg_data_home += fmt::format(".local{}share", PATH_SEP);
       }
     }
+    std::vector<std::string> default_gir_dirs;
     if (!xdg_data_home.empty())
-      girdirs.push_back(xdg_data_home);
+      default_gir_dirs.push_back(xdg_data_home);
     // gobject-introspection uses XDG_DATA_DIRS next
     auto xdg_data_dirs = wrap(getenv("XDG_DATA_DIRS"));
-    std::vector<std::string> default_gir_dirs;
     addsplit(default_gir_dirs, xdg_data_dirs);
 #ifdef DEFAULT_GIRPATH
     // optional fallback

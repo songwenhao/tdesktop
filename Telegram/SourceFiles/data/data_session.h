@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 class Image;
 class HistoryItem;
 struct WebPageCollage;
+struct WebPageStickerSet;
 enum class WebPageType : uint8;
 enum class NewMessageType;
 
@@ -39,14 +40,17 @@ namespace Passport {
 struct SavedCredentials;
 } // namespace Passport
 
+namespace Iv {
+class Data;
+} // namespace Iv
+
 namespace Data {
 
 class Folder;
 class LocationPoint;
 class WallPaper;
-class ScheduledMessages;
+class ShortcutMessages;
 class SendActionManager;
-class SponsoredMessages;
 class Reactions;
 class EmojiStatuses;
 class ForumIcons;
@@ -63,6 +67,8 @@ class NotifySettings;
 class CustomEmojiManager;
 class Stories;
 class SavedMessages;
+class Chatbots;
+class BusinessInfo;
 struct ReactionId;
 
 struct RepliesReadTillUpdate {
@@ -98,8 +104,8 @@ public:
 	[[nodiscard]] ChatFilters &chatsFilters() const {
 		return *_chatsFilters;
 	}
-	[[nodiscard]] ScheduledMessages &scheduledMessages() const {
-		return *_scheduledMessages;
+	[[nodiscard]] ShortcutMessages &shortcutMessages() const {
+		return *_shortcutMessages;
 	}
 	[[nodiscard]] SendActionManager &sendActionManager() const {
 		return *_sendActionManager;
@@ -118,9 +124,6 @@ public:
 	}
 	[[nodiscard]] Stickers &stickers() const {
 		return *_stickers;
-	}
-	[[nodiscard]] SponsoredMessages &sponsoredMessages() const {
-		return *_sponsoredMessages;
 	}
 	[[nodiscard]] Reactions &reactions() const {
 		return *_reactions;
@@ -142,6 +145,12 @@ public:
 	}
 	[[nodiscard]] SavedMessages &savedMessages() const {
 		return *_savedMessages;
+	}
+	[[nodiscard]] Chatbots &chatbots() const {
+		return *_chatbots;
+	}
+	[[nodiscard]] BusinessInfo &businessInfo() const {
+		return *_businessInfo;
 	}
 
 	[[nodiscard]] MsgId nextNonHistoryEntryId() {
@@ -256,6 +265,7 @@ public:
 		not_null<bool*> isVisible;
 	};
 	[[nodiscard]] bool queryItemVisibility(not_null<HistoryItem*> item) const;
+	[[nodiscard]] bool queryDocumentVisibility(not_null<DocumentData*> document) const;
 	[[nodiscard]] rpl::producer<ItemVisibilityQuery> itemVisibilityQueries() const;
 	void itemVisibilitiesUpdated();
 
@@ -571,6 +581,8 @@ public:
 		PhotoData *photo,
 		DocumentData *document,
 		WebPageCollage &&collage,
+		std::unique_ptr<Iv::Data> iv,
+		std::unique_ptr<WebPageStickerSet> stickerSet,
 		int duration,
 		const QString &author,
 		bool hasLargeMedia,
@@ -848,6 +860,8 @@ private:
 		PhotoData *photo,
 		DocumentData *document,
 		WebPageCollage &&collage,
+		std::unique_ptr<Iv::Data> iv,
+		std::unique_ptr<WebPageStickerSet> stickerSet,
 		int duration,
 		const QString &author,
 		bool hasLargeMedia,
@@ -1056,14 +1070,12 @@ private:
 
 	Groups _groups;
 	const std::unique_ptr<ChatFilters> _chatsFilters;
-	std::unique_ptr<ScheduledMessages> _scheduledMessages;
 	const std::unique_ptr<CloudThemes> _cloudThemes;
 	const std::unique_ptr<SendActionManager> _sendActionManager;
 	const std::unique_ptr<Streaming> _streaming;
 	const std::unique_ptr<MediaRotation> _mediaRotation;
 	const std::unique_ptr<Histories> _histories;
 	const std::unique_ptr<Stickers> _stickers;
-	std::unique_ptr<SponsoredMessages> _sponsoredMessages;
 	const std::unique_ptr<Reactions> _reactions;
 	const std::unique_ptr<EmojiStatuses> _emojiStatuses;
 	const std::unique_ptr<ForumIcons> _forumIcons;
@@ -1071,8 +1083,11 @@ private:
 	const std::unique_ptr<CustomEmojiManager> _customEmojiManager;
 	const std::unique_ptr<Stories> _stories;
 	const std::unique_ptr<SavedMessages> _savedMessages;
+	const std::unique_ptr<Chatbots> _chatbots;
+	const std::unique_ptr<BusinessInfo> _businessInfo;
+	std::unique_ptr<ShortcutMessages> _shortcutMessages;
 
-	MsgId _nonHistoryEntryId = ServerMaxMsgId.bare + ScheduledMsgIdsRange;
+	MsgId _nonHistoryEntryId = ShortcutMaxMsgId;
 
 	rpl::lifetime _lifetime;
 

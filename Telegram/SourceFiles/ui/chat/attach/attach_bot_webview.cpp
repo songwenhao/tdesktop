@@ -313,12 +313,12 @@ Panel::Progress::Progress(QWidget *parent, Fn<QRect()> rect)
 }
 
 Panel::Panel(
-	const QString &userDataPath,
+	const Webview::StorageId &storageId,
 	rpl::producer<QString> title,
 	not_null<Delegate*> delegate,
 	MenuButtons menuButtons,
 	bool allowClipboardRead)
-: _userDataPath(userDataPath)
+: _storageId(storageId)
 , _delegate(delegate)
 , _menuButtons(menuButtons)
 , _widget(std::make_unique<SeparatePanel>())
@@ -525,6 +525,9 @@ bool Panel::showWebview(
 				_webview->window.navigate(url);
 			}
 		}, &st::menuIconRestore);
+		callback(tr::lng_bot_terms(tr::now), [=] {
+			File::OpenUrl(tr::lng_mini_apps_tos_url(tr::now));
+		}, &st::menuIconGroupLog);
 		const auto main = (_menuButtons & MenuButton::RemoveFromMainMenu);
 		if (main || (_menuButtons & MenuButton::RemoveFromMenu)) {
 			const auto handler = [=] {
@@ -594,7 +597,7 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 		container,
 		Webview::WindowConfig{
 			.opaqueBg = params.opaqueBg,
-			.userDataPath = _userDataPath,
+			.storageId = _storageId,
 		});
 	const auto raw = &_webview->window;
 
@@ -797,17 +800,20 @@ void Panel::openExternalLink(const QJsonObject &args) {
 		_delegate->botClose();
 		return;
 	}
+	const auto iv = args["try_instant_view"].toBool();
 	const auto url = args["url"].toString();
 	const auto lower = url.toLower();
-	if (url.isEmpty()
-		|| (!lower.startsWith("http://") && !lower.startsWith("https://"))) {
-		LOG(("BotWebView Error: Bad 'url' in openExternalLink."));
+	if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+		LOG(("BotWebView Error: Bad url in openExternalLink: %1").arg(url));
 		_delegate->botClose();
 		return;
 	} else if (!allowOpenLink()) {
 		return;
+	} else if (iv) {
+		_delegate->botOpenIvLink(url);
+	} else {
+		File::OpenUrl(url);
 	}
-	File::OpenUrl(url);
 }
 
 void Panel::openInvoice(const QJsonObject &args) {
@@ -1073,7 +1079,7 @@ void Panel::closeWithConfirmation() {
 	});
 	if (!weak) {
 		return;
-	} else if (result.id != "cancel") {
+	} else if (result.id == "close") {
 		_delegate->botClose();
 	} else {
 		_closeWithConfirmationScheduled = false;
@@ -1333,7 +1339,7 @@ rpl::lifetime &Panel::lifetime() {
 
 std::unique_ptr<Panel> Show(Args &&args) {
 	auto result = std::make_unique<Panel>(
-		args.userDataPath,
+		args.storageId,
 		std::move(args.title),
 		args.delegate,
 		args.menuButtons,

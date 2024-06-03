@@ -6,6 +6,7 @@
 //
 #include "webview/platform/win/webview_win.h"
 
+#include "base/random.h"
 #include "base/platform/base_platform_info.h"
 #include "webview/platform/win/webview_windows_edge_chromium.h"
 #include "webview/platform/win/webview_windows_edge_html.h"
@@ -32,6 +33,14 @@ bool SupportsEmbedAfterCreate() {
 	return !EdgeChromium::Supported() && EdgeHtml::Supported();
 }
 
+bool NavigateToDataSupported() {
+	return EdgeChromium::Supported();
+}
+
+bool SeparateStorageIdSupported() {
+	return EdgeChromium::Supported();
+}
+
 std::unique_ptr<Interface> CreateInstance(Config config) {
 	if (!Platform::IsWindows8Point1OrGreater()) {
 		return nullptr;
@@ -40,6 +49,16 @@ std::unique_ptr<Interface> CreateInstance(Config config) {
 		return result;
 	}
 	return EdgeHtml::CreateInstance(config);
+}
+
+std::string GenerateStorageToken() {
+	constexpr auto kSize = 16;
+	auto result = std::string(kSize, ' ');
+	base::RandomFill(result.data(), result.size());
+	return result;
+}
+
+void ClearStorageDataByToken(const std::string &token) {
 }
 
 } // namespace Webview

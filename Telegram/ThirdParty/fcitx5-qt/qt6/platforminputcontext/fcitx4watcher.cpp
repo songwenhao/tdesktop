@@ -68,16 +68,14 @@ QString newUniqueConnectionName() {
 }
 
 Fcitx4Watcher::Fcitx4Watcher(QDBusConnection sessionBus, QObject *parent)
-    : QObject(parent), fsWatcher_(new QFileSystemWatcher(this)),
-      serviceWatcher_(new QDBusServiceWatcher(this)), connection_(nullptr),
-      sessionBus_(sessionBus), socketFile_(socketFile()),
+    : QObject(parent), connection_(nullptr), sessionBus_(sessionBus),
+      socketFile_(socketFile()),
       serviceName_(QString("org.fcitx.Fcitx-%1").arg(displayNumber())),
       availability_(false), uniqueConnectionName_(newUniqueConnectionName()) {}
 
 Fcitx4Watcher::~Fcitx4Watcher() {
     cleanUpConnection();
-    delete fsWatcher_;
-    fsWatcher_ = nullptr;
+    unwatchSocketFile();
 }
 
 bool Fcitx4Watcher::availability() const { return availability_; }
@@ -111,6 +109,7 @@ void Fcitx4Watcher::watch() {
         return;
     }
 
+    serviceWatcher_ = new QDBusServiceWatcher(this);
     connect(serviceWatcher_, &QDBusServiceWatcher::serviceOwnerChanged, this,
             &Fcitx4Watcher::imChanged);
     serviceWatcher_->setConnection(sessionBus_);
@@ -130,8 +129,9 @@ void Fcitx4Watcher::unwatch() {
     if (!watched_) {
         return;
     }
-    disconnect(serviceWatcher_, &QDBusServiceWatcher::serviceOwnerChanged, this,
-               &Fcitx4Watcher::imChanged);
+
+    delete serviceWatcher_;
+    serviceWatcher_ = nullptr;
     unwatchSocketFile();
     cleanUpConnection();
     mainPresent_ = false;
@@ -227,6 +227,7 @@ void Fcitx4Watcher::watchSocketFile() {
         QDir rt(QDir::root());
         rt.mkpath(info.path());
     }
+    fsWatcher_ = new QFileSystemWatcher(this);
     fsWatcher_->addPath(info.path());
     if (info.exists()) {
         fsWatcher_->addPath(info.filePath());
@@ -239,14 +240,11 @@ void Fcitx4Watcher::watchSocketFile() {
 }
 
 void Fcitx4Watcher::unwatchSocketFile() {
-    if (!fsWatcher_->files().isEmpty()) {
-        fsWatcher_->removePaths(fsWatcher_->files());
+    if (fsWatcher_) {
+        fsWatcher_->disconnect(this);
+        fsWatcher_->deleteLater();
+        fsWatcher_ = nullptr;
     }
-    if (!fsWatcher_->directories().isEmpty()) {
-        fsWatcher_->removePaths(fsWatcher_->directories());
-    }
-    fsWatcher_->disconnect(SIGNAL(fileChanged(QString)));
-    fsWatcher_->disconnect(SIGNAL(directoryChanged(QString)));
 }
 
 void Fcitx4Watcher::imChanged(const QString &service, const QString &,

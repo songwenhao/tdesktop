@@ -381,6 +381,14 @@ ElasticScroll::ElasticScroll(
 	}, _bar->lifetime());
 }
 
+ElasticScroll::~ElasticScroll() {
+	// Destroy the _bar cleanly (keeping _bar == nullptr) to avoid a crash:
+	//
+	// _bar destructor may send LeaveEvent to ElasticScroll,
+	// which will try to toggle(false) the _bar in leaveEventHook.
+	base::take(_bar);
+}
+
 void ElasticScroll::setHandleTouch(bool handle) {
 	if (_touchDisabled != handle) {
 		return;
@@ -660,7 +668,14 @@ bool ElasticScroll::handleWheelEvent(not_null<QWheelEvent*> e, bool touch) {
 	const auto guard = gsl::finally([&] {
 		_lastScroll = now;
 	});
-	const auto pixels = ScrollDelta(e, touch);
+	const auto unmultiplied = ScrollDelta(e, touch);
+	const auto multiply = e->modifiers()
+		& (Qt::ControlModifier | Qt::ShiftModifier);
+	const auto pixels = multiply
+		? QPoint(
+			(unmultiplied.x() * std::max(width(), 120) / 120.),
+			(unmultiplied.y() * std::max(height(), 120) / 120.))
+		: unmultiplied;
 	auto delta = _vertical ? -pixels.y() : pixels.x();
 	if (std::abs(_vertical ? pixels.x() : pixels.y()) >= std::abs(delta)) {
 		delta = 0;
@@ -1030,7 +1045,7 @@ void ElasticScroll::sendWheelEvent(Qt::ScrollPhase phase, QPoint delta) {
 		delta,
 		delta,
 		Qt::NoButton,
-		QGuiApplication::keyboardModifiers(),
+		Qt::KeyboardModifiers(), // Ignore Ctrl/Shift fast scroll on touch.
 		phase,
 		false,
 		Qt::MouseEventSynthesizedByApplication);
@@ -1064,13 +1079,15 @@ void ElasticScroll::keyPressEvent(QKeyEvent *e) {
 }
 
 void ElasticScroll::enterEventHook(QEnterEvent *e) {
-	if (!_disabled) {
+	if (_bar && !_disabled) {
 		_bar->toggle(true);
 	}
 }
 
 void ElasticScroll::leaveEventHook(QEvent *e) {
-	_bar->toggle(false);
+	if (_bar) {
+		_bar->toggle(false);
+	}
 }
 
 void ElasticScroll::scrollTo(ScrollToRequest request) {

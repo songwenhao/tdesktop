@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_element.h"
 
-#include "api/api_chat_invite.h"
 #include "history/view/history_view_service_message.h"
 #include "history/view/history_view_message.h"
 #include "history/view/media/history_view_media_grouped.h"
@@ -27,10 +26,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/click_handler_types.h"
-#include "core/file_utilities.h"
 #include "core/ui_integration.h"
 #include "main/main_session.h"
-#include "main/main_domain.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "window/window_session_controller.h"
 #include "ui/effects/path_shift_gradient.h"
@@ -39,10 +36,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/item_text_options.h"
 #include "ui/painter.h"
+#include "data/components/sponsored_messages.h"
 #include "data/data_session.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
-#include "data/data_sponsored_messages.h"
 #include "data/data_message_reactions.h"
 #include "data/data_user.h"
 #include "lang/lang_keys.h"
@@ -279,7 +276,7 @@ QString DateTooltipText(not_null<Element*> view) {
 			dateText += '\n' + tr::lng_signed_author(
 				tr::now,
 				lt_user,
-				msgsigned->postAuthor);
+				msgsigned->author);
 		}
 	}
 	if (item->isScheduled() && item->isSilent()) {
@@ -462,7 +459,7 @@ Element::Element(
 	Flag serviceFlag)
 : _delegate(delegate)
 , _data(data)
-, _dateTime(IsItemScheduledUntilOnline(data)
+, _dateTime((IsItemScheduledUntilOnline(data) || data->shortcutId())
 	? QDateTime()
 	: ItemDateTime(data))
 , _text(st::msgMinWidth)
@@ -753,14 +750,16 @@ void Element::refreshMedia(Element *replacing) {
 		const auto emojiStickers = &history()->session().emojiStickersPack();
 		const auto skipPremiumEffect = false;
 		if (const auto sticker = emojiStickers->stickerForEmoji(emoji)) {
+			auto content = std::make_unique<Sticker>(
+				this,
+				sticker.document,
+				skipPremiumEffect,
+				replacing,
+				sticker.replacements);
+			content->setEmojiSticker();
 			_media = std::make_unique<UnwrappedMedia>(
 				this,
-				std::make_unique<Sticker>(
-					this,
-					sticker.document,
-					skipPremiumEffect,
-					replacing,
-					sticker.replacements));
+				std::move(content));
 		} else {
 			_media = std::make_unique<UnwrappedMedia>(
 				this,
@@ -1097,29 +1096,7 @@ ClickHandlerPtr Element::fromLink() const {
 		return _fromLink;
 	}
 	const auto item = data();
-	if (item->isSponsored()) {
-		const auto session = &item->history()->session();
-		_fromLink = std::make_shared<LambdaClickHandler>([=](
-				ClickContext context) {
-			if (context.button != Qt::LeftButton) {
-				return;
-			}
-			const auto my = context.other.value<ClickHandlerContext>();
-			if (const auto window = ContextOrSessionWindow(my, session)) {
-				auto &sponsored = session->data().sponsoredMessages();
-				const auto itemId = my.itemId ? my.itemId : item->fullId();
-				const auto details = sponsored.lookupDetails(itemId);
-				if (!details.externalLink.isEmpty()) {
-					File::OpenUrl(details.externalLink);
-				} else if (const auto &hash = details.hash) {
-					Api::CheckChatInvite(window, *hash);
-				} else if (const auto peer = details.peer) {
-					window->showPeerInfo(peer);
-				}
-			}
-		});
-		return _fromLink;
-	} else if (const auto from = item->displayFrom()) {
+	if (const auto from = item->displayFrom()) {
 		_fromLink = std::make_shared<LambdaClickHandler>([=](
 				ClickContext context) {
 			if (context.button != Qt::LeftButton) {

@@ -114,6 +114,7 @@ if (TARGET Qt::Quick)
     list(PREPEND common_qt_libs
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Quick
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Qml
+        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}QmlBuiltins
     )
 endif()
 
@@ -310,6 +311,7 @@ if (WIN32)
 elseif (APPLE)
     target_link_libraries(external_qt
     INTERFACE
+        ${libs_loc}/local/lib/liblcms2.a
         ${libs_loc}/local/lib/libwebp.a
         ${libs_loc}/local/lib/libwebpdemux.a
         ${libs_loc}/local/lib/libwebpmux.a

@@ -1,6 +1,11 @@
 //#define GI_INLINE 1
 #include <gtk/gtk.hpp>
 
+// adapt to API as needed
+#if GTK_CHECK_VERSION(4, 0, 0)
+#define GTK4 1
+#endif
+
 #include <iostream>
 #include <tuple>
 #include <vector>
@@ -42,13 +47,31 @@ public:
   {
     Gtk::Window &self = *(this);
     self.set_title("TreeView filter demo");
+#ifdef GTK4
+#else
     self.set_border_width(10);
+#endif
 
     // set up the grid in which elements are positioned
     auto grid = Gtk::Grid::new_();
     grid.set_column_homogeneous(true);
     grid.set_row_homogeneous(true);
+#ifdef GTK4
+    self.set_child(grid);
+#if 0
+    // this could work, but the annotation for .load_from_data
+    // is too unstable across versions
+    { // migrate call above to CSS style
+      const char *css = "grid { margin: 10px; }";
+      auto provider = Gtk::CssProvider::new_();
+      provider.load_from_data((guint8 *)css, -1);
+      grid.get_style_context().add_provider(
+          provider, Gtk::STYLE_PROVIDER_PRIORITY_USER_);
+    }
+#endif
+#else
     self.add(grid);
+#endif
 
     // create ListStore model
     store_ = Gtk::ListStore::new_type_<std::string, int, std::string>();
@@ -101,9 +124,13 @@ public:
       grid.attach_next_to(*it, *(it - 1), Gtk::PositionType::RIGHT_, 1, 1);
       ++it;
     }
+#ifdef GTK4
+    scrollable_treelist.set_child(treeview);
+    self.show();
+#else
     scrollable_treelist.add(treeview);
-
     self.show_all();
+#endif
   }
 
   bool language_filter_func(Gtk::TreeModel filter, Gtk::TreeIter_Ref it) const
@@ -124,16 +151,76 @@ public:
   }
 };
 
+// other part based on gtkmm builder example
+namespace Gio = gi::repository::Gio;
+
+class ExampleWindow : public Gtk::impl::WindowImpl
+{
+  using self_type = ExampleWindow;
+
+public:
+  ExampleWindow(Gtk::Window base, Gtk::Builder builder)
+      : Gtk::impl::WindowImpl(base, this)
+  {
+    (void)builder;
+    auto actions = Gio::SimpleActionGroup::new_();
+    auto am = Gio::ActionMap(actions);
+    auto action = Gio::SimpleAction::new_("help");
+    action.signal_activate().connect(gi::mem_fun(&self_type::on_help, this));
+    am.add_action(action);
+    insert_action_group("win", actions);
+  }
+
+  void on_help(Gio::Action, GLib::Variant) { std::cout << "Help" << std::endl; }
+
+  static auto build()
+  {
+    const char *UIFILE = G_STRINGIFY(EXAMPLES_DIR) "/gtk-builder.ui";
+    const char *WINID = "window1";
+
+    auto builder = Gtk::Builder::new_();
+    builder.add_from_file(UIFILE);
+    if (false) {
+      // some compile checks
+      builder.get_object(WINID);
+      builder.get_object<Gtk::Window>(WINID);
+    }
+    return builder.get_object_derived<self_type>(WINID);
+  }
+};
+
 int
 main(int argc, char **argv)
 {
+#ifdef GTK4
+  (void)argc;
+  (void)argv;
+  gtk_init();
+#else
   gtk_init(&argc, &argv);
+#endif
+
+  loop = GLib::MainLoop::new_();
 
   // recommended general approach iso stack based
   // too much vmethod calling which is not safe for plain case
-  auto win = gi::make_ref<TreeViewFilterWindow>();
+  Gtk::Window win;
+  if (argc == 1) {
+    win = gi::make_ref<TreeViewFilterWindow>();
+  } else {
+    win = ExampleWindow::build();
+  }
   // TODO auto-handle arg ignore ??
-  win->signal_destroy().connect([](Gtk::Widget) { Gtk::main_quit(); });
-  win->show_all();
-  Gtk::main();
+#ifdef GTK4
+  win.signal_close_request().connect([](Gtk::Window) {
+    loop.quit();
+    return true;
+  });
+  win.show();
+#else
+  win.signal_destroy().connect([](Gtk::Widget) { loop.quit(); });
+  win.show_all();
+#endif
+
+  loop.run();
 }

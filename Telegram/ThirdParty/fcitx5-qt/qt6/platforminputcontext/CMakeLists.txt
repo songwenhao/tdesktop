@@ -28,7 +28,7 @@ set_target_properties(fcitx5platforminputcontextplugin-qt6 PROPERTIES
                          OUTPUT_NAME fcitx5platforminputcontextplugin
                          AUTOMOC TRUE
                         )
-target_include_directories(fcitx5platforminputcontextplugin-qt6 PRIVATE ${Qt6Gui_PRIVATE_INCLUDE_DIRS} "${PROJECT_SOURCE_DIR}/common")
+target_include_directories(fcitx5platforminputcontextplugin-qt6 PRIVATE "${PROJECT_SOURCE_DIR}/common")
 if (BUILD_ONLY_PLUGIN AND BUILD_STATIC_PLUGIN)
 target_compile_definitions(fcitx5platforminputcontextplugin-qt6 PRIVATE "-DQT_STATICPLUGIN")
 endif()
@@ -43,12 +43,25 @@ endif()
 target_link_libraries(fcitx5platforminputcontextplugin-qt6
                           Qt6::Core
                           Qt6::Gui
+                          Qt6::GuiPrivate
                           Qt6::DBus
                           Qt6::Widgets
-                          XCB::XCB
                           Fcitx5Qt6::DBusAddons
                           XKBCommon::XKBCommon
                          )
+if (ENABLE_X11)
+    target_link_libraries(fcitx5platforminputcontextplugin-qt6 XCB::XCB)
+    target_compile_definitions(fcitx5platforminputcontextplugin-qt6 PRIVATE "-DENABLE_X11")
+endif()
+
+if (ENABLE_QT6_WAYLAND_WORKAROUND)
+    target_compile_definitions(fcitx5platforminputcontextplugin-qt6 PRIVATE "-DFCITX_ENABLE_QT6_WAYLAND_WORKAROUND")
+    target_link_libraries(fcitx5platforminputcontextplugin-qt6
+        Qt6::GuiPrivate
+        Qt6::WaylandGlobalPrivate
+        Qt6::WaylandClient
+        Qt6::WaylandClientPrivate)
+endif()
 
 get_target_property(_QT6_QMAKE_EXECUTABLE Qt6::qmake LOCATION)
 execute_process(

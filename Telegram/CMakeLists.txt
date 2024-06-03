@@ -30,8 +30,9 @@ include(cmake/lib_tgvoip.cmake)
 include(cmake/lib_tgcalls.cmake)
 include(cmake/lib_prisma.cmake)
 include(cmake/td_export.cmake)
-include(cmake/td_mtproto.cmake)
+include(cmake/td_iv.cmake)
 include(cmake/td_lang.cmake)
+include(cmake/td_mtproto.cmake)
 include(cmake/td_scheme.cmake)
 include(cmake/td_ui.cmake)
 include(cmake/generate_appdata_changelog.cmake)
@@ -62,8 +63,9 @@ PRIVATE
     desktop-app::external_minizip
 
     tdesktop::td_export
-    tdesktop::td_mtproto
+    tdesktop::td_iv
     tdesktop::td_lang
+    tdesktop::td_mtproto
     tdesktop::td_scheme
     tdesktop::td_ui
     desktop-app::lib_webrtc
@@ -108,6 +110,8 @@ PRIVATE
     api/api_chat_filters.h
     api/api_chat_invite.cpp
     api/api_chat_invite.h
+    api/api_chat_links.cpp
+    api/api_chat_links.h
     api/api_chat_participants.cpp
     api/api_chat_participants.h
     api/api_cloud_password.cpp
@@ -116,6 +120,8 @@ PRIVATE
     api/api_common.h
     api/api_confirm_phone.cpp
     api/api_confirm_phone.h
+    api/api_earn.cpp
+    api/api_earn.h
     api/api_editing.cpp
     api/api_editing.h
     api/api_global_privacy.cpp
@@ -180,6 +186,8 @@ PRIVATE
     boxes/filters/edit_filter_box.h
     boxes/filters/edit_filter_chats_list.cpp
     boxes/filters/edit_filter_chats_list.h
+    boxes/filters/edit_filter_chats_preview.cpp
+    boxes/filters/edit_filter_chats_preview.h
     boxes/filters/edit_filter_links.cpp
     boxes/filters/edit_filter_links.h
     boxes/peers/add_bot_to_chat_box.cpp
@@ -265,6 +273,8 @@ PRIVATE
     boxes/local_storage_box.h
     boxes/max_invite_box.cpp
     boxes/max_invite_box.h
+    boxes/moderate_messages_box.cpp
+    boxes/moderate_messages_box.h
     boxes/peer_list_box.cpp
     boxes/peer_list_box.h
     boxes/peer_list_controllers.cpp
@@ -388,8 +398,6 @@ PRIVATE
     chat_helpers/spellchecker_common.h
     chat_helpers/stickers_dice_pack.cpp
     chat_helpers/stickers_dice_pack.h
-    chat_helpers/stickers_emoji_image_loader.cpp
-    chat_helpers/stickers_emoji_image_loader.h
     chat_helpers/stickers_emoji_pack.cpp
     chat_helpers/stickers_emoji_pack.h
     chat_helpers/stickers_gift_box_pack.cpp
@@ -446,6 +454,22 @@ PRIVATE
     core/version.h
     countries/countries_manager.cpp
     countries/countries_manager.h
+    data/business/data_business_chatbots.cpp
+    data/business/data_business_chatbots.h
+    data/business/data_business_common.cpp
+    data/business/data_business_common.h
+    data/business/data_business_info.cpp
+    data/business/data_business_info.h
+    data/business/data_shortcut_messages.cpp
+    data/business/data_shortcut_messages.h
+    data/components/recent_peers.cpp
+    data/components/recent_peers.h
+    data/components/scheduled_messages.cpp
+    data/components/scheduled_messages.h
+    data/components/sponsored_messages.cpp
+    data/components/sponsored_messages.h
+    data/components/top_peers.cpp
+    data/components/top_peers.h
     data/notify/data_notify_settings.cpp
     data/notify/data_notify_settings.h
     data/notify/data_peer_notify_settings.cpp
@@ -563,14 +587,10 @@ PRIVATE
     data/data_send_action.h
     data/data_session.cpp
     data/data_session.h
-    data/data_scheduled_messages.cpp
-    data/data_scheduled_messages.h
     data/data_shared_media.cpp
     data/data_shared_media.h
     data/data_sparse_ids.cpp
     data/data_sparse_ids.h
-    data/data_sponsored_messages.cpp
-    data/data_sponsored_messages.h
     data/data_statistics.h
     data/data_stories.cpp
     data/data_stories.h
@@ -594,6 +614,18 @@ PRIVATE
     data/data_wall_paper.h
     data/data_web_page.cpp
     data/data_web_page.h
+    dialogs/ui/dialogs_layout.cpp
+    dialogs/ui/dialogs_layout.h
+    dialogs/ui/dialogs_message_view.cpp
+    dialogs/ui/dialogs_message_view.h
+    dialogs/ui/dialogs_stories_content.cpp
+    dialogs/ui/dialogs_stories_content.h
+    dialogs/ui/dialogs_suggestions.cpp
+    dialogs/ui/dialogs_suggestions.h
+    dialogs/ui/dialogs_topics_view.cpp
+    dialogs/ui/dialogs_topics_view.h
+    dialogs/ui/dialogs_video_userpic.cpp
+    dialogs/ui/dialogs_video_userpic.h
     dialogs/dialogs_entry.cpp
     dialogs/dialogs_entry.h
     dialogs/dialogs_indexed_list.cpp
@@ -616,16 +648,6 @@ PRIVATE
     dialogs/dialogs_search_tags.h
     dialogs/dialogs_widget.cpp
     dialogs/dialogs_widget.h
-    dialogs/ui/dialogs_layout.cpp
-    dialogs/ui/dialogs_layout.h
-    dialogs/ui/dialogs_message_view.cpp
-    dialogs/ui/dialogs_message_view.h
-    dialogs/ui/dialogs_stories_content.cpp
-    dialogs/ui/dialogs_stories_content.h
-    dialogs/ui/dialogs_topics_view.cpp
-    dialogs/ui/dialogs_topics_view.h
-    dialogs/ui/dialogs_video_userpic.cpp
-    dialogs/ui/dialogs_video_userpic.h
     editor/color_picker.cpp
     editor/color_picker.h
     editor/controllers/controllers.h
@@ -708,6 +730,8 @@ PRIVATE
     history/view/media/history_view_media.h
     history/view/media/history_view_media_common.cpp
     history/view/media/history_view_media_common.h
+    history/view/media/history_view_media_generic.cpp
+    history/view/media/history_view_media_generic.h
     history/view/media/history_view_media_grouped.cpp
     history/view/media/history_view_media_grouped.h
     history/view/media/history_view_media_spoiler.cpp
@@ -847,14 +871,18 @@ PRIVATE
     history/history_view_highlight_manager.h
     history/history_widget.cpp
     history/history_widget.h
-    info/boosts/giveaway/giveaway_list_controllers.cpp
-    info/boosts/giveaway/giveaway_list_controllers.h
-    info/boosts/create_giveaway_box.cpp
-    info/boosts/create_giveaway_box.h
-    info/boosts/info_boosts_inner_widget.cpp
-    info/boosts/info_boosts_inner_widget.h
-    info/boosts/info_boosts_widget.cpp
-    info/boosts/info_boosts_widget.h
+    info/channel_statistics/boosts/create_giveaway_box.cpp
+    info/channel_statistics/boosts/create_giveaway_box.h
+    info/channel_statistics/boosts/giveaway/giveaway_list_controllers.cpp
+    info/channel_statistics/boosts/giveaway/giveaway_list_controllers.h
+    info/channel_statistics/boosts/info_boosts_inner_widget.cpp
+    info/channel_statistics/boosts/info_boosts_inner_widget.h
+    info/channel_statistics/boosts/info_boosts_widget.cpp
+    info/channel_statistics/boosts/info_boosts_widget.h
+    info/channel_statistics/earn/info_earn_inner_widget.cpp
+    info/channel_statistics/earn/info_earn_inner_widget.h
+    info/channel_statistics/earn/info_earn_widget.cpp
+    info/channel_statistics/earn/info_earn_widget.h
     info/common_groups/info_common_groups_inner_widget.cpp
     info/common_groups/info_common_groups_inner_widget.h
     info/common_groups/info_common_groups_widget.cpp
@@ -985,6 +1013,10 @@ PRIVATE
     intro/intro_step.h
     intro/intro_widget.cpp
     intro/intro_widget.h
+    iv/iv_delegate_impl.cpp
+    iv/iv_delegate_impl.h
+    iv/iv_instance.cpp
+    iv/iv_instance.h
     lang/lang_cloud_manager.cpp
     lang/lang_cloud_manager.h
     lang/lang_instance.cpp
@@ -1119,6 +1151,8 @@ PRIVATE
     menu/menu_mute.h
     menu/menu_send.cpp
     menu/menu_send.h
+    menu/menu_sponsored.cpp
+    menu/menu_sponsored.h
     menu/menu_ttl_validator.cpp
     menu/menu_ttl_validator.h
     mtproto/config_loader.cpp
@@ -1284,6 +1318,26 @@ PRIVATE
     profile/profile_block_widget.h
     profile/profile_cover_drop_area.cpp
     profile/profile_cover_drop_area.h
+    settings/business/settings_away_message.cpp
+    settings/business/settings_away_message.h
+    settings/business/settings_shortcut_messages.cpp
+    settings/business/settings_shortcut_messages.h
+    settings/business/settings_chat_intro.cpp
+    settings/business/settings_chat_intro.h
+    settings/business/settings_chat_links.cpp
+    settings/business/settings_chat_links.h
+    settings/business/settings_chatbots.cpp
+    settings/business/settings_chatbots.h
+    settings/business/settings_greeting.cpp
+    settings/business/settings_greeting.h
+    settings/business/settings_location.cpp
+    settings/business/settings_location.h
+    settings/business/settings_quick_replies.cpp
+    settings/business/settings_quick_replies.h
+    settings/business/settings_recipients_helper.cpp
+    settings/business/settings_recipients_helper.h
+    settings/business/settings_working_hours.cpp
+    settings/business/settings_working_hours.h
     settings/cloud_password/settings_cloud_password_common.cpp
     settings/cloud_password/settings_cloud_password_common.h
     settings/cloud_password/settings_cloud_password_email.cpp
@@ -1302,6 +1356,8 @@ PRIVATE
     settings/settings_advanced.h
     settings/settings_blocked_peers.cpp
     settings/settings_blocked_peers.h
+    settings/settings_business.cpp
+    settings/settings_business.h
     settings/settings_chat.cpp
     settings/settings_chat.h
     settings/settings_calls.cpp
@@ -1422,8 +1478,6 @@ PRIVATE
     ui/image/image_location.h
     ui/image/image_location_factory.cpp
     ui/image/image_location_factory.h
-    ui/widgets/level_meter.cpp
-    ui/widgets/level_meter.h
     ui/countryinput.cpp
     ui/countryinput.h
     ui/dynamic_thumbnails.cpp
@@ -1439,6 +1493,8 @@ PRIVATE
     ui/search_field_controller.h
     ui/text/format_song_document_name.cpp
     ui/text/format_song_document_name.h
+    ui/widgets/label_with_custom_emoji.cpp
+    ui/widgets/label_with_custom_emoji.h
     ui/unread_badge.cpp
     ui/unread_badge.h
     window/main_window.cpp
@@ -1466,6 +1522,8 @@ PRIVATE
     window/window_lock_widgets.h
     window/window_main_menu.cpp
     window/window_main_menu.h
+    window/window_main_menu_helpers.cpp
+    window/window_main_menu_helpers.h
     window/window_media_preview.cpp
     window/window_media_preview.h
     window/window_peer_menu.cpp
@@ -1474,8 +1532,6 @@ PRIVATE
     window/window_session_controller.cpp
     window/window_session_controller.h
     window/window_session_controller_link_info.h
-    window/window_slide_animation.cpp
-    window/window_slide_animation.h
     window/window_top_bar_wrap.h
     window/themes/window_theme.cpp
     window/themes/window_theme.h
@@ -1519,16 +1575,6 @@ if (NOT build_winstore)
     )
 endif()
 
-if (DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-    remove_target_sources(Telegram ${src_loc}
-        platform/linux/linux_wayland_integration.cpp
-    )
-else()
-    remove_target_sources(Telegram ${src_loc}
-        platform/linux/linux_wayland_integration_dummy.cpp
-    )
-endif()
-
 if (DESKTOP_APP_USE_PACKAGED)
     remove_target_sources(Telegram ${src_loc}
         platform/mac/mac_iconv_helper.c
@@ -1548,6 +1594,7 @@ PRIVATE
     qrc/emoji_preview.qrc
     qrc/telegram/animations.qrc
     qrc/telegram/export.qrc
+    qrc/telegram/iv.qrc
     qrc/telegram/telegram.qrc
     qrc/telegram/sounds.qrc
     winrc/Telegram.rc
@@ -1655,31 +1702,14 @@ elseif (APPLE)
         )
     endif()
 else()
-    target_link_libraries(Telegram
-    PRIVATE
-        desktop-app::external_glibmm
-    )
-
     include(${cmake_helpers_loc}/external/glib/generate_dbus.cmake)
-    generate_dbus(Telegram org.freedesktop.portal. XdpInhibit ${src_loc}/platform/linux/org.freedesktop.portal.Inhibit.xml)
+    generate_dbus(Telegram org.freedesktop.portal. XdpBackground ${third_party_loc}/xdg-desktop-portal/data/org.freedesktop.portal.Background.xml)
+    generate_dbus(Telegram org.freedesktop. XdgNotifications ${src_loc}/platform/linux/org.freedesktop.Notifications.xml)
 
     if (NOT DESKTOP_APP_DISABLE_X11_INTEGRATION)
         target_link_libraries(Telegram
         PRIVATE
             desktop-app::external_xcb
-        )
-    endif()
-
-    if (NOT DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION)
-        qt_generate_wayland_protocol_client_sources(Telegram
-        FILES
-            ${third_party_loc}/wayland/protocol/wayland.xml
-            ${third_party_loc}/plasma-wayland-protocols/src/protocols/plasma-shell.xml
-        )
-
-        target_link_libraries(Telegram
-        PRIVATE
-            desktop-app::external_wayland_client
         )
     endif()
 endif()
@@ -1735,6 +1765,7 @@ set_target_properties(Telegram PROPERTIES
     XCODE_ATTRIBUTE_ALWAYS_SEARCH_USER_PATHS NO
     XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY libc++
     XCODE_ATTRIBUTE_OTHER_CODE_SIGN_FLAGS --deep
+    XCODE_ATTRIBUTE_CLANG_DEBUG_INFORMATION_LEVEL $<IF:$<CONFIG:Debug>,default,line-tables-only>
 )
 set(entitlement_sources
     "${CMAKE_CURRENT_SOURCE_DIR}/Telegram/Telegram.entitlements"

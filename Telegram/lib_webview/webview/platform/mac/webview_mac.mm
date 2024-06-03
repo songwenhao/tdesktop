@@ -13,6 +13,7 @@
 #include "base/flat_map.h"
 
 #include <crl/crl_on_main.h>
+#include <crl/crl_time.h>
 #include <rpl/rpl.h>
 
 #include <QtCore/QUrl>
@@ -26,6 +27,7 @@ namespace {
 constexpr auto kDataUrlScheme = std::string_view("desktop-app-resource");
 constexpr auto kFullDomain = std::string_view("desktop-app-resource://domain/");
 constexpr auto kPartsCacheLimit = 32 * 1024 * 1024;
+constexpr auto kUuidSize = 16;
 
 [[nodiscard]] NSString *stdToNS(std::string_view value) {
 	return [[NSString alloc]
@@ -238,8 +240,8 @@ public:
 
 private:
 	struct Task {
-		bool cancelled = false;
-		rpl::lifetime destructor;
+		int index = 0;
+		crl::time started = 0;
 	};
 	struct PartialResource {
 		uint32 index = 0;
@@ -264,9 +266,10 @@ private:
 	using CacheKey = uint64;
 
 	static void TaskFail(TaskPointer task);
-	void taskFail(TaskPointer task);
+	void taskFail(TaskPointer task, int indexToCheck);
 	void taskDone(
 		TaskPointer task,
+		int indexToCheck,
 		const std::string &mime,
 		NSData *data,
 		int64 offset,
@@ -295,8 +298,26 @@ private:
 	base::flat_map<CacheKey, PartData> _partsCache;
 	std::vector<CacheKey> _partsLRU;
 	int64 _cacheTotal = 0;
+	int _taskAutoincrement = 0;
 
 };
+
+[[nodiscard]] NSUUID *UuidFromToken(const std::string &token) {
+	const auto bytes = reinterpret_cast<const unsigned char*>(token.data());
+	return (token.size() == kUuidSize)
+		? [[NSUUID alloc] initWithUUIDBytes:bytes]
+		: nil;
+}
+
+[[nodiscard]] std::string UuidToToken(NSUUID *uuid) {
+	if (!uuid) {
+		return std::string();
+	}
+	auto result = std::string(kUuidSize, ' ');
+	const auto bytes = reinterpret_cast<unsigned char*>(result.data());
+	[uuid getUUIDBytes:bytes];
+	return result;
+}
 
 Instance::Instance(Config config) {
 	const auto weak = base::make_weak(this);
@@ -313,6 +334,13 @@ Instance::Instance(Config config) {
 	_handler = [[Handler alloc] initWithMessageHandler:config.messageHandler navigationStartHandler:config.navigationStartHandler navigationDoneHandler:config.navigationDoneHandler dialogHandler:config.dialogHandler dataRequested:handleDataRequest];
 	_dataRequestHandler = std::move(config.dataRequestHandler);
 	[configuration setURLSchemeHandler:_handler forURLScheme:stdToNS(kDataUrlScheme)];
+	if (@available(macOS 14, *)) {
+		if (config.userDataToken != LegacyStorageIdToken().toStdString()) {
+			NSUUID *uuid = UuidFromToken(config.userDataToken);
+			[configuration setWebsiteDataStore:[WKWebsiteDataStore dataStoreForIdentifier:uuid]];
+			[uuid release];
+		}
+	}
 	_webview = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
 	if (@available(macOS 13.3, *)) {
 		_webview.inspectable = config.debug ? YES : NO;
@@ -342,18 +370,33 @@ void Instance::TaskFail(TaskPointer task) {
 	[task didFailWithError:[NSError errorWithDomain:@"org.telegram.desktop" code:404 userInfo:nil]];
 }
 
-void Instance::taskFail(TaskPointer task) {
-	const auto removed = _tasks.take(task);
+void Instance::taskFail(TaskPointer task, int indexToCheck) {
+	if (indexToCheck) {
+		const auto i = _tasks.find(task);
+		if (i == end(_tasks) || i->second.index != indexToCheck) {
+			return;
+		}
+		_tasks.erase(i);
+	}
 	TaskFail(task);
 }
 
 void Instance::taskDone(
 		TaskPointer task,
+		int indexToCheck,
 		const std::string &mime,
 		NSData *data,
 		int64 offset,
 		int64 total) {
 	Expects(data != nil);
+
+	if (indexToCheck) {
+		const auto i = _tasks.find(task);
+		if (i == end(_tasks) || i->second.index != indexToCheck) {
+			return;
+		}
+		_tasks.erase(i);
+	}
 
 	const auto length = int64([data length]);
 	const auto partial = (offset > 0) || (total != length);
@@ -530,9 +573,7 @@ Instance::CachedResult Instance::fillFromCache(
 
 void Instance::processDataRequest(TaskPointer task, bool started) {
 	if (!started) {
-		if (const auto i = _tasks.find(task); i != end(_tasks)) {
-			i->second.cancelled = true;
-		}
+		_tasks.remove(task);
 		return;
 	}
 
@@ -541,7 +582,7 @@ void Instance::processDataRequest(TaskPointer task, bool started) {
 	NSString *url = task.request.URL.absoluteString;
 	NSString *prefix = stdToNS(kFullDomain);
 	if (![url hasPrefix:prefix]) {
-		taskFail(task);
+		taskFail(task, 0);
 		return;
 	}
 
@@ -554,24 +595,27 @@ void Instance::processDataRequest(TaskPointer task, bool started) {
 		ParseRangeHeaderFor(prepared, std::string([rangeHeader UTF8String]));
 
 		if (const auto cached = fillFromCache(prepared)) {
-			taskDone(task, cached.mime, cached.data, prepared.offset, cached.total);
+			taskDone(task, 0, cached.mime, cached.data, prepared.offset, cached.total);
 			return;
 		}
 	}
+
+	const auto index = ++_taskAutoincrement;
+	_tasks[task] = Task{ .index = index, .started = crl::now() };
 
 	const auto requestedOffset = prepared.offset;
 	const auto requestedLimit = prepared.limit;
 	prepared.done = crl::guard(this, [=](DataResponse resolved) {
 		auto &stream = resolved.stream;
 		if (!stream) {
-			return taskFail(task);
+			return taskFail(task, index);
 		}
 		const auto length = stream->size();
 		Assert(length > 0);
 
 		const auto offset = resolved.streamOffset;
 		if (requestedOffset >= offset + length || offset > requestedOffset) {
-			return taskFail(task);
+			return taskFail(task, index);
 		}
 
 		auto bytes = std::unique_ptr<char[]>(new char[length]);
@@ -598,15 +642,13 @@ void Instance::processDataRequest(TaskPointer task, bool started) {
 			}
 			addToCache(partial.index, offset, { std::move(bytes), length });
 		}
-		taskDone(task, mime, data, requestedOffset, total);
+		taskDone(task, index, mime, data, requestedOffset, total);
 	});
 	const auto result = _dataRequestHandler
 		? _dataRequestHandler(prepared)
 		: DataResult::Failed;
 	if (result == DataResult::Failed) {
-		return taskFail(task);
-	} else if (result == DataResult::Pending) {
-		_tasks.emplace(task, Task());
+		return taskFail(task, index);
 	}
 
 	}
@@ -677,11 +719,41 @@ bool SupportsEmbedAfterCreate() {
 	return true;
 }
 
+bool NavigateToDataSupported() {
+	return true;
+}
+
+bool SeparateStorageIdSupported() {
+	return true;
+}
+
 std::unique_ptr<Interface> CreateInstance(Config config) {
 	if (!Supported()) {
 		return nullptr;
 	}
 	return std::make_unique<Instance>(std::move(config));
+}
+
+std::string GenerateStorageToken() {
+	return UuidToToken([NSUUID UUID]);
+}
+
+void ClearStorageDataByToken(const std::string &token) {
+	if (@available(macOS 14, *)) {
+		if (!token.empty() && token != LegacyStorageIdToken().toStdString()) {
+			if (NSUUID *uuid = UuidFromToken(token)) {
+				// removeDataStoreForIdentifier crashes without that (if not created first).
+				WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+				[configuration setWebsiteDataStore:[WKWebsiteDataStore dataStoreForIdentifier:uuid]];
+				[configuration release];
+
+				[WKWebsiteDataStore
+					removeDataStoreForIdentifier:uuid
+					completionHandler:^(NSError *error) {}];
+				[uuid release];
+			}
+		}
+	}
 }
 
 } // namespace Webview

@@ -36,7 +36,7 @@ GeneratorBase::parse_arginfo(const pt::ptree &node, ArgInfo *routput) const
   ArgInfo lresult;
   ArgInfo &result = routput ? *routput : lresult;
 
-  const pt::ptree *pntype;
+  const pt::ptree *pntype{};
   std::string kind;
   // try most likely in turn
   for (auto &&v : {EL_TYPE, EL_ARRAY, EL_VARARGS}) {
@@ -46,7 +46,7 @@ GeneratorBase::parse_arginfo(const pt::ptree &node, ArgInfo *routput) const
       pntype = &ntypeo.get();
     }
   }
-  if (kind.empty())
+  if (kind.empty() || !pntype)
     throw skip("type info not found");
   if (kind == EL_VARARGS)
     throw skip("varargs not supported", skip::OK);

@@ -8,7 +8,6 @@
 
 #include "base/platform/base_platform_info.h"
 #include "base/platform/linux/base_linux_xdp_utilities.h"
-#include "base/platform/linux/base_linux_wayland_integration.h"
 #include "base/timer_rpl.h"
 #include "base/weak_ptr.h"
 #include "base/random.h"
@@ -19,10 +18,14 @@
 
 #include <QtGui/QWindow>
 
-#include <giomm.h>
+#include <xdpinhibit/xdpinhibit.hpp>
+#include <xdprequest/xdprequest.hpp>
 
 namespace base::Platform {
 namespace {
+
+using namespace gi::repository;
+namespace GObject = gi::repository::GObject;
 
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 constexpr auto kResetScreenSaverTimeout = 10 * crl::time(1000);
@@ -57,100 +60,90 @@ void XCBPreventDisplaySleep(bool prevent) {
  */
 class PortalInhibit final : public has_weak_ptr {
 public:
-	PortalInhibit(uint flags = 0, const QString &description = {})
-	: _dbusConnection([] {
-		try {
-			return Gio::DBus::Connection::get_sync(
-				Gio::DBus::BusType::SESSION);
-		} catch (...) {
-			return Glib::RefPtr<Gio::DBus::Connection>();
-		}
-	}()) {
-		if (!_dbusConnection) {
-			return;
-		}
-
-		const auto handleToken = Glib::ustring("desktop_app")
-			+ std::to_string(RandomValue<uint>());
-
-		auto uniqueName = _dbusConnection->get_unique_name();
-		uniqueName.erase(0, 1);
-		uniqueName.replace(uniqueName.find('.'), 1, 1, '_');
-
-		_requestPath = Glib::ustring(
-				"/org/freedesktop/portal/desktop/request/")
-			+ uniqueName
-			+ '/'
-			+ handleToken;
-
-		const auto weak = make_weak(this);
-		const auto connection = _dbusConnection; // take a ref
-		const auto requestPath = _requestPath;
-		const auto signalId = std::make_shared<uint>();
-		*signalId = _dbusConnection->signal_subscribe(
-			[=](
-					const Glib::RefPtr<Gio::DBus::Connection> &,
-					const Glib::ustring &,
-					const Glib::ustring &,
-					const Glib::ustring &,
-					const Glib::ustring &,
-					const Glib::VariantContainerBase &) {
-				if (!weak) {
-					Close(connection, requestPath);
-				}
-				connection->signal_unsubscribe(*signalId);
-			},
+	PortalInhibit(uint flags = 0, const QString &description = {}) {
+		XdpInhibit::InhibitProxy::new_for_bus(
+			Gio::BusType::SESSION_,
+			Gio::DBusProxyFlags::NONE_,
 			XDP::kService,
-			XDP::kRequestInterface,
-			"Response",
-			_requestPath);
-
-		_dbusConnection->call(
 			XDP::kObjectPath,
-			"org.freedesktop.portal.Inhibit",
-			"Inhibit",
-			Glib::create_variant(std::tuple{
-				XDP::ParentWindowID(),
-				flags,
-				std::map<Glib::ustring, Glib::VariantBase>{
-					{
-						"handle_token",
-						Glib::create_variant(handleToken)
-					},
-					{
-						"reason",
-						Glib::create_variant(
-							Glib::ustring(description.toStdString()))
-					},
-				},
-			}),
-			{},
-			XDP::kService);
+			crl::guard(this, [=](GObject::Object, Gio::AsyncResult res) {
+				auto proxy = XdpInhibit::InhibitProxy::new_for_bus_finish(
+					res,
+					nullptr);
+
+				if (!proxy) {
+					return;
+				}
+
+				const auto handleToken = "desktop_app"
+					+ std::to_string(RandomValue<uint>());
+
+				auto uniqueName = std::string(
+					proxy.get_connection().get_unique_name());
+
+				uniqueName.erase(0, 1);
+				uniqueName.replace(uniqueName.find('.'), 1, 1, '_');
+
+				XdpRequest::RequestProxy::new_(
+					proxy.get_connection(),
+					Gio::DBusProxyFlags::NONE_,
+					XDP::kService,
+					XDP::kObjectPath
+						+ std::string("/request/")
+						+ uniqueName
+						+ '/'
+						+ handleToken,
+					nullptr,
+					crl::guard(this, [=](
+							GObject::Object,
+							Gio::AsyncResult res) mutable {
+						_request = XdpRequest::RequestProxy::new_finish(
+							res,
+							nullptr);
+
+						auto request = _request; // take a ref
+						const auto weak = make_weak(this);
+						const auto signalId = std::make_shared<ulong>();
+						*signalId = _request.signal_response().connect([=](
+								XdpRequest::Request,
+								guint,
+								GLib::Variant) mutable {
+							if (!weak) {
+								request.call_close(nullptr);
+							}
+							request.disconnect(*signalId);
+						});
+
+						XdpInhibit::Inhibit(proxy).call_inhibit(
+							XDP::ParentWindowID(),
+							flags,
+							GLib::Variant::new_array({
+								GLib::Variant::new_dict_entry(
+									GLib::Variant::new_string("handle_token"),
+									GLib::Variant::new_variant(
+										GLib::Variant::new_string(
+											handleToken))),
+								GLib::Variant::new_dict_entry(
+									GLib::Variant::new_string("reason"),
+									GLib::Variant::new_variant(
+										GLib::Variant::new_string(
+											description.toStdString()))),
+							}),
+							nullptr);
+					}));
+			}));
 	}
 
 	~PortalInhibit() {
-		if (!_dbusConnection) {
+		if (!_request) {
 			return;
 		}
 
-		Close(_dbusConnection, _requestPath);
+		_request.call_close(nullptr);
 	}
 
 private:
-	static void Close(
-			const Glib::RefPtr<Gio::DBus::Connection> &connection,
-			const Glib::ustring &requestPath) {
-		connection->call(
-			requestPath,
-			XDP::kRequestInterface,
-			"Close",
-			{},
-			{},
-			XDP::kService);
-	}
-
-	Glib::RefPtr<Gio::DBus::Connection> _dbusConnection;
-	Glib::ustring _requestPath;
+	XdpRequest::Request _request;
 };
 
 void PortalPreventDisplaySleep(
@@ -187,11 +180,6 @@ void BlockPowerSave(
 			PortalPreventAppSuspension(true, description);
 			break;
 		case PowerSaveBlockType::PreventDisplaySleep:
-			if (window) {
-				if (const auto integration = WaylandIntegration::Instance()) {
-					integration->preventDisplaySleep(window, true);
-				}
-			}
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 			XCBPreventDisplaySleep(true);
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION
@@ -208,11 +196,6 @@ void UnblockPowerSave(PowerSaveBlockType type, QPointer<QWindow> window) {
 			PortalPreventAppSuspension(false);
 			break;
 		case PowerSaveBlockType::PreventDisplaySleep:
-			if (window) {
-				if (const auto integration = WaylandIntegration::Instance()) {
-					integration->preventDisplaySleep(window, false);
-				}
-			}
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 			XCBPreventDisplaySleep(false);
 #endif // !DESKTOP_APP_DISABLE_X11_INTEGRATION

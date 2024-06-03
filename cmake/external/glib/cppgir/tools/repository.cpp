@@ -20,6 +20,8 @@ public:
   std::unordered_map<key_type, mapped_type> index;
   // active ns
   std::string ns;
+  // ODR check
+  mutable std::unordered_map<std::string, std::string> type_index;
 
   RepositoryPriv()
   {
@@ -208,7 +210,6 @@ Repository::add(const key_type &girname, const mapped_type::tree_type &n)
       // (some at least, in case of opaque struct)
       if (disguised)
         flags = -1;
-      auto deprecated = get_attribute<int>(node, AT_DEPRECATED, 0);
       // cairo is notable foreign example
       // structs are typically opaque, with custom _create, _copy,
       // _destroy
@@ -216,7 +217,7 @@ Repository::add(const key_type &girname, const mapped_type::tree_type &n)
       // (and then only filter by ignore and allow custom declaration of
       // above functions in the boxed system)
       auto foreign = get_attribute<int>(node, AT_FOREIGN, 0);
-      if (deprecated || (foreign && !registered))
+      if (foreign && !registered)
         flags = -1;
     }
 
@@ -304,6 +305,19 @@ Repository::lookup(const std::string &girname) const
   if (it != index.end())
     return &it->second;
   return nullptr;
+}
+
+std::string
+Repository::check_odr(const std::string &cpptype, const std::string &ctype)
+{
+  if (!ctype.empty()) {
+    auto &&self = get_self(this);
+    auto ret = self.type_index.insert({ctype, cpptype});
+    if (!ret.second && ret.first->second != cpptype) {
+      return ret.first->second;
+    }
+  }
+  return {};
 }
 
 std::shared_ptr<Repository>

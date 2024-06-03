@@ -166,7 +166,7 @@ FcitxQtKeySequenceWidget::FcitxQtKeySequenceWidget(QWidget *parent)
 
 void FcitxQtKeySequenceWidgetPrivate::init() {
     layout_ = new QHBoxLayout(q);
-    layout_->setMargin(0);
+    layout_->setContentsMargins(0, 0, 0, 0);
 
     keyButton_ = new FcitxQtKeySequenceButton(this, q);
     keyButton_->setFocusPolicy(Qt::StrongFocus);
@@ -279,9 +279,7 @@ void FcitxQtKeySequenceWidget::setKeySequence(const QList<Key> &seq) {
 
     d->keySequence_ = QList<Key>();
     for (auto key : seq) {
-        if (key.isValid()) {
-            d->keySequence_ << key;
-        }
+        d->keySequence_ << key;
     }
     d->doneRecording();
 }

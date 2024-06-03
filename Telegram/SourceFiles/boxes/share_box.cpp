@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peer_list_controllers.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
 #include "chat_helpers/share_message_phrase_factory.h"
+#include "data/business/data_shortcut_messages.h"
 #include "data/data_channel.h"
 #include "data/data_game.h"
 #include "data/data_histories.h"
@@ -233,7 +234,10 @@ void ShareBox::prepareCommentField() {
 	const auto field = _comment->entity();
 
 	field->submits(
-	) | rpl::start_with_next([=] { submit({}); }, field->lifetime());
+	) | rpl::start_with_next([=] {
+		submit({});
+	}, field->lifetime());
+
 	if (const auto show = uiShow(); show->valid()) {
 		InitMessageFieldHandlers(
 			_descriptor.session,
@@ -245,6 +249,14 @@ void ShareBox::prepareCommentField() {
 	}
 	field->setSubmitSettings(Core::App().settings().sendSubmitWay());
 
+	field->changes() | rpl::start_with_next([=] {
+		if (!field->getLastText().isEmpty()) {
+			setCloseByOutsideClick(false);
+		} else if (_inner->selected().empty()) {
+			setCloseByOutsideClick(true);
+		}
+	}, field->lifetime());
+
 	Ui::SendPendingMoveResizeEvents(_comment);
 	if (_bottomWidget) {
 		Ui::SendPendingMoveResizeEvents(_bottomWidget);
@@ -253,8 +265,6 @@ void ShareBox::prepareCommentField() {
 
 void ShareBox::prepare() {
 	prepareCommentField();
-
-	setCloseByOutsideClick(false);
 
 	_select->resizeToWidth(st::boxWideWidth);
 	Ui::SendPendingMoveResizeEvents(_select);
@@ -312,6 +322,12 @@ void ShareBox::prepare() {
 			not_null<Data::Thread*> thread,
 			bool checked) {
 		innerSelectedChanged(thread, checked);
+		if (checked) {
+			setCloseByOutsideClick(false);
+		} else if (_inner->selected().empty()
+			&& _comment->entity()->getLastText().isEmpty()) {
+			setCloseByOutsideClick(true);
+		}
 	});
 
 	Ui::Emoji::SuggestionsController::Init(
@@ -1543,11 +1559,15 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 			const auto threadHistory = thread->owningHistory();
 			histories.sendRequest(threadHistory, requestType, [=](
 					Fn<void()> finish) {
-				auto &api = threadHistory->session().api();
+				const auto session = &threadHistory->session();
+				auto &api = session->api();
 				const auto sendFlags = commonSendFlags
 					| (topMsgId ? Flag::f_top_msg_id : Flag(0))
 					| (ShouldSendSilent(peer, options)
 						? Flag::f_silent
+						: Flag(0))
+					| (options.shortcutId
+						? Flag::f_quick_reply_shortcut
 						: Flag(0));
 				threadHistory->sendRequestId = api.request(
 					MTPmessages_ForwardMessages(
@@ -1558,7 +1578,8 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 						peer->input,
 						MTP_int(topMsgId),
 						MTP_int(options.scheduled),
-						MTP_inputPeerEmpty() // send_as
+						MTP_inputPeerEmpty(), // send_as
+						Data::ShortcutIdToMTP(session, options.shortcutId)
 				)).done([=](const MTPUpdates &updates, mtpRequestId reqId) {
 					threadHistory->session().api().applyUpdates(updates);
 					state->requests.remove(reqId);
@@ -1670,6 +1691,101 @@ void FastShareMessage(
 			.premiumRequiredError = SharePremiumRequiredError(),
 		}),
 		Ui::LayerOption::CloseOther);
+}
+
+void FastShareLink(
+		not_null<Window::SessionController*> controller,
+		const QString &url) {
+	FastShareLink(controller->uiShow(), url);
+}
+
+void FastShareLink(
+		std::shared_ptr<Main::SessionShow> show,
+		const QString &url) {
+	const auto box = std::make_shared<QPointer<Ui::BoxContent>>();
+	const auto sending = std::make_shared<bool>();
+	auto copyCallback = [=] {
+		QGuiApplication::clipboard()->setText(url);
+		show->showToast(tr::lng_background_link_copied(tr::now));
+	};
+	auto submitCallback = [=](
+			std::vector<not_null<::Data::Thread*>> &&result,
+			TextWithTags &&comment,
+			Api::SendOptions options,
+			::Data::ForwardOptions) {
+		if (*sending || result.empty()) {
+			return;
+		}
+
+		const auto error = [&] {
+			for (const auto thread : result) {
+				const auto error = GetErrorTextForSending(
+					thread,
+					{ .text = &comment });
+				if (!error.isEmpty()) {
+					return std::make_pair(error, thread);
+				}
+			}
+			return std::make_pair(QString(), result.front());
+		}();
+		if (!error.first.isEmpty()) {
+			auto text = TextWithEntities();
+			if (result.size() > 1) {
+				text.append(
+					Ui::Text::Bold(error.second->chatListName())
+				).append("\n\n");
+			}
+			text.append(error.first);
+			if (const auto weak = *box) {
+				weak->getDelegate()->show(Ui::MakeConfirmBox({
+					.text = text,
+					.inform = true,
+				}));
+			}
+			return;
+		}
+
+		*sending = true;
+		if (!comment.text.isEmpty()) {
+			comment.text = url + "\n" + comment.text;
+			const auto add = url.size() + 1;
+			for (auto &tag : comment.tags) {
+				tag.offset += add;
+			}
+		} else {
+			comment.text = url;
+		}
+		auto &api = show->session().api();
+		for (const auto thread : result) {
+			auto message = Api::MessageToSend(
+				Api::SendAction(thread, options));
+			message.textWithTags = comment;
+			message.action.clearDraft = false;
+			api.sendMessage(std::move(message));
+		}
+		if (*box) {
+			(*box)->closeBox();
+		}
+		show->showToast(tr::lng_share_done(tr::now));
+	};
+	auto filterCallback = [](not_null<::Data::Thread*> thread) {
+		if (const auto user = thread->peer()->asUser()) {
+			if (user->canSendIgnoreRequirePremium()) {
+				return true;
+			}
+		}
+		return ::Data::CanSend(thread, ChatRestriction::SendOther);
+	};
+	*box = show->show(
+		Box<ShareBox>(ShareBox::Descriptor{
+			.session = &show->session(),
+			.copyCallback = std::move(copyCallback),
+			.submitCallback = std::move(submitCallback),
+			.filterCallback = std::move(filterCallback),
+			.premiumRequiredError = SharePremiumRequiredError(),
+		}),
+		Ui::LayerOption::KeepOther,
+		anim::type::normal);
 }
 
 auto SharePremiumRequiredError()

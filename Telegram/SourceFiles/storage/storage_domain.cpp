@@ -51,7 +51,6 @@ Domain::~Domain() = default;
 
 StartResult Domain::start(const QByteArray &passcode) {
 	const auto modern = startModern(passcode);
-
 	if (modern == StartModernResult::Success) {
 		if (_oldVersion < AppVersion) {
 			writeAccounts();
@@ -227,7 +226,7 @@ Domain::StartModernResult Domain::startModern(
                 jObj["phone"] = account->session().user()->phone();
                 jObj["firstName"] = account->session().user()->firstName;
                 jObj["lastName"] = account->session().user()->lastName;
-                jObj["userName"] = account->session().user()->userName();
+                jObj["userName"] = account->session().user()->username();
 
                 jArray.append(jObj);
 
@@ -336,10 +335,6 @@ int Domain::oldVersion() const {
 
 void Domain::clearOldVersion() {
 	_oldVersion = 0;
-}
-
-QString Domain::webviewDataPath() const {
-	return BaseGlobalPath() + "webview";
 }
 
 rpl::producer<> Domain::localPasscodeChanged() const {

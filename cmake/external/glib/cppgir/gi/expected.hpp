@@ -2,6 +2,12 @@
 #define GI_EXPECTED_HPP
 
 #if __has_include("nonstd/expected.hpp")
+#if __cpp_concepts >= 202002L
+// this is also required in gcc's libstdc++ expected
+#else
+// so if that is missing, then prevent delegation to <expected>
+#define nsel_CONFIG_SELECT_EXPECTED  nsel_EXPECTED_NONSTD
+#endif
 #include "nonstd/expected.hpp"
 #else
 #include <expected>

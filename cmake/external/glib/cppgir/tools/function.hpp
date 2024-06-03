@@ -116,7 +116,8 @@ std::string make_arg_traits(
 FunctionDefinition process_element_function(GeneratorContext &_ctx,
     const std::string _ns, const pt::ptree::value_type &entry,
     std::ostream &out, std::ostream &impl, const std::string &klass,
-    const std::string &klasstype, std::set<std::string> &deps);
+    const std::string &klasstype, std::set<std::string> &deps,
+    bool allow_deprecated);
 
 FunctionDefinition process_element_function(GeneratorContext &_ctx,
     const std::string _ns, const ElementFunction &func,

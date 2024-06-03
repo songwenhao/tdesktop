@@ -339,6 +339,7 @@ Photo::Photo(
 , _spoiler(options.spoiler ? std::make_unique<Ui::SpoilerAnimation>([=] {
 	delegate->repaintItem(this);
 }) : nullptr)
+, _pinned(options.pinned)
 , _story(options.story) {
 	if (_data->inlineThumbnailBytes().isEmpty()
 		&& (_data->hasExact(Data::PhotoSize::Small)
@@ -365,7 +366,8 @@ int32 Photo::resizeGetHeight(int32 width) {
 
 void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const PaintContext *context) {
 	const auto selected = (selection == FullSelection);
-	const auto widthChanged = _pix.width() != _width * cIntRetinaFactor();
+	const auto widthChanged = (_pix.width()
+		!= (_width * style::DevicePixelRatio()));
 	if (!_goodLoaded || widthChanged) {
 		ensureDataMediaCreated();
 		const auto good = !_spoiler
@@ -406,6 +408,14 @@ void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 	if (selected) {
 		p.fillRect(0, 0, _width, _height, st::overviewPhotoSelectOverlay);
 	}
+
+	if (_pinned) {
+		const auto &icon = selected
+			? st::storyPinnedIconSelected
+			: st::storyPinnedIcon;
+		icon.paint(p, _width - icon.width(), 0, _width);
+	}
+
 	const auto checkDelta = st::overviewCheckSkip + st::overviewCheck.size;
 	const auto checkLeft = _width - checkDelta;
 	const auto checkTop = _height - checkDelta;
@@ -450,6 +460,14 @@ void Photo::clearSpoiler() {
 	}
 }
 
+void Photo::itemDataChanged() {
+	const auto pinned = parent()->isPinned();
+	if (_pinned != pinned) {
+		_pinned = pinned;
+		delegate()->repaintItem(this);
+	}
+}
+
 void Photo::clearHeavyPart() {
 	_dataMedia = nullptr;
 }
@@ -474,6 +492,7 @@ Video::Video(
 , _spoiler(options.spoiler ? std::make_unique<Ui::SpoilerAnimation>([=] {
 	delegate->repaintItem(this);
 }) : nullptr)
+, _pinned(options.pinned)
 , _story(options.story) {
 	setDocumentLinks(_data);
 	_data->loadThumbnail(parent->fullId());
@@ -515,7 +534,7 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 	const auto radialOpacity = radial ? _radial->opacity() : 0.;
 
 	if ((blurred || thumbnail || good)
-		&& ((_pix.width() != _width * cIntRetinaFactor())
+		&& ((_pix.width() != _width * style::DevicePixelRatio())
 			|| (_pixBlurred && (thumbnail || good)))) {
 		auto img = good
 			? good->original()
@@ -544,6 +563,13 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 
 	if (selected) {
 		p.fillRect(QRect(0, 0, _width, _height), st::overviewPhotoSelectOverlay);
+	}
+
+	if (_pinned) {
+		const auto &icon = selected
+			? st::storyPinnedIconSelected
+			: st::storyPinnedIcon;
+		icon.paint(p, _width - icon.width(), 0, _width);
 	}
 
 	if (!selected && !context->selecting && radialOpacity < 1.) {
@@ -615,6 +641,14 @@ void Video::clearSpoiler() {
 	if (_spoiler) {
 		_spoiler = nullptr;
 		_pix = QPixmap();
+		delegate()->repaintItem(this);
+	}
+}
+
+void Video::itemDataChanged() {
+	const auto pinned = parent()->isPinned();
+	if (_pinned != pinned) {
+		_pinned = pinned;
 		delegate()->repaintItem(this);
 	}
 }
@@ -1513,9 +1547,7 @@ bool Document::iconAnimated() const {
 }
 
 bool Document::withThumb() const {
-	return !songLayout()
-		&& _data->hasThumbnail()
-		&& !Data::IsExecutableName(_data->filename());
+	return !songLayout() && _data->hasThumbnail();
 }
 
 bool Document::updateStatusText() {
@@ -1847,7 +1879,7 @@ void Link::validateThumbnail() {
 		delegate()->unregisterHeavyItem(this);
 	} else {
 		const auto size = QSize(st::linksPhotoSize, st::linksPhotoSize);
-		_thumbnail = QPixmap(size * cIntRetinaFactor());
+		_thumbnail = QPixmap(size * style::DevicePixelRatio());
 		_thumbnail.fill(Qt::transparent);
 		auto p = Painter(&_thumbnail);
 		const auto index = _letter.isEmpty()
@@ -2061,7 +2093,7 @@ void Gif::validateThumbnail(
 		bool good) {
 	if (!image || (_thumbGood && !good)) {
 		return;
-	} else if ((_thumb.size() == size * cIntRetinaFactor())
+	} else if ((_thumb.size() == size * style::DevicePixelRatio())
 		&& (_thumbGood || !good)) {
 		return;
 	}

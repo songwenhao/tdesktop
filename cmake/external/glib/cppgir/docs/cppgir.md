@@ -357,6 +357,11 @@ one exception regarding the use of `g_object_newv`, which is deprecated
 but may have to be used if support for an older GLib is required.
 This can be arranged by defining `GI_OBJECT_NEWV` (and the deprecation
 warning should also be silenced when dealing with newer version).
+If the items are also marked deprecated in GIR data, then these are skipped
+by default.  However, if the string `deprecated:<NAMESPACE>:<VERSION>`
+matches (a regexp) in specified ignore data/files, then deprecated items
+will be considered for the namespace in question, after being checked as
+usual against the ignore list.
 
 If you have specified the `--class` option, then the generated code will
 possibly contain classes that inherit from several classes (representing

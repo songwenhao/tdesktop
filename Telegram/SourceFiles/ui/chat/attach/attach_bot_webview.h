@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/object_ptr.h"
 #include "base/weak_ptr.h"
 #include "base/flags.h"
+#include "webview/webview_common.h"
 
 class QJsonObject;
 class QJsonValue;
@@ -23,7 +24,6 @@ class SeparatePanel;
 
 namespace Webview {
 struct Available;
-struct ThemeParams;
 } // namespace Webview
 
 namespace Ui::BotWebView {
@@ -57,6 +57,7 @@ public:
 	virtual bool botHandleLocalUri(QString uri, bool keepOpen) = 0;
 	virtual void botHandleInvoice(QString slug) = 0;
 	virtual void botHandleMenuButton(MenuButton button) = 0;
+	virtual void botOpenIvLink(QString uri) = 0;
 	virtual void botSendData(QByteArray data) = 0;
 	virtual void botSwitchInlineQuery(
 		std::vector<QString> chatTypes,
@@ -71,7 +72,7 @@ public:
 class Panel final : public base::has_weak_ptr {
 public:
 	Panel(
-		const QString &userDataPath,
+		const Webview::StorageId &storageId,
 		rpl::producer<QString> title,
 		not_null<Delegate*> delegate,
 		MenuButtons menuButtons,
@@ -143,7 +144,7 @@ private:
 	[[nodiscard]] QRect progressRect() const;
 	void setupProgressGeometry();
 
-	QString _userDataPath;
+	Webview::StorageId _storageId;
 	const not_null<Delegate*> _delegate;
 	bool _closeNeedConfirmation = false;
 	bool _hasSettingsButton = false;
@@ -171,7 +172,7 @@ private:
 
 struct Args {
 	QString url;
-	QString userDataPath;
+	Webview::StorageId storageId;
 	rpl::producer<QString> title;
 	rpl::producer<QString> bottom;
 	not_null<Delegate*> delegate;

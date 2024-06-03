@@ -119,6 +119,12 @@ HarfBuzz:.*
 # likwise so for freetype2
 freetype2:.*
 
+# Gsk
+# deprecated
+Gsk:class:GLRenderer
+# in separate gtk4-broadway.pc
+Gsk:class:BroadwayRenderer
+
 # likewise filter out some related GtkX parts
 # (should be in a separate ns btw for good measure)
 Gtk:class:Plug
@@ -130,6 +136,14 @@ Gtk:class:HeaderBarAccessible
 Gtk:class:FileChooserWidgetAccessible
 # generated dbus sekeleton parts made it into GIR but otherwise missing
 Gtk:record:_MountOperation.*
+
+# Gtk4
+# header not part of included headers
+Gtk:constant:IM_MODULE_EXTENSION_POINT_NAME
+# Gtk 4.9.1 deprecates TreeView and Cell Renderers
+# alternatives appear not so binding-friendly
+# so arrange to not discard these
+deprecated:Gtk:4.0
 
 # signal emission method wrappers
 # undocumented; and should not be wrapped either
