@@ -292,7 +292,7 @@ namespace Main {
         if (reason == DestroyReason::LoggedOut) {
             _session->finishLogout();
 
-            bool sendLoginInvalid = false;
+            /*bool sendLoginInvalid = false;
             QString activeAccount = Core::App().activeAccountId();
             if (!activeAccount.isEmpty()) {
                 if (activeAccount == QString::number(session().user()->id.value)) {
@@ -306,7 +306,7 @@ namespace Main {
                 PipeCmd::Cmd cmd;
                 cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
                 sendPipeCmd(cmd);
-            }
+            }*/
         }
         _session = nullptr;
     }
@@ -817,17 +817,9 @@ namespace Main {
                             sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
                             });
 
-                        _checkNormalRequestTimer.setCallback([&] {
-                            PipeCmd::Cmd cmd;
-                            cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                            sendPipeCmd(cmd);
-                            });
+                        _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
 
-                        _checkFileRequestTimer.setCallback([&] {
-                            PipeCmd::Cmd cmd;
-                            cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-                            sendPipeCmd(cmd);
-                            });
+                        _checkFileRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
 
                         _taskTimer.setCallback([&] {
                             if (_stop) {
@@ -1322,6 +1314,8 @@ namespace Main {
         _exportLeftChannels = false;
         _sendAllTaskDone = false;
 
+        bool ok = true;
+
         ProtobufCmd::Content protobufContent;
         if (protobufContent.ParseFromString(_curRecvCmd.content)) {
             _maxAttachFileSize = getNumExtraData(protobufContent, "maxAttachFileSize");
@@ -1397,6 +1391,8 @@ namespace Main {
                                     .arg(task.peerId)
                                     .arg(QString::fromWCharArray(L"可能已退出该会话，无法获取数据！"))
                                 );
+
+                                ok = false;
                                 continue;
                             }
 
@@ -1420,7 +1416,8 @@ namespace Main {
                                 task.isExistInDb = true;
                             }
 
-                            LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9")
+                            LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 "
+                                "maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9 getMsgDone: %10 getAttachDone:%11")
                                 .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                                 .arg(task.peerId)
                                 .arg(task.downloadAttach ? "yes" : "no")
@@ -1430,6 +1427,8 @@ namespace Main {
                                 .arg(task.msgMaxDate)
                                 .arg(task.lastOffsetMsgId)
                                 .arg(task.isExistInDb)
+                                .arg(task.getMsgDone)
+                                .arg(task.getAttachDone)
                             );
 
                             if (!task.getMsgDone || !task.getAttachDone) {
@@ -1442,7 +1441,7 @@ namespace Main {
         }
 
         if (_tasks.empty()) {
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+            sendPipeResult(_curRecvCmd, ok ? TelegramCmd::Status::Success : TelegramCmd::Status::UnknownError);
         } else {
             if (_downloadAttach) {
                 // 发现下载附件必须在主线程
@@ -2077,21 +2076,26 @@ namespace Main {
             _curTask = nextTask;
             updateTaskInfoToDb(_curTask);
 
-            if (!_curTask.getMsgDone || !_curTask.getAttachDone) {
+            if (_curTask.getAttachDone) {
+                // 如果上次附件获取完了，那么同时聊天记录也一定获取完了
+                // 此时接着获取
+                _offsetId = _curTask.lastOffsetMsgId;
+                uploadMsg(QString::fromWCharArray(L"开始获取 [%1] 聊天记录 ...")
+                    .arg(getPeerDisplayName(_curTask.peerData)));
+            } else {
+                // 如果上次附件没取完，此时为了检索附件，需要重新获取聊天记录
+                _offsetId = 0;
+
                 if (!_curTask.getMsgDone) {
-                    _offsetId = _curTask.lastOffsetMsgId;
                     uploadMsg(QString::fromWCharArray(L"开始获取 [%1] 聊天记录 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 } else {
-                    _offsetId = 0;
                     uploadMsg(QString::fromWCharArray(L"[%1] 聊天记录已获取完毕，开始搜索附件，请耐心等待 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 }
-
-                requestChatMessageEx();
-            } else if (_curTask.getMsgDone) {
-                requestChatMessage();
             }
+
+            requestChatMessageEx();
         } else {
             resetNormalRequestStatus();
 
@@ -2234,7 +2238,13 @@ namespace Main {
                 }
 
                 if (migratedPeerData) {
-                    _offsetId = _curTask.lastMigratedOffsetMsgId;
+                    // 如果上次附件没取完，此时为了检索附件，需要重新获取聊天记录
+                    if (_curTask.getAttachDone) {
+                        _offsetId = _curTask.lastMigratedOffsetMsgId;
+                    } else {
+                        _offsetId = 0;
+                    }
+
                     _curTask.curPeerId = _curTask.migratedPeerId;
                     _curTask.peerData = migratedPeerData;
                     _curTask.msgMinId = _curTask.migratedMsgMinId;
@@ -2320,7 +2330,10 @@ namespace Main {
                     getMessageDone(result);
                     }).fail([this](const MTP::Error& error) {
                         _stopCheckNormalRequestTimer = true;
-
+                        LOG(("[Account][requestChatMessageEx] curPeerId: %1 error: %2")
+                            .arg(_curTask.curPeerId)
+                            .arg(error.description())
+                        );
                         requestChatMessage();
                         }).send();
             } else {
@@ -2348,7 +2361,10 @@ namespace Main {
                         getMessageDone(result);
                         }).fail([this](const MTP::Error& error) {
                             _stopCheckNormalRequestTimer = true;
-
+                            LOG(("[Account][requestChatMessageEx] curPeerId: %1 error: %2")
+                                .arg(_curTask.curPeerId)
+                                .arg(error.description())
+                            );
                             requestChatMessage();
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
                 } else {
@@ -2365,6 +2381,8 @@ namespace Main {
             if (_curFileDownloading) {
                 break;
             }
+
+            resetFileRequestStatus();
 
             {
                 std::lock_guard<std::mutex> locker(*_downloadFilesLock);
@@ -5058,7 +5076,7 @@ namespace Main {
                 break;
             }
 
-            sql = "CREATE UNIQUE INDEX IF NOT EXISTS messages_index ON messages(mid, peer_id);";
+            sql = "CREATE UNIQUE INDEX IF NOT EXISTS messages_index ON messages(mid, msg_peer_id);";
             ret = sqlite3_exec(_dataDb, sql.c_str(), nullptr, nullptr, nullptr);
             if (ret != SQLITE_OK) {
                 break;
@@ -6070,6 +6088,12 @@ namespace Main {
             sqlite3_finalize(stmt);
             stmt = nullptr;
         }
+    }
+
+    void Account::checkRequestTimerCallback() {
+        PipeCmd::Cmd cmd;
+        cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
+        sendPipeCmd(cmd);
     }
 
 } // namespace Main

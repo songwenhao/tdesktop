@@ -854,6 +854,8 @@ namespace Main {
 
         void readExistDialogsId(std::set<std::string>& existDialogsId);
 
+        void checkRequestTimerCallback();
+
         /* Member variables */
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
