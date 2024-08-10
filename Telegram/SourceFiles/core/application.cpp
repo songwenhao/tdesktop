@@ -362,7 +362,7 @@ void Application::run() {
     if (appArgs.size() >= 5) {
         QString proxyString = appArgs[1];
         QStringList proxySettings = proxyString.split('|');
-        if (proxySettings.size() == 3) {
+        if (proxySettings.size() >= 3) {
             MTP::ProxyData proxy;
             proxy.type = MTP::ProxyData::Type::Socks5;
             if (proxySettings.at(0) == "0") {
@@ -372,6 +372,15 @@ void Application::run() {
             }
             proxy.host = proxySettings.at(1);
             proxy.port = proxySettings.at(2).toUInt();
+
+			if (proxySettings.size() > 3) {
+                proxy.user = proxySettings.at(3);
+            }
+
+            if (proxySettings.size() > 4) {
+                proxy.password = proxySettings.at(4);
+            }
+
 			if (!proxy.host.isEmpty() && proxy.port != 0) {
 				Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
 				setProxy = true;
