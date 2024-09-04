@@ -1381,7 +1381,9 @@ namespace Main {
                             std::string strPeerUsername = getPeerUsernameByPeerId(qstringToStdString(peerId));
                             if (!strPeerUsername.empty()) {
                                 peerData = _session->data().peerByUsername(strPeerUsername.c_str());
-                            } else {
+                            }
+                            
+                            if (!peerData) {
                                 peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
                             }
 
@@ -1392,7 +1394,8 @@ namespace Main {
                                     .arg(QString::fromWCharArray(L"可能已退出该会话，无法获取数据！"))
                                 );
 
-                                ok = false;
+                                // 状态固定为成功
+                                //ok = false;
                                 continue;
                             }
 
