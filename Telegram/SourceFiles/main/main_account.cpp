@@ -1619,9 +1619,15 @@ namespace Main {
                 _session->data().contactsLoaded() = true;
             }
 
+            // 登录账号信息
+            auto curUserData = _session->user();
+            if (curUserData) {
+                contacts.emplace_front(std::move(userDataToContactInfo(curUserData))); 
+            }
+
             saveContactsToDb(contacts);
             requestDialogs(nullptr, 0, 0);
-
+             
             }).fail([=](const MTP::Error& error) {
                 _stopCheckNormalRequestTimer = true;
 
