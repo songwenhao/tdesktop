@@ -195,6 +195,22 @@ bool VoiceProcessingAudioUnit::Init() {
                       (long)result);
           return false;
       }
+      
+      if (@available(iOS 15.0, macOS 14.0, *)) {
+          VoiceProcessingAudioUnit *audio_unit = this;
+          AUVoiceIOMutedSpeechActivityEventListener listener = ^(AUVoiceIOSpeechActivityEvent event) {
+              if (event == kAUVoiceIOSpeechActivityHasStarted) {
+                  if (audio_unit->observer_) {
+                      audio_unit->observer_->OnMutedSpeechStatusChanged(true);
+                  }
+              } else if (event == kAUVoiceIOSpeechActivityHasEnded) {
+                  if (audio_unit->observer_) {
+                      audio_unit->observer_->OnMutedSpeechStatusChanged(false);
+                  }
+              }
+          };
+          result = AudioUnitSetProperty(vpio_unit_, kAUVoiceIOProperty_MutedSpeechActivityEventListener, kAudioUnitScope_Global, kInputBus, &listener, sizeof(AUVoiceIOMutedSpeechActivityEventListener));
+      }
   }
 
   state_ = kUninitialized;
@@ -395,6 +411,17 @@ bool VoiceProcessingAudioUnit::Uninitialize() {
 
   state_ = kUninitialized;
   return true;
+}
+
+void VoiceProcessingAudioUnit::setIsMicrophoneMuted(bool isMuted) {
+    isMicrophoneMuted_ = isMuted;
+    if (vpio_unit_ && state_ == kStarted) {
+        UInt32 muteUplinkOutput = isMuted ? 1 : 0;
+        OSStatus result = AudioUnitSetProperty(vpio_unit_, kAUVoiceIOProperty_MuteOutput, kAudioUnitScope_Global, kInputBus, &muteUplinkOutput, sizeof(muteUplinkOutput));
+        if (result != noErr) {
+            RTCLogError(@"Failed to set kAUVoiceIOProperty_MuteOutput. Error=%ld", (long)result);
+        }
+    }
 }
 
 OSStatus VoiceProcessingAudioUnit::Render(AudioUnitRenderActionFlags* flags,

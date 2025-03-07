@@ -538,6 +538,12 @@ OSStatus AudioDeviceIOS::OnGetPlayoutData(AudioUnitRenderActionFlags* flags,
   return noErr;
 }
 
+void AudioDeviceIOS::OnMutedSpeechStatusChanged(bool isDetectingSpeech) {
+    if (mutedSpeechDetectionChanged) {
+        mutedSpeechDetectionChanged(isDetectingSpeech);
+    }
+}
+
 void AudioDeviceIOS::HandleInterruptionBegin() {
   RTC_DCHECK_RUN_ON(thread_);
   RTCLog(@"Interruption begin. IsInterrupted changed from %d to 1.", is_interrupted_);
@@ -1093,18 +1099,21 @@ bool AudioDeviceIOS::MicrophoneIsInitialized() const {
 }
 
 int32_t AudioDeviceIOS::MicrophoneMuteIsAvailable(bool& available) {
-  available = false;
+  available = true;
   return 0;
 }
 
 int32_t AudioDeviceIOS::SetMicrophoneMute(bool enable) {
-  RTC_DCHECK_NOTREACHED() << "Not implemented";
-  return -1;
+  isMicrophoneMuted_ = enable;
+  if (audio_unit_) {
+    audio_unit_->setIsMicrophoneMuted(enable);
+  }
+  return 0;
 }
 
 int32_t AudioDeviceIOS::MicrophoneMute(bool& enabled) const {
-  RTC_DCHECK_NOTREACHED() << "Not implemented";
-  return -1;
+  enabled = isMicrophoneMuted_;
+  return 0;
 }
 
 int32_t AudioDeviceIOS::StereoRecordingIsAvailable(bool& available) {

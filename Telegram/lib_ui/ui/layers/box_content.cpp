@@ -14,6 +14,8 @@
 #include "ui/text/text_utilities.h"
 #include "ui/rect_part.h"
 #include "ui/painter.h"
+#include "ui/qt_weak_factory.h"
+#include "ui/ui_utility.h"
 #include "base/timer.h"
 #include "styles/style_layers.h"
 #include "styles/palette.h"
@@ -258,17 +260,13 @@ void BoxContent::scrollToWidget(not_null<QWidget*> widget) {
 	}
 }
 
-RectParts BoxContent::customCornersFilling() {
-	return {};
-}
-
 void BoxContent::scrollToY(int top, int bottom) {
 	scrollTo({ top, bottom });
 }
 
 void BoxContent::scrollTo(ScrollToRequest request, anim::type animated) {
 	if (_scroll) {
-		const auto v = _scroll->computeScrollTo(request.ymin, request.ymax);
+		const auto v = _scroll->computeScrollToY(request.ymin, request.ymax);
 		const auto now = _scroll->scrollTop();
 		if (animated == anim::type::instant || v == now) {
 			_scrollAnimation.stop();
@@ -346,7 +344,9 @@ void BoxContent::updateShadowsVisibility(anim::type animated) {
 				&& !getDelegate()->style().shadowIgnoreTopSkip)),
 		animated);
 	_bottomShadow->toggle(
-		(top < _scroll->scrollTopMax() || _innerBottomSkip > 0),
+		(top < _scroll->scrollTopMax())
+			|| (_innerBottomSkip > 0
+				&& !getDelegate()->style().shadowIgnoreBottomSkip),
 		animated);
 }
 

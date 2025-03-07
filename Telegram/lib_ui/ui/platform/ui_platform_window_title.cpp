@@ -7,6 +7,7 @@
 #include "ui/platform/ui_platform_window_title.h"
 
 #include "ui/platform/ui_platform_utility.h"
+#include "ui/qt_weak_factory.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/shadow.h"
 #include "ui/ui_utility.h"
@@ -23,19 +24,6 @@
 
 namespace Ui {
 namespace Platform {
-namespace {
-
-template <typename T>
-void RemoveDuplicates(std::vector<T> &v) {
-	auto end = v.end();
-	for (auto it = v.begin(); it != end; ++it) {
-		end = std::remove(it + 1, end, *it);
-	}
-
-	v.erase(end, v.end());
-}
-
-} // namespace
 
 bool SemiNativeSystemButtonProcessing() {
 	return ::Platform::IsWindows11OrGreater();
@@ -149,6 +137,7 @@ TitleControls::TitleControls(
 	std::unique_ptr<AbstractTitleButtons> buttons,
 	Fn<void(bool maximized)> maximize)
 : _st(&st)
+, _layout(TitleControlsLayout::Instance())
 , _buttons(std::move(buttons))
 , _minimize(_buttons->create(parent, Control::Minimize, st))
 , _maximizeRestore(_buttons->create(parent, Control::Maximize, st))
@@ -175,6 +164,10 @@ void TitleControls::setStyle(const style::WindowTitle &st) {
 
 not_null<const style::WindowTitle*> TitleControls::st() const {
 	return _st;
+}
+
+TitleControlsLayout &TitleControls::layout() const {
+	return *_layout;
 }
 
 QRect TitleControls::geometry() const {
@@ -233,39 +226,20 @@ void TitleControls::init(Fn<void(bool maximized)> maximize) {
 
 	rpl::combine(
 		parent()->widthValue(),
-		TitleControlsLayoutValue()
+		_layout->value()
 	) | rpl::start_with_next([=] {
 		updateControlsPosition();
 	}, _close->lifetime());
 
-	subscribeToStateChanges();
+	base::install_event_filter(window(), [=](not_null<QEvent*> e) {
+		if (e->type() == QEvent::WindowStateChange) {
+			handleWindowStateChanged(window()->windowState());
+		}
+		return base::EventFilterResult::Continue;
+	});
 
 	_activeState = parent()->isActiveWindow();
 	updateButtonsState();
-}
-
-void TitleControls::subscribeToStateChanges() {
-	const auto subscribe = [=] {
-		QObject::connect(
-			window()->windowHandle(),
-			&QWindow::windowStateChanged,
-			[=](Qt::WindowState state) { handleWindowStateChanged(state); });
-	};
-	if (window()->windowHandle()) {
-		subscribe();
-	} else {
-		const auto winIdEventFilter = std::make_shared<QObject*>(nullptr);
-		*winIdEventFilter = base::install_event_filter(
-			window(),
-			[=](not_null<QEvent*> e) {
-				if (!*winIdEventFilter || e->type() != QEvent::WinIdChange) {
-					return base::EventFilterResult::Continue;
-				}
-				subscribe();
-				base::take(*winIdEventFilter)->deleteLater();
-				return base::EventFilterResult::Continue;
-			});
-	}
 }
 
 void TitleControls::setResizeEnabled(bool enabled) {
@@ -279,18 +253,14 @@ void TitleControls::raise() {
 	_close->raise();
 }
 
-HitTestResult TitleControls::hitTest(QPoint point, int padding) const {
+HitTestResult TitleControls::hitTest(QPoint point) const {
 	const auto test = [&](const object_ptr<AbstractButton> &button) {
-		return button && button->geometry().marginsAdded(
-			{ 0, padding, 0, 0 }
+		return button && QRect(
+			button->mapTo(button->window(), QPoint()),
+			button->size()
 		).contains(point);
 	};
-	if (::Platform::IsWindows11OrGreater()
-		&& !_maximizedState
-		&& (point.y() < style::ConvertScale(
-			window()->windowHandle()->devicePixelRatio()))) {
-		return HitTestResult::Top;
-	} else if (test(_minimize)) {
+	if (test(_minimize)) {
 		return HitTestResult::Minimize;
 	} else if (test(_maximizeRestore)) {
 		return HitTestResult::MaximizeRestore;
@@ -343,21 +313,25 @@ AbstractButton *TitleControls::controlWidget(Control control) const {
 }
 
 void TitleControls::updateControlsPosition() {
-	auto controlsLayout = TitleControlsLayout();
+	auto controlsLayout = _layout->current();
 	auto &controlsLeft = controlsLayout.left;
 	auto &controlsRight = controlsLayout.right;
-	const auto moveFromTo = [&](auto &from, auto &to) {
-		for (const auto control : from) {
-			if (!ranges::contains(to, control)) {
-				to.push_back(control);
+	ranges::reverse(controlsRight);
+
+	if (_st->oneSideControls) {
+		const auto moveFromTo = [&](auto &from, auto &to) {
+			for (const auto control : from) {
+				if (!ranges::contains(to, control)) {
+					to.push_back(control);
+				}
 			}
+			from.clear();
+		};
+		if (controlsLayout.onLeft()) {
+			moveFromTo(controlsRight, controlsLeft);
+		} else {
+			moveFromTo(controlsLeft, controlsRight);
 		}
-		from.clear();
-	};
-	if (TitleControlsOnLeft(controlsLayout)) {
-		moveFromTo(controlsRight, controlsLeft);
-	} else {
-		moveFromTo(controlsLeft, controlsRight);
 	}
 
 	const auto controlPresent = [&](Control control) {
@@ -397,43 +371,39 @@ void TitleControls::updateControlsPosition() {
 		_close->hide();
 	}
 
-	updateControlsPositionBySide(controlsLeft, false);
-	updateControlsPositionBySide(controlsRight, true);
+	std::vector<Control> visitedControls;
+	const auto updateBySide = [&](
+			const std::vector<Control> &controls,
+			bool right) {
+		auto position = 0;
+		for (const auto &control : controls) {
+			const auto widget = controlWidget(control);
+			if (!widget || ranges::contains(visitedControls, control)) {
+				continue;
+			}
+
+			if (right) {
+				widget->moveToRight(position, 0);
+			} else {
+				widget->moveToLeft(position, 0);
+			}
+
+			position += widget->width();
+			visitedControls.push_back(control);
+		}
+	};
+
+	updateBySide(controlsLeft, false);
+	updateBySide(controlsRight, true);
 }
 
-void TitleControls::updateControlsPositionBySide(
-		const std::vector<Control> &controls,
-		bool right) {
-	auto preparedControls = right
-		? (ranges::views::reverse(controls) | ranges::to_vector)
-		: controls;
-
-	RemoveDuplicates(preparedControls);
-
-	auto position = 0;
-	for (const auto &control : preparedControls) {
-		const auto widget = controlWidget(control);
-		if (!widget) {
-			continue;
-		}
-
-		if (right) {
-			widget->moveToRight(position, 0);
-		} else {
-			widget->moveToLeft(position, 0);
-		}
-
-		position += widget->width();
-	}
-}
-
-void TitleControls::handleWindowStateChanged(Qt::WindowState state) {
-	if (state == Qt::WindowMinimized) {
+void TitleControls::handleWindowStateChanged(Qt::WindowStates state) {
+	if (state & Qt::WindowMinimized) {
 		return;
 	}
 
-	auto maximized = (state == Qt::WindowMaximized)
-		|| (state == Qt::WindowFullScreen);
+	auto maximized = (state & Qt::WindowMaximized)
+		|| (state & Qt::WindowFullScreen);
 	if (_maximizedState != maximized) {
 		_maximizedState = maximized;
 		updateButtonsState();
@@ -444,34 +414,13 @@ void TitleControls::updateButtonsState() {
 	_buttons->updateState(_activeState, _maximizedState, *_st);
 }
 
-namespace internal {
-namespace {
-
-auto &CachedTitleControlsLayout() {
-	using Layout = TitleControls::Layout;
-	static rpl::variable<Layout> Result = TitleControlsLayout();
-	return Result;
-};
-
-} // namespace
-
-void NotifyTitleControlsLayoutChanged(
-		const std::optional<TitleControls::Layout> &layout) {
-	CachedTitleControlsLayout() = layout ? *layout : TitleControlsLayout();
-}
-
-} // namespace internal
-
-TitleControls::Layout TitleControlsLayout() {
-	return internal::CachedTitleControlsLayout().current();
-}
-
-rpl::producer<TitleControls::Layout> TitleControlsLayoutValue() {
-	return internal::CachedTitleControlsLayout().value();
-}
-
-rpl::producer<TitleControls::Layout> TitleControlsLayoutChanged() {
-	return internal::CachedTitleControlsLayout().changes();
+std::shared_ptr<TitleControlsLayout> TitleControlsLayout::Instance() {
+	static std::weak_ptr<TitleControlsLayout> Weak;
+	auto result = Weak.lock();
+	if (!result) {
+		Weak = result = Create();
+	}
+	return result;
 }
 
 DefaultTitleWidget::DefaultTitleWidget(not_null<RpWidget*> parent)
@@ -483,6 +432,10 @@ DefaultTitleWidget::DefaultTitleWidget(not_null<RpWidget*> parent)
 
 not_null<const style::WindowTitle*> DefaultTitleWidget::st() const {
 	return _controls.st();
+}
+
+TitleControlsLayout &DefaultTitleWidget::layout() const {
+	return _controls.layout();
 }
 
 QRect DefaultTitleWidget::controlsGeometry() const {
@@ -597,10 +550,7 @@ std::unique_ptr<SeparateTitleControls> SetupSeparateTitleControls(
 
 	window->hitTestRequests(
 	) | rpl::start_with_next([=](not_null<HitTestRequest*> request) {
-		const auto origin = raw->wrap.pos();
-		const auto relative = request->point - origin;
-		const auto padding = window->additionalContentPadding();
-		const auto controlsResult = raw->controls.hitTest(relative, padding);
+		const auto controlsResult = raw->controls.hitTest(request->point);
 		if (controlsResult != HitTestResult::None) {
 			request->result = controlsResult;
 		}

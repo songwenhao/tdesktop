@@ -317,6 +317,36 @@ object_cast(I &&t)
   }
 }
 
+// this utility can be used to arrange for pointer-like const-ness
+// that is, a const shared_ptr<T> is still usable like (non-const) T*
+// in a way, any wrapper object T acts much like a smart-pointer,
+// but as the (code generated) methods are non-const, they are not usable
+// if the wrapper object is const (e.g. captured in a lambda)
+// this helper object/class can be wrapped around the wrapper (phew)
+// to absorb/shield the (outer) `const` (as it behaves as other smart pointers)
+template<typename T>
+class cs_ptr
+{
+  T t;
+
+public:
+  // rough check; T is expected to be a pointer wrapper
+  static_assert(sizeof(T) == sizeof(void *), "");
+
+  // if T not copy-able, argument may need to be move'd
+  cs_ptr(T _t) : t(std::move(_t)) {}
+
+  operator T() const & { return t; }
+  operator T() && { return std::move(t); }
+
+  T *get() const { return &t; }
+
+  // C++ sacrilege,
+  // but the const of pointer in T does not extend to pointee anyway
+  T *operator*() const { return const_cast<T *>(&t); }
+  T *operator->() const { return const_cast<T *>(&t); }
+};
+
 } // namespace gi
 
 #endif // GI_WRAP_HPP

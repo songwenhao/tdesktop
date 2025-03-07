@@ -19,6 +19,8 @@ struct GeneratorOptions
   bool dl;
   // use expected<> return iso exception throwing
   bool expected;
+  // generate const methods
+  bool const_method;
 };
 
 struct GeneratorContext

@@ -8,6 +8,10 @@
 
 #include "ui/style/style_core.h"
 
+namespace anim {
+enum class type : uchar;
+} // namespace anim
+
 namespace style {
 struct MenuSeparator;
 } // namespace style
@@ -25,7 +29,9 @@ public:
 		Fn<void()> handler;
 		const style::icon *icon;
 		const style::MenuSeparator *separatorSt = nullptr;
-		Fn<void(not_null<Ui::PopupMenu*>)> fillSubmenu;
+		FnMut<void(not_null<Ui::PopupMenu*>)> fillSubmenu;
+		Fn<bool()> triggerFilter;
+		rpl::producer<anim::type> hideRequests;
 		int addTopShift = 0;
 		bool isSeparator = false;
 		bool isAttention = false;

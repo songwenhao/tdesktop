@@ -97,7 +97,7 @@ RoundButton {
 	iconOver: icon;
 	iconPosition: point;
 
-	font: font;
+	style: TextStyle;
 
 	ripple: RippleAnimation;
 }
@@ -168,6 +168,7 @@ ScrollArea {
 	bgOver: color;
 	barBg: color;
 	barBgOver: color;
+	barHidden: bool;
 
 	round: pixels;
 
@@ -287,12 +288,13 @@ InputField {
 	borderRadius: pixels;
 	borderDenominator: int;
 
-	font: font;
+	style: TextStyle;
 	menu: PopupMenu;
 
 	width: pixels;
 	heightMin: pixels;
 	heightMax: pixels;
+	widthMin: pixels;
 }
 
 OutlineButton {
@@ -464,6 +466,8 @@ CallButton {
 	outerRadius: pixels;
 	outerBg: color;
 	label: FlatLabel;
+	cornerButtonPosition: point;
+	cornerButtonBorder: pixels;
 }
 
 InnerDropdown {
@@ -559,6 +563,7 @@ WindowTitle {
 	fg: color;
 	fgActive: color;
 	shadow: bool;
+	oneSideControls: bool;
 	style: TextStyle;
 	minimize: IconButton;
 	minimizeIconActive: icon;
@@ -614,13 +619,15 @@ Toast {
 }
 
 Table {
-	bg: color;
 	headerBg: color;
 	borderFg: color;
 	border: pixels;
 	radius: pixels;
 	labelMinWidth: pixels;
 	labelMaxWidth: double;
+	smallButton: RoundButton;
+	defaultLabel: FlatLabel;
+	defaultValue: FlatLabel;
 }
 
 defaultLabelSimple: LabelSimple {
@@ -637,6 +644,9 @@ defaultFlatLabel: FlatLabel {
 	style: defaultTextStyle;
 	palette: defaultTextPalette;
 }
+defaultSubTextLabel: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+}
 
 defaultLinkButton: LinkButton {
 	color: windowActiveTextFg;
@@ -651,16 +661,11 @@ defaultRippleAnimation: RippleAnimation {
 	hideDuration: 200;
 }
 
-defaultTable: Table {
-	bg: windowBg;
-	headerBg: windowBgOver;
-	borderFg: inputBorderFg;
-	border: 1px;
-	radius: 6px;
-	labelMaxWidth: 0.5;
+emptyRippleAnimation: RippleAnimation {
 }
 
-emptyRippleAnimation: RippleAnimation {
+defaultRippleAnimationBgOver: RippleAnimation(defaultRippleAnimation) {
+	color: windowBgOver;
 }
 
 buttonRadius: 4px;
@@ -683,7 +688,7 @@ defaultActiveButton: RoundButton {
 
 	iconPosition: point(0px, 0px);
 
-	font: semiboldFont;
+	style: semiboldTextStyle;
 
 	ripple: RippleAnimation(defaultRippleAnimation) {
 		color: activeButtonBgRipple;
@@ -701,6 +706,47 @@ defaultLightButton: RoundButton(defaultActiveButton) {
 	ripple: RippleAnimation(defaultRippleAnimation) {
 		color: lightButtonBgRipple;
 	}
+}
+
+defaultTableLabel: FlatLabel(defaultFlatLabel) {
+	textFg: windowBoldFg;
+	maxHeight: 24px;
+	style: TextStyle(semiboldTextStyle) {
+		font: font(12px semibold);
+	}
+}
+defaultTableValue: FlatLabel(defaultFlatLabel) {
+	maxHeight: 24px;
+	style: TextStyle(defaultTextStyle) {
+		font: font(12px);
+		linkUnderline: kLinkUnderlineNever;
+	}
+}
+defaultTableSmallButton: RoundButton(defaultActiveButton) {
+	textFg: windowActiveTextFg;
+	textFgOver: windowActiveTextFg;
+	textBg: lightButtonBgOver;
+	textBgOver: lightButtonBgOver;
+	width: -12px;
+	height: 18px;
+	radius: 9px;
+	textTop: 0px;
+	style: TextStyle(defaultTextStyle) {
+		font: font(12px);
+	}
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: lightButtonBgRipple;
+	}
+}
+defaultTable: Table {
+	headerBg: windowBgOver;
+	borderFg: inputBorderFg;
+	border: 1px;
+	radius: 6px;
+	labelMaxWidth: 0.5;
+	smallButton: defaultTableSmallButton;
+	defaultLabel: defaultTableLabel;
+	defaultValue: defaultTableValue;
 }
 
 defaultScrollArea: ScrollArea {
@@ -878,6 +924,10 @@ defaultPopupMenu: PopupMenu {
 	showDuration: 200;
 }
 
+boxTextStyle: TextStyle(defaultTextStyle) {
+	font: font(boxFontSize);
+}
+
 defaultInputField: InputField {
 	textBg: windowBg;
 	textBgActive: windowBg;
@@ -904,12 +954,14 @@ defaultInputField: InputField {
 	borderRadius: 0px;
 	borderDenominator: 1;
 
-	font: boxTextFont;
+	style: boxTextStyle;
 	menu: defaultPopupMenu;
 
 	heightMin: 55px;
 	heightMax: 148px;
+	widthMin: 64px;
 }
+defaultInputFieldLimit: defaultSubTextLabel;
 
 defaultIconButton: IconButton {
 	iconPosition: point(-1px, -1px);
@@ -951,7 +1003,7 @@ defaultMultiSelectSearchField: InputField(defaultInputField) {
 
 	heightMin: 32px;
 
-	font: normalFont;
+	style: defaultTextStyle;
 }
 
 boxFieldSearchIcon: icon {{ "box_search", menuIconFg, point(10px, 9px) }};
@@ -972,9 +1024,7 @@ defaultMultiSelectSearchCancel: CrossButton {
 
 	duration: 150;
 	loadingPeriod: 1000;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 defaultMultiSelect: MultiSelect {
 	bg: boxSearchBg;
@@ -1004,6 +1054,7 @@ defaultMultiSelect: MultiSelect {
 widgetFadeDuration: 200;
 
 SettingsSlider {
+	padding: pixels;
 	height: pixels;
 	barTop: pixels;
 	barSkip: pixels;
@@ -1025,6 +1076,7 @@ SettingsSlider {
 }
 
 defaultSettingsSlider: SettingsSlider {
+	padding: 0px;
 	height: 39px;
 	barTop: 5px;
 	barSkip: 3px;
@@ -1265,10 +1317,6 @@ defaultPeerListItem: PeerListItem {
 	statusFgActive: windowActiveTextFg;
 }
 
-boxTextStyle: TextStyle(defaultTextStyle) {
-	font: font(boxFontSize);
-}
-
 defaultPeerListAbout: FlatLabel(defaultFlatLabel) {
 	minWidth: 240px;
 	textFg: membersAboutLimitFg;
@@ -1325,9 +1373,7 @@ menuToggle: IconButton {
 
 	rippleAreaPosition: point(0px, 0px);
 	rippleAreaSize: 40px;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 
 backButtonIcon: icon {{ "box_button_back", menuIconFg }};
@@ -1341,9 +1387,7 @@ backButton: IconButton(defaultIconButton) {
 
 	rippleAreaPosition: point(0px, 0px);
 	rippleAreaSize: 40px;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 
 defaultSettingsToggle: Toggle(defaultToggle) {
@@ -1389,12 +1433,13 @@ defaultSideBarButton: SideBarButton {
 	}
 }
 
+defaultToastPalette: TextPalette(defaultTextPalette) {
+	linkFg: mediaviewTextLinkFg;
+	monoFg: mediaviewCaptionFg;
+}
 defaultToast: Toast {
 	style: defaultTextStyle;
-	palette: TextPalette(defaultTextPalette) {
-		linkFg: mediaviewTextLinkFg;
-		monoFg: mediaviewCaptionFg;
-	}
+	palette: defaultToastPalette;
 	padding: margins(19px, 13px, 19px, 12px);
 	margin: margins(13px, 13px, 13px, 13px);
 	maxWidth: 480px;
@@ -1432,6 +1477,7 @@ defaultWindowTitle: WindowTitle {
 		font: font(semibold 12px);
 	}
 	shadow: true;
+	oneSideControls: false;
 	minimize: IconButton(windowTitleButton) {
 		icon: icon {
 			{ windowTitleButtonSize, titleButtonBg },

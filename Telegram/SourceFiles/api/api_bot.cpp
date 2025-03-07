@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/url_auth_box.h"
 #include "boxes/peers/choose_peer_box.h"
 #include "lang/lang_keys.h"
+#include "chat_helpers/bot_command.h"
 #include "core/core_cloud_password.h"
 #include "core/click_handler_types.h"
 #include "data/data_changes.h"
@@ -27,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_components.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "payments/payments_checkout_process.h"
+#include "payments/payments_non_panel_process.h"
 #include "main/main_session.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
@@ -36,6 +38,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/toast/toast.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
+
+#include <QtGui/QGuiApplication>
+#include <QtGui/QClipboard>
 
 namespace Api {
 namespace {
@@ -126,11 +131,7 @@ void SendBotCallbackData(
 				UrlClickHandler::Open(link);
 				return;
 			}
-			const auto scoreLink = AppendShareGameScoreUrl(
-				session,
-				link,
-				item->fullId());
-			BotGameUrlClickHandler(bot, scoreLink).onClick({
+			BotGameUrlClickHandler(bot, link).onClick({
 				Qt::LeftButton,
 				QVariant::fromValue(ClickHandlerContext{
 					.itemId = item->fullId(),
@@ -335,7 +336,8 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 			Payments::Mode::Payment,
 			crl::guard(controller, [=](auto) {
 				controller->widget()->activate();
-			}));
+			}),
+			Payments::ProcessNonPanelPaymentFormFactory(controller, item));
 	} break;
 
 	case ButtonType::Url: {
@@ -490,20 +492,31 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 
 	case ButtonType::WebView: {
 		if (const auto bot = item->getMessageBot()) {
-			bot->session().attachWebView().request(
-				controller,
-				Api::SendAction(bot->owner().history(bot)),
-				bot,
-				{ .text = button->text, .url = button->data });
+			bot->session().attachWebView().open({
+				.bot = bot,
+				.context = { .controller = controller },
+				.button = { .text = button->text, .url = button->data },
+				.source = InlineBots::WebViewSourceButton{ .simple = false },
+			});
 		}
 	} break;
 
 	case ButtonType::SimpleWebView: {
 		if (const auto bot = item->getMessageBot()) {
-			bot->session().attachWebView().requestSimple(
-				controller,
-				bot,
-				{ .text = button->text, .url = button->data });
+			bot->session().attachWebView().open({
+				.bot = bot,
+				.context = { .controller = controller },
+				.button = { .text = button->text, .url = button->data },
+				.source = InlineBots::WebViewSourceButton{ .simple = true },
+			});
+		}
+	} break;
+
+	case ButtonType::CopyText: {
+		const auto text = QString::fromUtf8(button->data);
+		if (!text.isEmpty()) {
+			QGuiApplication::clipboard()->setText(text);
+			controller->showToast(tr::lng_text_copied(tr::now));
 		}
 	} break;
 	}

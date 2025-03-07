@@ -40,11 +40,11 @@
 
 namespace webrtc {
 
-rtc::scoped_refptr<AudioDeviceModule> CreateAudioDeviceModule(bool bypass_voice_processing) {
+webrtc::scoped_refptr<AudioDeviceModule> CreateAudioDeviceModule(bool bypass_voice_processing) {
     return rtc::make_ref_counted<webrtc::tgcalls_ios_adm::AudioDeviceModuleIOS>(bypass_voice_processing, false, 1);
 }
 
-rtc::scoped_refptr<AudioDeviceModule> AudioDeviceModule::Create(
+webrtc::scoped_refptr<AudioDeviceModule> AudioDeviceModule::Create(
     AudioLayer audio_layer,
     TaskQueueFactory* task_queue_factory) {
   RTC_DLOG(LS_INFO) << __FUNCTION__;
@@ -93,6 +93,10 @@ AudioDeviceModuleIOS::AudioDeviceModuleIOS(bool bypass_voice_processing, bool di
     audio_device_buffer_.reset(new webrtc::AudioDeviceBuffer(task_queue_factory_.get()));
     audio_device_.reset(new tgcalls_ios_adm::AudioDeviceIOS(bypass_voice_processing_, disable_recording_, numChannels_));
     RTC_CHECK(audio_device_);
+      
+      if (audio_device_) {
+          audio_device_->mutedSpeechDetectionChanged = [mutedSpeechDetectionChanged copy];
+      }
 
     this->AttachAudioBuffer();
 

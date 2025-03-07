@@ -23,6 +23,10 @@ class TableLayout : public RpWidget {
 public:
 	TableLayout(QWidget *parent, const style::Table &st = st::defaultTable);
 
+	[[nodiscard]] const style::Table &st() const {
+		return _st;
+	}
+
 	[[nodiscard]] int rowsCount() const {
 		return _rows.size();
 	}
@@ -81,6 +85,7 @@ private:
 	void childHeightUpdated(RpWidget *child);
 	void removeChild(RpWidget *child);
 	void updateRowGeometry(const Row &row, int width, int top) const;
+	void updateRowPosition(const Row &row, int width, int top) const;
 
 	const style::Table &_st;
 

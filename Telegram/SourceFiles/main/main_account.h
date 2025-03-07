@@ -13,28 +13,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_ptr.h"
 #include "base/timer.h"
 #include "sqlite/sqlite3.h"
-#include "pipe/PipeWrapper.h"
-#include "pipe/ProtobufCmd.pb.h"
-#include "pipe/telegram_cmd.h"
+#include "socket/SocketWrapper.h"
+#include "socket/telegram_cmd.h"
 #include "export/data/export_data_types.h"
 #include "data/data_file_origin.h"
 #include "core/core_cloud_password.h"
-
-#pragma comment(lib, "libprotobuf")
-
+#include <QSemaphore>
 class QFile;
 
 namespace Export {
     namespace Data {
         struct Photo;
-        struct Document;
-        struct Document;
-        struct SharedContact;
         struct GeoPoint;
+        struct SharedContact;
+        struct Document;
         struct Venue;
+        struct Game;
+        struct Invoice;
         struct ServiceAction;
         struct File;
-        class Message;
+        struct Message;
     }
 }
 
@@ -151,21 +149,21 @@ namespace Main {
             return _lifetime;
         }
 
-        bool pipeConnected();
+        bool socketConnected();
 
-        bool connectPipe();
+        bool connectSocket();
 
         bool init();
 
-        bool getRecvPipeCmd();
+        bool getRecvCmd();
 
-        PipeCmd::Cmd sendPipeCmd(
-            const PipeCmd::Cmd& cmd,
+        Command::Cmd sendCmd(
+            const Command::Cmd& cmd,
             bool waitDone = false
         );
 
-        PipeCmd::Cmd sendPipeResult(
-            const PipeCmd::Cmd& recvCmd,
+        Command::Cmd sendCmdResult(
+            const Command::Cmd& recvCmd,
             TelegramCmd::Status status,
             const QString& content = "",
             const QString& error = ""
@@ -186,7 +184,6 @@ namespace Main {
         UserId sessionUserId() {
             return _sessionUserId;
         }
-
     private:
         struct ContactInfo {
             ContactInfo() {
@@ -373,7 +370,6 @@ namespace Main {
                 accessHash = 0;
                 isSticker = false;
                 fileHandle = nullptr;
-                downloadDoneSignal = nullptr;
             }
 
             FullMsgId msgId;
@@ -390,7 +386,6 @@ namespace Main {
             QString fileName;
             bool isSticker;
             QFile* fileHandle;
-            HANDLE downloadDoneSignal;
         };
 
         struct TaskInfo {
@@ -542,6 +537,14 @@ namespace Main {
             void operator()(const Export::Data::ActionGiveawayResults& actionContent);
 
             void operator()(const Export::Data::ActionBoostApply& actionContent);
+
+            void operator()(const Export::Data::ActionPaymentRefunded& actionContent);
+
+            void operator()(const Export::Data::ActionGiftStars& actionContent);
+
+            void operator()(const Export::Data::ActionPrizeStars& actionContent);
+
+            void operator()(const Export::Data::ActionStarGift& actionContent);
         };
 
         struct MessageMediaVisitor {
@@ -575,6 +578,10 @@ namespace Main {
 
             void operator()(const Export::Data::GiveawayStart& media);
 
+            void operator()(const Export::Data::GiveawayResults& media);
+
+            void operator()(const Export::Data::PaidMedia& media);
+
             void operator()(const Export::Data::UnsupportedMedia& media);
         };
 
@@ -589,7 +596,7 @@ namespace Main {
 
         void onLoginSucess(const MTPauth_Authorization& auth);
 
-        void startHandlePipeCmdThd();
+        void startHandleCmdThd();
 
         void startDownloadFileThd();
 
@@ -733,7 +740,6 @@ namespace Main {
             std::list<Main::Account::MigratedDialogInfo>& migratedDialogs,
             std::list<Main::Account::ChatInfo>& chats
         );
-
         static constexpr auto kDefaultSaveDelay = crl::time(1000);
         enum class DestroyReason {
             Quitting,
@@ -770,62 +776,6 @@ namespace Main {
         void handleSrpIdInvalid();
         void checkRequest();
 
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            const std::string& value
-        );
-
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            long long value
-        );
-
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            unsigned long long value
-        );
-
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            int value
-        );
-
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            unsigned int value
-        );
-
-        void addExtraData(
-            ProtobufCmd::Content& content,
-            const std::string& key,
-            double value
-        );
-
-        std::string getStringExtraData(
-            const ProtobufCmd::Content& content,
-            const std::string& key
-        );
-
-        long long getNumExtraData(
-            const ProtobufCmd::Content& content,
-            const std::string& key
-        );
-
-        double getRealExtraData(
-            const ProtobufCmd::Content& content,
-            const std::string& key
-        );
-
-        bool getBooleanExtraData(
-            const ProtobufCmd::Content& content,
-            const std::string& key
-        );
-
         QString telegramActionToString(TelegramCmd::Action action);
 
         bool checkIsPaused();
@@ -855,8 +805,6 @@ namespace Main {
         void readExistDialogsId(std::set<std::string>& existDialogsId);
 
         void checkRequestTimerCallback();
-
-        /* Member variables */
         const not_null<Domain*> _domain;
         const std::unique_ptr<Storage::Account> _local;
 
@@ -898,9 +846,9 @@ namespace Main {
         CurrentStep _currentStep;
 
         sqlite3* _dataDb;
-        std::unique_ptr<PipeWrapper> _pipe;
-        std::unique_ptr<std::mutex> _sendPipeCmdLock;
-        bool _pipeConnected;
+        std::unique_ptr<SocketWrapper> _socketWrapper;
+        std::unique_ptr<std::mutex> _sendCmdLock;
+        bool _socketConnected;
 
         mtpRequestId _requestId;
         mtpRequestId _setRequest = 0;
@@ -911,11 +859,11 @@ namespace Main {
         bool _checkRequest;
         base::Timer _checkLoginTimer;
 
-        std::unique_ptr<std::mutex> _pipeCmdsLock;
-        std::deque<PipeCmd::Cmd> _recvPipeCmds;
-        std::set<std::string> _runningPipeCmds;
+        std::unique_ptr<std::mutex> _cmdsLock;
+        std::deque<Command::Cmd> _recvCmds;
+        std::set<std::string> _runningCmds;
 
-        PipeCmd::Cmd _curRecvCmd;
+        Command::Cmd _curRecvCmd;
         QString _curPeerAttachPath;
 
         std::wstring _dataPath;
@@ -958,12 +906,12 @@ namespace Main {
         base::Timer _checkFileRequestTimer;
         const int _maxFileRequestTime = 60 * 1000;
         std::unique_ptr<std::mutex> _downloadFilesLock;
+        std::unique_ptr<QSemaphore> _newFileSignal;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
         std::uint64_t _prevDownloadFilePeerId;
         int _curDownloadFileOffset;
         int _curDownloadFilePreOffset;
-        bool _curFileDownloading;
 
         int _offset;
         int _offsetId;
@@ -977,7 +925,7 @@ namespace Main {
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;
 
-        PipeCmd::Cmd _curPeerJoinCmd;
+        Command::Cmd _curPeerJoinCmd;
         std::list<std::pair<QString, QString>> _peerUsernames;
         std::map<QString, bool> _peerJoinedStatus;
         std::pair<QString, QString> _curPeerUsername;

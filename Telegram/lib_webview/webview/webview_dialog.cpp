@@ -13,6 +13,7 @@
 #include "ui/widgets/buttons.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/integration.h"
+#include "ui/qt_object_factory.h"
 #include "base/invoke_queued.h"
 #include "base/unique_qptr.h"
 #include "base/integration.h"
@@ -70,6 +71,10 @@ PopupResult ShowBlockingPopup(PopupArgs &&args) {
 			.parent = args.parent,
 		});
 		const auto raw = widget.get();
+
+		raw->setWindowFlag(Qt::WindowStaysOnTopHint, false);
+		raw->setAttribute(Qt::WA_DeleteOnClose, false);
+		raw->setAttribute(Qt::WA_ShowModal, true);
 
 		const auto titleHeight = args.title.isEmpty()
 			? st::separatePanelNoTitleHeight
@@ -200,10 +205,6 @@ PopupResult ShowBlockingPopup(PopupArgs &&args) {
 				input->setFocus();
 			}
 		}, container->lifetime());
-
-		raw->setWindowFlag(Qt::WindowStaysOnTopHint, false);
-		raw->setAttribute(Qt::WA_DeleteOnClose, false);
-		raw->setAttribute(Qt::WA_ShowModal, true);
 
 		raw->closeRequests() | rpl::start_with_next([=] {
 			raw->hideGetDuration();

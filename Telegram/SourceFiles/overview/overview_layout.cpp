@@ -8,11 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "overview/overview_layout.h"
 
 #include "overview/overview_layout_delegate.h"
+#include "core/ui_integration.h" // Core::MarkedTextContext.
 #include "data/data_document.h"
 #include "data/data_document_resolver.h"
 #include "data/data_session.h"
 #include "data/data_web_page.h"
-#include "data/data_media_types.h"
 #include "data/data_peer.h"
 #include "data/data_photo_media.h"
 #include "data/data_document_media.h"
@@ -20,9 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/confirm_box.h"
 #include "lang/lang_keys.h"
 #include "layout/layout_selection.h"
-#include "mainwidget.h"
 #include "storage/file_upload.h"
-#include "mainwindow.h"
 #include "main/main_session.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
@@ -488,6 +486,7 @@ Video::Video(
 	MediaOptions options)
 : RadialProgressItem(delegate, parent)
 , _data(video)
+, _videoCover(LookupVideoCover(video, parent))
 , _duration(Ui::FormatDurationText(_data->duration() / 1000))
 , _spoiler(options.spoiler ? std::make_unique<Ui::SpoilerAnimation>([=] {
 	delegate->repaintItem(this);
@@ -495,7 +494,13 @@ Video::Video(
 , _pinned(options.pinned)
 , _story(options.story) {
 	setDocumentLinks(_data);
-	_data->loadThumbnail(parent->fullId());
+	if (!_videoCover) {
+		_data->loadThumbnail(parent->fullId());
+	} else if (_videoCover->inlineThumbnailBytes().isEmpty()
+		&& (_videoCover->hasExact(Data::PhotoSize::Small)
+			|| _videoCover->hasExact(Data::PhotoSize::Thumbnail))) {
+		_videoCover->load(Data::PhotoSize::Small, parent->fullId());
+	}
 }
 
 Video::~Video() = default;
@@ -518,9 +523,19 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 	ensureDataMediaCreated();
 
 	const auto selected = (selection == FullSelection);
-	const auto blurred = _dataMedia->thumbnailInline();
-	const auto thumbnail = _spoiler ? nullptr : _dataMedia->thumbnail();
-	const auto good = _spoiler ? nullptr : _dataMedia->goodThumbnail();
+	const auto blurred = _videoCover
+		? _videoCoverMedia->thumbnailInline()
+		: _dataMedia->thumbnailInline();
+	const auto thumbnail = _spoiler
+		? nullptr
+		: _videoCover
+		? _videoCoverMedia->image(Data::PhotoSize::Small)
+		: _dataMedia->thumbnail();
+	const auto good = _spoiler
+		? nullptr
+		: _videoCover
+		? _videoCoverMedia->image(Data::PhotoSize::Large)
+		: _dataMedia->goodThumbnail();
 
 	bool loaded = dataLoaded(), displayLoading = _data->displayLoading();
 	if (displayLoading) {
@@ -628,12 +643,17 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 }
 
 void Video::ensureDataMediaCreated() const {
-	if (_dataMedia) {
+	if (_dataMedia && (!_videoCover || _videoCoverMedia)) {
 		return;
 	}
 	_dataMedia = _data->createMediaView();
-	_dataMedia->goodThumbnailWanted();
-	_dataMedia->thumbnailWanted(parent()->fullId());
+	if (_videoCover) {
+		_videoCoverMedia = _videoCover->createMediaView();
+		_videoCover->load(Data::PhotoSize::Large, parent()->fullId());
+	} else {
+		_dataMedia->goodThumbnailWanted();
+		_dataMedia->thumbnailWanted(parent()->fullId());
+	}
 	delegate()->registerHeavyItem(this);
 }
 
@@ -867,6 +887,7 @@ void Voice::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 			p.drawTextLeft(nameleft, statustop, _width, _status.text(), statusw);
 			unreadx += statusw;
 		}
+		auto captionLeft = unreadx + st::mediaUnreadSkip;
 		if (parent()->hasUnreadMediaFlag() && unreadx + st::mediaUnreadSkip + st::mediaUnreadSize <= _width) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(selected ? st::msgFileInBgSelected : st::msgFileInBg);
@@ -875,6 +896,22 @@ void Voice::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 				PainterHighQualityEnabler hq(p);
 				p.drawEllipse(style::rtlrect(unreadx + st::mediaUnreadSkip, statustop + st::mediaUnreadTop, st::mediaUnreadSize, st::mediaUnreadSize, _width));
 			}
+			captionLeft += st::mediaUnreadSkip + st::mediaUnreadSize;
+		}
+		if (!_caption.isEmpty()) {
+			p.setPen(st::historyFileNameInFg);
+			const auto w = _width - captionLeft - st::defaultScrollArea.width;
+			_caption.draw(p, Ui::Text::PaintContext{
+				.position = QPoint(captionLeft, statustop),
+				.availableWidth = w,
+				.spoiler = Ui::Text::DefaultSpoilerCache(),
+				.paused = context
+					? context->paused
+					: On(PowerSaving::kEmojiChat),
+				.pausedEmoji = On(PowerSaving::kEmojiChat),
+				.pausedSpoiler = On(PowerSaving::kChatSpoiler),
+				.elisionLines = 1,
+			});
 		}
 	}
 
@@ -981,23 +1018,19 @@ const style::RoundCheckbox &Voice::checkboxStyle() const {
 
 void Voice::updateName() {
 	if (const auto forwarded = parent()->Get<HistoryMessageForwarded>()) {
-		if (parent()->fromOriginal()->isChannel()) {
-			_name.setText(
-				st::semiboldTextStyle,
-				tr::lng_forwarded_channel(
-					tr::now,
-					lt_channel,
-					parent()->fromOriginal()->name()),
-				Ui::NameTextOptions());
-		} else {
-			_name.setText(
-				st::semiboldTextStyle,
-				tr::lng_forwarded(
-					tr::now,
-					lt_user,
-					parent()->fromOriginal()->name()),
-				Ui::NameTextOptions());
-		}
+		const auto info = parent()->originalHiddenSenderInfo();
+		const auto name = info
+			? tr::lng_forwarded(tr::now, lt_user, info->nameText().toString())
+			: parent()->fromOriginal()->isChannel()
+			? tr::lng_forwarded_channel(
+				tr::now,
+				lt_channel,
+				parent()->fromOriginal()->name())
+			: tr::lng_forwarded(
+				tr::now,
+				lt_user,
+				parent()->fromOriginal()->name());
+		_name.setText(st::semiboldTextStyle, name, Ui::NameTextOptions());
 	} else {
 		_name.setText(
 			st::semiboldTextStyle,
@@ -1005,6 +1038,14 @@ void Voice::updateName() {
 			Ui::NameTextOptions());
 	}
 	_nameVersion = parent()->fromOriginal()->nameVersion();
+	_caption.setMarkedText(
+		st::defaultTextStyle,
+		parent()->originalText(),
+		Ui::DialogTextOptions(),
+		Core::MarkedTextContext{
+			.session = &parent()->history()->session(),
+			.customEmojiRepaint = [=] { delegate()->repaintItem(this); },
+		});
 }
 
 bool Voice::updateStatusText() {
@@ -1379,7 +1420,9 @@ void Document::drawCornerDownload(QPainter &p, bool selected, const PaintContext
 	icon->paintInCenter(p, inner);
 	if (_radial && _radial->animating()) {
 		const auto rinner = inner.marginsRemoved(QMargins(st::historyAudioRadialLine, st::historyAudioRadialLine, st::historyAudioRadialLine, st::historyAudioRadialLine));
-		auto fg = selected ? st::historyFileThumbRadialFgSelected : st::historyFileThumbRadialFg;
+		const auto &fg = selected
+			? st::historyFileInIconFgSelected
+			: st::historyFileInIconFg;
 		_radial->draw(p, rinner, st::historyAudioRadialLine, fg);
 	}
 }
@@ -1616,6 +1659,17 @@ Link::Link(
 			mainUrl = url;
 		}
 		_links.push_back(LinkEntry(url, entityText));
+	}
+	if (_links.empty()) {
+		if (const auto media = parent->media()) {
+			if (const auto webpage = media->webpage()) {
+				if (!webpage->displayUrl.isEmpty()
+					&& !webpage->url.isEmpty()) {
+					_links.push_back(
+						LinkEntry(webpage->displayUrl, webpage->url));
+				}
+			}
+		}
 	}
 	while (lnk > 0 && till > from) {
 		--lnk;

@@ -214,7 +214,7 @@ location_session_start (LocationSession *loc_session)
       return FALSE;
     }
 
-  g_variant_get (ret, "(o)", &client_id);
+  g_variant_get (ret, "(&o)", &client_id);
 
   loc_session->client = geoclue_client_proxy_new_sync (system_bus,
                                                        G_DBUS_PROXY_FLAGS_NONE,
@@ -515,7 +515,7 @@ handle_start_in_thread_func (GTask *task,
       const char *body;
 
       impl_request = xdp_dbus_impl_request_proxy_new_sync (g_dbus_proxy_get_connection (G_DBUS_PROXY (access_impl)),
-                                                           G_DBUS_PROXY_FLAGS_NONE,
+                                                           G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
                                                            g_dbus_proxy_get_name (G_DBUS_PROXY (access_impl)),
                                                            request->id,
                                                            NULL, NULL);

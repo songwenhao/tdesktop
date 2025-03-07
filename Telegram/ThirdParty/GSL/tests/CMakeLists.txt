@@ -1,7 +1,12 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.14...3.16)
 
-project(GSLTests CXX)
-enable_testing()  # again, for support standalone testing
+project(GSLTests LANGUAGES CXX)
+
+set(GSL_CXX_STANDARD "14" CACHE STRING "Use c++ standard")
+
+set(CMAKE_CXX_STANDARD ${GSL_CXX_STANDARD})
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FindPkgConfig)
 include(ExternalProject)
@@ -52,16 +57,21 @@ if (NOT GTestMain_FOUND)
 endif()
 
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-    # CMake has been started independently in this directory with tests. Do
-    # import the globally installed Guidelines Support Library and test it
-    # instead of the current version from the include/ folder.
-    find_package(Microsoft.GSL REQUIRED)
+    find_package(Microsoft.GSL CONFIG REQUIRED)
+    enable_testing()
+
+    if (NOT DEFINED Microsoft.GSL_VERSION)
+        message(FATAL_ERROR "Microsoft.GSL_VERSION not defined!")
+    endif()
+
+    message(STATUS "Microsoft.GSL_VERSION = ${Microsoft.GSL_VERSION}")
 endif()
 
 if (MSVC AND (GSL_CXX_STANDARD GREATER_EQUAL 17))
     set(GSL_CPLUSPLUS_OPT -Zc:__cplusplus -permissive-)
 endif()
 
+include(CheckCXXCompilerFlag)
 # this interface adds compile options to how the tests are run
 # please try to keep entries ordered =)
 add_library(gsl_tests_config INTERFACE)
@@ -88,6 +98,7 @@ if(MSVC) # MSVC or simulating MSVC
         >
         $<$<CXX_COMPILER_ID:Clang>:
           -Weverything
+          -Wfloat-equal
           -Wno-c++98-compat
           -Wno-c++98-compat-pedantic
           -Wno-covered-switch-default # GTest
@@ -102,9 +113,16 @@ if(MSVC) # MSVC or simulating MSVC
           $<$<EQUAL:${GSL_CXX_STANDARD},14>: # no support for [[maybe_unused]]
             -Wno-unused-member-function
             -Wno-unused-variable
+            $<$<VERSION_EQUAL:$<CXX_COMPILER_VERSION>,15.0.1>:
+              -Wno-deprecated # False positive in MSVC Clang 15.0.1 raises a C++17 warning
+            >
           >
         >
     )
+    check_cxx_compiler_flag("-Wno-reserved-identifier" WARN_RESERVED_ID)
+    if (WARN_RESERVED_ID)
+      target_compile_options(gsl_tests_config INTERFACE "-Wno-reserved-identifier")
+    endif()
 else()
     target_compile_options(gsl_tests_config INTERFACE
         -fno-strict-aliasing
@@ -117,6 +135,7 @@ else()
         -Wpedantic
         -Wshadow
         -Wsign-conversion
+        -Wfloat-equal
         -Wno-deprecated-declarations # Allow tests for [[deprecated]] elements
         $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:
           -Weverything
@@ -127,6 +146,7 @@ else()
           -Wno-global-constructors # GTest
           -Wno-missing-prototypes
           -Wno-padded
+          -Wno-switch-default
           -Wno-unknown-attributes
           -Wno-used-but-marked-unused # GTest EXPECT_DEATH
           -Wno-weak-vtables
@@ -167,6 +187,11 @@ else()
         >
     )
 endif(MSVC)
+check_cxx_compiler_flag("-Wno-unsafe-buffer-usage" WARN_UNSAFE_BUFFER)
+if (WARN_UNSAFE_BUFFER)
+  # This test uses very greedy heuristics such as "no pointer arithmetic on raw buffer"
+  target_compile_options(gsl_tests_config INTERFACE "-Wno-unsafe-buffer-usage")
+endif()
 
 # for tests to find the gtest header
 target_include_directories(gsl_tests_config SYSTEM INTERFACE
@@ -184,7 +209,7 @@ add_executable(gsl_tests
     span_ext_tests.cpp
     span_tests.cpp
     strict_notnull_tests.cpp
-    string_span_tests.cpp
+    
     utils_tests.cpp
 )
 
@@ -222,12 +247,22 @@ if(MSVC) # MSVC or simulating MSVC
         >
         $<$<CXX_COMPILER_ID:Clang>:
           -Weverything
+          -Wfloat-equal
           -Wno-c++98-compat
           -Wno-c++98-compat-pedantic
           -Wno-missing-prototypes
           -Wno-unknown-attributes
+          $<$<EQUAL:${GSL_CXX_STANDARD},14>:
+            $<$<VERSION_EQUAL:$<CXX_COMPILER_VERSION>,15.0.1>: 
+              -Wno-deprecated # False positive in MSVC Clang 15.0.1 raises a C++17 warning
+            >
+          >
         >
     )
+    check_cxx_compiler_flag("-Wno-reserved-identifier" WARN_RESERVED_ID)
+    if (WARN_RESERVED_ID)
+      target_compile_options(gsl_tests_config_noexcept INTERFACE "-Wno-reserved-identifier")
+    endif()
 else()
     target_compile_options(gsl_tests_config_noexcept INTERFACE
         -fno-exceptions
@@ -241,6 +276,7 @@ else()
         -Wpedantic
         -Wshadow
         -Wsign-conversion
+        -Wfloat-equal
         $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:
           -Weverything
           -Wno-c++98-compat
@@ -267,6 +303,11 @@ else()
         >
     )
 endif(MSVC)
+check_cxx_compiler_flag("-Wno-unsafe-buffer-usage" WARN_UNSAFE_BUFFER)
+if (WARN_UNSAFE_BUFFER)
+  # This test uses very greedy heuristics such as "no pointer arithmetic on raw buffer"
+  target_compile_options(gsl_tests_config_noexcept INTERFACE "-Wno-unsafe-buffer-usage")
+endif()
 
 add_executable(gsl_noexcept_tests no_exception_ensure_tests.cpp)
 target_link_libraries(gsl_noexcept_tests

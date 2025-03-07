@@ -12,13 +12,37 @@
 #include <modules/video_capture/video_capture_factory.h>
 #include <modules/audio_device/include/audio_device_factory.h>
 
+#ifdef WEBRTC_LINUX // Breaks compilation on MSVC because of ERROR define.
+#include <modules/video_capture/video_capture_options.h>
+#endif // WEBRTC_LINUX
+
 namespace Webrtc::details {
 namespace {
 
+#ifdef WEBRTC_LINUX
+[[nodiscard]] webrtc::VideoCaptureOptions GetVideoCaptureOptions() {
+	auto result = webrtc::VideoCaptureOptions();
+	result.set_allow_v4l2(true);
+#ifdef WEBRTC_USE_PIPEWIRE
+	//result.set_allow_pipewire(true);
+	// This requires a call to result.Init(callback)
+	// and waiting for the callback to finish.
+#endif
+	return result;
+}
+#endif
+
 [[nodiscard]] std::vector<DeviceInfo> GetDevices() {
+#ifdef WEBRTC_LINUX
+	auto options = GetVideoCaptureOptions();
+	const auto info = std::unique_ptr<
+		webrtc::VideoCaptureModule::DeviceInfo
+	>(webrtc::VideoCaptureFactory::CreateDeviceInfo(&options));
+#else // WEBRTC_LINUX
 	const auto info = std::unique_ptr<
 		webrtc::VideoCaptureModule::DeviceInfo
 	>(webrtc::VideoCaptureFactory::CreateDeviceInfo());
+#endif
 
 	auto result = std::vector<DeviceInfo>();
 	if (!info) {
@@ -59,8 +83,7 @@ EnvironmentVideoCapture::~EnvironmentVideoCapture() {
 QString EnvironmentVideoCapture::defaultId(DeviceType type) {
 	Expects(type == DeviceType::Camera);
 
-	const auto devices = GetDevices();
-	return devices.empty() ? QString() : devices.front().id;
+	return DefaultId();
 }
 
 DeviceInfo EnvironmentVideoCapture::device(
@@ -100,6 +123,11 @@ void EnvironmentVideoCapture::defaultIdRequested(DeviceType type) {
 
 void EnvironmentVideoCapture::devicesRequested(DeviceType type) {
 	_delegate->devicesForceRefresh(type);
+}
+
+QString EnvironmentVideoCapture::DefaultId() {
+	const auto devices = GetDevices();
+	return devices.empty() ? QString() : devices.front().id;
 }
 
 } // namespace Webrtc::details

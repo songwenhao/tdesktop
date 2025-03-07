@@ -505,8 +505,9 @@ find_recommended_choices (const char *scheme,
                           GStrv *choices,
                           guint *choices_len)
 {
-  GAppInfo *info;
-  GList *infos, *l;
+  g_autoptr(GAppInfo) info = NULL;
+  g_autolist(GAppInfo) infos = NULL;
+  GList *l;
   guint n_choices = 0;
   GStrv result = NULL;
   int i;
@@ -533,11 +534,9 @@ find_recommended_choices (const char *scheme,
   result = g_new (char *, n_choices + 1);
   for (l = infos, i = 0; l; l = l->next)
     {
-      info = l->data;
-      result[i++] = get_app_id (info);
+      result[i++] = get_app_id (G_APP_INFO (l->data));
     }
   result[i] = NULL;
-  g_list_free_full (infos, g_object_unref);
 
   {
     g_autofree char *a = g_strjoinv (", ", result);
@@ -685,12 +684,15 @@ handle_open_in_thread_func (GTask *task,
 
       path = xdp_app_info_get_path_for_fd (request->app_info, fd, 0, NULL, &fd_is_writable, &local_error);
 
-      host_path = get_real_path_for_doc_path (path, request->app_info);
-      if (host_path)
+      if (path != NULL)
         {
-          g_debug ("OpenFile: translating path value '%s' to host path '%s'", path, host_path);
-          g_clear_pointer (&path, g_free);
-          path = g_steal_pointer (&host_path);
+          host_path = get_real_path_for_doc_path (path, request->app_info);
+          if (host_path)
+            {
+              g_debug ("OpenFile: translating path value '%s' to host path '%s'", path, host_path);
+              g_clear_pointer (&path, g_free);
+              path = g_steal_pointer (&host_path);
+            }
         }
 
       if (path == NULL ||
@@ -898,7 +900,7 @@ handle_open_in_thread_func (GTask *task,
 
   impl_request =
     xdp_dbus_impl_request_proxy_new_sync (g_dbus_proxy_get_connection (G_DBUS_PROXY (impl)),
-                                          G_DBUS_PROXY_FLAGS_NONE,
+                                          G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
                                           g_dbus_proxy_get_name (G_DBUS_PROXY (impl)),
                                           request->id,
                                           NULL, NULL);

@@ -44,19 +44,15 @@ HRESULT(__stdcall *GetScaleFactorForMonitor)(
 
 } // namespace
 
-namespace internal {
-
-TitleControls::Layout TitleControlsLayout() {
-	return TitleControls::Layout{
+std::shared_ptr<TitleControlsLayout> TitleControlsLayout::Create() {
+	return std::shared_ptr<TitleControlsLayout>(new TitleControlsLayout({
 		.right = {
 			TitleControls::Control::Minimize,
 			TitleControls::Control::Maximize,
 			TitleControls::Control::Close,
 		}
-	};
+	}));
 }
-
-} // namespace internal
 
 struct TitleWidget::PaddingHelper {
 	explicit PaddingHelper(QWidget *parent) : controlsParent(parent) {
@@ -88,7 +84,7 @@ void TitleWidget::initInWindow(not_null<RpWindow*> window) {
 	) | rpl::filter([=](not_null<HitTestRequest*> request) {
 		return !isHidden() && geometry().contains(request->point);
 	}) | rpl::start_with_next([=](not_null<HitTestRequest*> request) {
-		request->result = hitTest(request->point, request->result);
+		request->result = hitTest(request->point);
 	}, lifetime());
 
 	SetupSemiNativeSystemButtons(&_controls, window, lifetime(), [=] {
@@ -152,20 +148,10 @@ void TitleWidget::resizeEvent(QResizeEvent *e) {
 	}
 }
 
-HitTestResult TitleWidget::hitTest(
-		QPoint point,
-		HitTestResult oldResult) const {
-	const auto origin = _paddingHelper
-		? _paddingHelper->controlsParent.pos()
-		: QPoint();
-	const auto padding = _paddingHelper
-		? _paddingHelper->padding.current()
-		: 0;
-	const auto controlsResult = _controls.hitTest(point - origin, padding);
+HitTestResult TitleWidget::hitTest(QPoint point) const {
+	const auto controlsResult = _controls.hitTest(point);
 	return (controlsResult != HitTestResult::None)
 		? controlsResult
-		: (oldResult != HitTestResult::Client)
-		? oldResult
 		: HitTestResult::Caption;
 }
 
@@ -176,13 +162,9 @@ bool TitleWidget::additionalPaddingRequired() const {
 void TitleWidget::refreshAdditionalPaddings() {
 	if (!additionalPaddingRequired()) {
 		return;
+	} else if (const auto handle = GetCurrentHandle(this)) {
+		refreshAdditionalPaddings(handle);
 	}
-	const auto handle = GetWindowHandle(this);
-	if (!handle) {
-		LOG(("System Error: GetWindowHandle failed."));
-		return;
-	}
-	refreshAdditionalPaddings(handle);
 }
 
 void TitleWidget::refreshAdditionalPaddings(HWND handle) {

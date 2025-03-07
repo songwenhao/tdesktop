@@ -11,6 +11,13 @@ GLib:record:Error
 GLib:function:g_assert_warning
 GLib:function:g_slice_.et_config
 GLib:function:g_variant_get_gtype
+# GVariantIter apparently represents 2 distinct types;
+# + a C-boxed type (used with _init)
+# + a heap-based behaving like GBoxed (with _copy and _free)
+# however, annotations do not cover/mention anything of the latter
+# so drop those parts here
+GLib:method:g_variant_iter_new
+GLib:method:g_variant_iter_copy
 # too tricky with generic signature
 GLib:method:g_source_set_callback.*
 # annotation problem

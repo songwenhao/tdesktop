@@ -1426,6 +1426,11 @@ public:
       nsh << "#define GI_EXPECTED 1" << std::endl;
       nsh << "#endif" << std::endl;
     }
+    if (ctx.options.const_method) {
+      nsh << "#ifndef GI_CONST_METHOD" << std::endl;
+      nsh << "#define GI_CONST_METHOD 1" << std::endl;
+      nsh << "#endif" << std::endl;
+    }
     nsh << make_include("gi/gi.hpp", false) << std::endl;
     nsh << std::endl;
     // include gi deps

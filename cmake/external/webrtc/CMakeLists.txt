@@ -20,6 +20,7 @@ target_compile_definitions(external_webrtc
 INTERFACE
     WEBRTC_ENABLE_PROTOBUF=0
     WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE
+    RTC_ENABLE_H265
     RTC_ENABLE_VP9
     HAVE_SCTP
     WEBRTC_USE_H264
@@ -38,6 +39,7 @@ if (WIN32)
     target_compile_definitions(external_webrtc
     INTERFACE
         WEBRTC_WIN
+        RTC_ENABLE_WIN_WGC
     )
 else()
     set(webrtc_lib_prefix lib)
@@ -63,7 +65,7 @@ else()
     )
 endif()
 
-if (NOT EXISTS ${libs_loc}/tg_owt/out/Debug/${webrtc_lib_prefix}tg_owt${webrtc_lib_suffix})
+if (NOT WIN32 AND NOT EXISTS ${libs_loc}/tg_owt/out/Debug/${webrtc_lib_prefix}tg_owt${webrtc_lib_suffix})
     set(webrtc_build_loc ${libs_loc}/tg_owt/out/Release)
     target_compile_definitions(external_webrtc INTERFACE $<$<CONFIG:Debug>:NDEBUG>)
 endif()
@@ -96,6 +98,8 @@ INTERFACE
     $<LINK_ONLY:desktop-app::external_openssl>
     $<LINK_ONLY:desktop-app::external_jpeg>
     $<TARGET_FILE:desktop-app::external_jpeg>
+    $<LINK_ONLY:desktop-app::external_openh264>
+    $<TARGET_FILE:desktop-app::external_openh264>
     $<LINK_ONLY:desktop-app::external_opus>
     $<TARGET_FILE:desktop-app::external_opus>
     $<LINK_ONLY:desktop-app::external_vpx>

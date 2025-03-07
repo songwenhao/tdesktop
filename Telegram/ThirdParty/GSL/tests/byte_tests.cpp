@@ -37,9 +37,6 @@ TEST(byte_tests, construction)
         EXPECT_TRUE(static_cast<unsigned char>(b) == 4);
     }
 
-    // clang-format off
-    GSL_SUPPRESS(es.49)
-    // clang-format on
     {
         const byte b = byte(12);
         EXPECT_TRUE(static_cast<unsigned char>(b) == 12);
@@ -60,6 +57,12 @@ TEST(byte_tests, construction)
         const byte b{14};
         EXPECT_TRUE(static_cast<unsigned char>(b) == 14);
     }
+#endif
+
+#ifdef CONFIRM_COMPILATION_ERRORS
+    to_byte(char{});
+    to_byte(3);
+    to_byte(3u);
 #endif
 }
 

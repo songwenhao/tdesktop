@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: 2010, 2023 Johannes Obermayr <johannesobermayr@gmx.de>
 # Thomas Diehl <thd@kde.org>, 2002, 2003, 2004, 2005.
 # Stefan Winter <swinter@kde.org>, 2004.
 # Thomas Fischer <thomas.fischer@t-fischer.net>, 2004.
@@ -6,7 +7,6 @@
 # Thomas Reitelbach <tr@erdfunkstelle.de>, 2005, 2006, 2007, 2008, 2009.
 # Burkhard Lück <lueck@hube-lueck.de>, 2006, 2007, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2017, 2018, 2019, 2020, 2021.
 # Frederik Schwarzer <schwarzer@kde.org>, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2015, 2016, 2022.
-# Johannes Obermayr <johannesobermayr@gmx.de>, 2010.
 # Panagiotis Papadopoulos <pano_90@gmx.net>, 2010.
 # Rolf Eike Beer <kde@opensource.sf-tec.de>, 2012.
 # Frank Steinmetzger <dev-kde@felsenfleischer.de>, 2022.
@@ -23,7 +23,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Lokalize 22.12.0\n"
+"X-Generator: Lokalize 23.08.4\n"
 "X-Qt-Contexts: true\n"
 
 #: lib/io/kfilesystemtype.cpp:243
@@ -82,103 +82,103 @@ msgstr ""
 "Bitte sehen Sie in der Dokumentation oder im Quellcode\n"
 "nach den Lizenzbedingungen.\n"
 
-#: lib/kaboutdata.cpp:273
+#: lib/kaboutdata.cpp:277
 #, qt-format
 msgctxt "KAboutLicense|"
 msgid "This program is distributed under the terms of the %1."
 msgstr "Dieses Programm wird unter den Bedingungen der %1 veröffentlicht."
 
-#: lib/kaboutdata.cpp:317
+#: lib/kaboutdata.cpp:321
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "GPL v2"
 msgstr "GPL v2"
 
-#: lib/kaboutdata.cpp:318
+#: lib/kaboutdata.cpp:322
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 2"
 msgstr "GNU General Public License Version 2"
 
-#: lib/kaboutdata.cpp:321
+#: lib/kaboutdata.cpp:325
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v2"
 msgstr "LGPL v2"
 
-#: lib/kaboutdata.cpp:322
+#: lib/kaboutdata.cpp:326
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2"
 msgstr "GNU Lesser General Public License Version 2"
 
-#: lib/kaboutdata.cpp:325
-msgctxt "KAboutLicense|@item license (short name)"
-msgid "BSD License"
-msgstr "BSD-Lizenz"
-
-#: lib/kaboutdata.cpp:326
-msgctxt "KAboutLicense|@item license"
-msgid "BSD License"
-msgstr "BSD-Lizenz"
-
 #: lib/kaboutdata.cpp:329
 msgctxt "KAboutLicense|@item license (short name)"
-msgid "Artistic License"
-msgstr "Artistic License"
+msgid "BSD License"
+msgstr "BSD-Lizenz"
 
 #: lib/kaboutdata.cpp:330
 msgctxt "KAboutLicense|@item license"
+msgid "BSD License"
+msgstr "BSD-Lizenz"
+
+#: lib/kaboutdata.cpp:333
+msgctxt "KAboutLicense|@item license (short name)"
 msgid "Artistic License"
 msgstr "Artistic License"
 
-#: lib/kaboutdata.cpp:333
+#: lib/kaboutdata.cpp:334
+msgctxt "KAboutLicense|@item license"
+msgid "Artistic License"
+msgstr "Artistic License"
+
+#: lib/kaboutdata.cpp:337
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "QPL v1.0"
 msgstr "QPL v1.0"
 
-#: lib/kaboutdata.cpp:334
+#: lib/kaboutdata.cpp:338
 msgctxt "KAboutLicense|@item license"
 msgid "Q Public License"
 msgstr "Q Public License"
 
-#: lib/kaboutdata.cpp:337
+#: lib/kaboutdata.cpp:341
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "GPL v3"
 msgstr "GPL v3"
 
-#: lib/kaboutdata.cpp:338
+#: lib/kaboutdata.cpp:342
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 3"
 msgstr "GNU General Public License Version 3"
 
-#: lib/kaboutdata.cpp:341
+#: lib/kaboutdata.cpp:345
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v3"
 msgstr "LGPL v3"
 
-#: lib/kaboutdata.cpp:342
+#: lib/kaboutdata.cpp:346
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 3"
 msgstr "GNU Lesser General Public License Version 3"
 
-#: lib/kaboutdata.cpp:345
+#: lib/kaboutdata.cpp:349
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v2.1"
 msgstr "LGPL v2.1"
 
-#: lib/kaboutdata.cpp:346
+#: lib/kaboutdata.cpp:350
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2.1"
 msgstr "GNU Lesser General Public License Version 2.1"
 
-#: lib/kaboutdata.cpp:350
+#: lib/kaboutdata.cpp:354
 msgctxt "KAboutLicense|@item license"
 msgid "Custom"
 msgstr "Benutzerdefiniert"
 
-#: lib/kaboutdata.cpp:353
+#: lib/kaboutdata.cpp:357
 msgctxt "KAboutLicense|@item license"
 msgid "Not specified"
 msgstr "Nicht angegeben"
 
-#: lib/kaboutdata.cpp:967
+#: lib/kaboutdata.cpp:972
 msgctxt "KAboutData|replace this with information about your translation team"
 msgid ""
 "<p>KDE is translated into many languages thanks to the work of the "
@@ -192,46 +192,46 @@ msgstr ""
 "zur deutschen Übersetzung unter <a href=\"https://l10n.kde.org/teams/de"
 "\">http://l10n.kde.org/teams/de</a>.</p>"
 
-#: lib/kaboutdata.cpp:1225
+#: lib/kaboutdata.cpp:1232
 msgctxt "KAboutData CLI|"
 msgid "Show author information."
 msgstr "Autor-Informationen anzeigen."
 
-#: lib/kaboutdata.cpp:1226
+#: lib/kaboutdata.cpp:1233
 msgctxt "KAboutData CLI|"
 msgid "Show license information."
 msgstr "Lizenz-Informationen anzeigen."
 
-#: lib/kaboutdata.cpp:1228
+#: lib/kaboutdata.cpp:1235
 msgctxt "KAboutData CLI|"
 msgid "The base file name of the desktop entry for this application."
 msgstr "Der Basis-Dateiname des Desktop-Eintrags dieser Anwendung."
 
-#: lib/kaboutdata.cpp:1229
+#: lib/kaboutdata.cpp:1236
 msgctxt "KAboutData CLI|"
 msgid "file name"
 msgstr "Dateiname"
 
-#: lib/kaboutdata.cpp:1239
+#: lib/kaboutdata.cpp:1246
 msgctxt "KAboutData CLI|"
 msgid "This application was written by somebody who wants to remain anonymous."
 msgstr ""
 "Diese Anwendung wurde von jemandem geschrieben, der/die lieber anonym "
 "bleiben möchte."
 
-#: lib/kaboutdata.cpp:1241
+#: lib/kaboutdata.cpp:1248
 #, qt-format
 msgctxt "KAboutData CLI|"
 msgid "%1 was written by:"
 msgstr "%1 wurde geschrieben von:"
 
-#: lib/kaboutdata.cpp:1252
+#: lib/kaboutdata.cpp:1259
 msgctxt "KAboutData CLI|"
 msgid "Please use https://bugs.kde.org to report bugs."
 msgstr ""
 "Bitte verwenden Sie https://bugs.kde.org für Fehlerberichte und Wünsche."
 
-#: lib/kaboutdata.cpp:1254
+#: lib/kaboutdata.cpp:1261
 #, qt-format
 msgctxt "KAboutData CLI|"
 msgid "Please report bugs to %1."

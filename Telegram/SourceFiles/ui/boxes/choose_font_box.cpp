@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/scroll_area.h"
 #include "ui/cached_round_corners.h"
 #include "ui/painter.h"
+#include "ui/ui_utility.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_settings.h"
@@ -487,7 +488,7 @@ void Selector::mousePressEvent(QMouseEvent *e) {
 void Selector::mouseReleaseEvent(QMouseEvent *e) {
 	const auto pressed = _pressed;
 	updatePressed(-1);
-	if (pressed == _selected) {
+	if (pressed >= 0 && pressed == _selected) {
 		choose(shownRowAt(pressed));
 	}
 }
@@ -546,15 +547,25 @@ std::vector<Selector::Entry> Selector::FullList(const QString &now) {
 			result.push_back({ .id = family });
 		}
 	}
-	if (!ranges::contains(result, now, &Entry::id)) {
+	auto nowIt = ranges::find(result, now, &Entry::id);
+	if (nowIt == end(result)) {
 		result.push_back({ .id = now });
+		nowIt = end(result) - 1;
 	}
 	for (auto i = begin(result) + 2; i != end(result); ++i) {
 		i->key = TextUtilities::RemoveAccents(i->id).toLower();
 		i->text = i->id;
 		i->keywords = TextUtilities::PrepareSearchWords(i->id);
 	}
-	ranges::sort(begin(result) + 2, end(result), std::less<>(), &Entry::key);
+	auto skip = 2;
+	if (nowIt - begin(result) >= skip) {
+		std::swap(result[2], *nowIt);
+		++skip;
+	}
+	ranges::sort(
+		begin(result) + skip, end(result),
+		std::less<>(),
+		&Entry::key);
 	return result;
 }
 

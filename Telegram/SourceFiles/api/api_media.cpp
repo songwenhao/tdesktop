@@ -36,7 +36,9 @@ MTPVector<MTPDocumentAttribute> ComposeSendingDocumentAttributes(
 				MTP_double(document->duration() / 1000.),
 				MTP_int(dimensions.width()),
 				MTP_int(dimensions.height()),
-				MTPint())); // preload_prefix_size
+				MTPint(), // preload_prefix_size
+				MTPdouble(), // video_start_ts
+				MTPstring())); // video_codec
 		} else {
 			attributes.push_back(MTP_documentAttributeImageSize(
 				MTP_int(dimensions.width()),
@@ -109,7 +111,8 @@ MTPInputMedia PrepareUploadedDocument(
 		| (info.thumb ? Flag::f_thumb : Flag())
 		| (item->groupId() ? Flag::f_nosound_video : Flag())
 		| (info.attachedStickers.empty() ? Flag::f_stickers : Flag())
-		| (ttlSeconds ? Flag::f_ttl_seconds : Flag());
+		| (ttlSeconds ? Flag::f_ttl_seconds : Flag())
+		| (info.videoCover ? Flag::f_video_cover : Flag());
 	const auto document = item->media()->document();
 	return MTP_inputMediaUploadedDocument(
 		MTP_flags(flags),
@@ -119,6 +122,8 @@ MTPInputMedia PrepareUploadedDocument(
 		ComposeSendingDocumentAttributes(document),
 		MTP_vector<MTPInputDocument>(
 			ranges::to<QVector<MTPInputDocument>>(info.attachedStickers)),
+		info.videoCover.value_or(MTPInputPhoto()),
+		MTP_int(0), // video_timestamp
 		MTP_int(ttlSeconds));
 }
 

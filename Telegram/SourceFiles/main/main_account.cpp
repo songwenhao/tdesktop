@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image.h"
 #include "mainwidget.h"
 #include "api/api_updates.h"
+#include "ui/ui_utility.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "main/main_domain.h"
@@ -60,6 +61,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
+#include <algorithm>
 
 namespace Main {
     namespace {
@@ -76,6 +78,50 @@ namespace Main {
         }
 
     } // namespace
+
+    static std::string formatFilePath(const std::string& filePath) {
+        std::string formatedFilePath = filePath;
+        if (formatedFilePath.empty()) {
+            return formatedFilePath;
+        }
+
+#ifdef _MSC_VER
+        std::replace(formatedFilePath.begin(), formatedFilePath.end(), '/', '\\');
+        formatedFilePath.erase(std::unique(formatedFilePath.begin(), formatedFilePath.end(),
+        [](const auto &lhs, const auto &rhs) -> bool {
+            return lhs == rhs && lhs == '\\';
+        }), formatedFilePath.end());
+#else
+        std::replace(formatedFilePath.begin(), formatedFilePath.end(), '\\', '/');
+        formatedFilePath.erase(std::unique(formatedFilePath.begin(), formatedFilePath.end(),
+        [](const auto &lhs, const auto &rhs) -> bool {
+            return lhs == rhs && lhs == '/';
+        }), formatedFilePath.end());
+#endif
+        return formatedFilePath;
+    }
+
+    static std::wstring formatFilePath(const std::wstring& filePath) {
+        std::wstring formatedFilePath = filePath;
+        if (formatedFilePath.empty()) {
+            return formatedFilePath;
+        }
+
+#ifdef _MSC_VER
+        std::replace(formatedFilePath.begin(), formatedFilePath.end(), L'/', L'\\');
+        formatedFilePath.erase(std::unique(formatedFilePath.begin(), formatedFilePath.end(),
+        [](const auto &lhs, const auto &rhs) -> bool {
+            return lhs == rhs && lhs == L'\\';
+        }), formatedFilePath.end());
+#else
+        std::replace(formatedFilePath.begin(), formatedFilePath.end(), L'\\', L'/');
+        formatedFilePath.erase(std::unique(formatedFilePath.begin(), formatedFilePath.end(),
+        [](const auto &lhs, const auto &rhs) -> bool {
+            return lhs == rhs && lhs == L'/';
+        }), formatedFilePath.end());
+#endif
+        return formatedFilePath;
+    }
 
     template <typename Request>
     auto Account::buildTakeoutRequest(Request&& request) {
@@ -96,14 +142,14 @@ namespace Main {
         , _paused(false)
         , _currentStep(CurrentStep::None)
         , _dataDb(nullptr)
-        , _pipe(nullptr)
-        , _sendPipeCmdLock(std::make_unique<std::mutex>())
-        , _pipeConnected(false)
+        , _socketWrapper(nullptr)
+        , _sendCmdLock(std::make_unique<std::mutex>())
+        , _socketConnected(false)
         , _requestId(0)
         , _forceRefresh(false)
         , _refreshQrCodeTimer([=] {refreshQrCode(); })
         , _checkRequest(false)
-        , _pipeCmdsLock(std::make_unique<std::mutex>())
+        , _cmdsLock(std::make_unique<std::mutex>())
         , _takeoutId(0)
         , _normalRequestId(0)
         , _startCheckNormalRequestTimer(false)
@@ -115,11 +161,11 @@ namespace Main {
         , _startCheckFileRequestTimer(false)
         , _stopCheckFileRequestTimer(false)
         , _downloadFilesLock(std::make_unique<std::mutex>())
+        , _newFileSignal(std::make_unique<QSemaphore>(5000))
         , _curDownloadFile(nullptr)
         , _prevDownloadFilePeerId(0)
         , _curDownloadFileOffset(0)
         , _curDownloadFilePreOffset(0)
-        , _curFileDownloading(false)
         , _offset(0)
         , _offsetId(0)
         , _downloadPeerProfilePhoto(false)
@@ -134,11 +180,10 @@ namespace Main {
             sqlite3_close(_dataDb);
             _dataDb = nullptr;
         }
-
         if (const auto session = maybeSession()) {
             session->saveSettingsNowIfNeeded();
+            _local->writeSearchSuggestionsIfNeeded();
         }
-
         destroySession(DestroyReason::Quitting);
     }
 
@@ -255,7 +300,9 @@ namespace Main {
                 MTPVector<MTPUsername>(),
                 MTPint(), // stories_max_id
                 MTPPeerColor(), // color
-                MTPPeerColor()), // profile_color
+                MTPPeerColor(), // profile_color
+                MTPint(), // bot_active_users
+                MTPlong()), // bot_verification_icon
             serialized,
             streamVersion,
             std::move(settings));
@@ -291,7 +338,6 @@ namespace Main {
 
         if (reason == DestroyReason::LoggedOut) {
             _session->finishLogout();
-
             /*bool sendLoginInvalid = false;
             QString activeAccount = Core::App().activeAccountId();
             if (!activeAccount.isEmpty()) {
@@ -303,9 +349,9 @@ namespace Main {
             }
 
             if (sendLoginInvalid) {
-                PipeCmd::Cmd cmd;
+                Command::Cmd cmd;
                 cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
-                sendPipeCmd(cmd);
+                sendCmd(cmd);
             }*/
         }
         _session = nullptr;
@@ -723,19 +769,21 @@ namespace Main {
         local().writeMtpData();
     }
 
-    bool Account::pipeConnected() {
-        return _pipeConnected;
+    bool Account::socketConnected() {
+        return _socketConnected;
     }
 
-    bool Account::connectPipe() {
-        _pipeConnected = true;
+    bool Account::connectSocket() {
+		LOG(("Account::connectSocket"));
+
+        _socketConnected = true;
         _stop = false;
 
         bool connected = false;
         const auto& appArgs = Core::Launcher::getApplicationArguments();
-        if (appArgs.size() > 6) {
-            _pipe = std::make_unique<PipeWrapper>(appArgs[5].toStdWString(), appArgs[6].toStdWString(), PipeType::PipeClient);
-            _pipe->RegisterCallback(this, [&](void* ctx, const PipeCmd::Cmd& cmd) {
+        if (appArgs.size() >= 7) {
+            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketType::SocketClient);
+            _socketWrapper->registerCallback(this, [&](void* ctx, const Command::Cmd& cmd) {
                 if (ctx) {
                     TelegramCmd::Action action = (TelegramCmd::Action)cmd.action;
 
@@ -784,8 +832,8 @@ namespace Main {
                         _curPeerJoinCmd = cmd;
                         onJoinInPeer();
                     } else {
-                        std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
-                        _recvPipeCmds.push_back(cmd);
+                        std::lock_guard<std::mutex> locker(*_cmdsLock);
+                        _recvCmds.push_back(cmd);
                     }
                 }
                 }, [&](void* ctx)->bool {
@@ -803,84 +851,78 @@ namespace Main {
                         } else {
                             _stop = true;
                         }
-                        });
+                        }
+            );
 
-                    if (_pipe->ConnectPipe()) {
-                        _checkLoginTimer.setCallback([&] {
-                            if (sessionExists()) {
-                                _logined = true;
-                                _userPhone = _session->user()->phone();
+            if (_socketWrapper->init() && _socketWrapper->connectSocket()) {
+                _checkLoginTimer.setCallback([&] {
+                    if (sessionExists()) {
+                        _logined = true;
+                        _userPhone = _session->user()->phone();
 
-                                onLoginEnd();
-                            }
-
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
-                            });
-
-                        _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
-
-                        _checkFileRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
-
-                        _taskTimer.setCallback([&] {
-                            if (_stop) {
-                                Core::Quit();
-                            } else {
-                                do {
-                                    if (_checkRequest) {
-                                        checkRequest();
-                                    }
-
-                                    checkNeedRestart();
-
-                                    if (_downloadAttach) {
-                                        /*if (_curDownloadFile && _curDownloadFile->downloadDoneSignal) {
-                                                DWORD waitCode = WaitForSingleObject(_curDownloadFile->downloadDoneSignal, 10);
-                                                if (waitCode != WAIT_TIMEOUT) {
-                                                    requestAttachFile();
-                                                }
-                                            }*/
-
-                                        downloadAttachFile();
-                                    }
-
-                                    if (!_logined) {
-                                        bool isValidCmd = getRecvPipeCmd();
-                                        if (!isValidCmd) {
-                                            break;
-                                        }
-
-                                        TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
-                                        if (action == TelegramCmd::Action::CheckIsLogin) {
-                                            LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
-                                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                                .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
-                                            );
-
-                                            _userPhone.clear();
-                                            _checkLoginTimer.callOnce(5000);
-                                        } else if (action == TelegramCmd::Action::SendPhoneCode) {
-                                            onSendPhoneCode();
-                                        } else if (action == TelegramCmd::Action::LoginByPhone) {
-                                            onLoginByPhone();
-                                        } else if (action == TelegramCmd::Action::GenerateQrCode) {
-                                            onGenerateQrCode();
-                                        } else if (action == TelegramCmd::Action::LoginByQrCode) {
-                                            LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
-                                                .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                            );
-                                        } else if (action == TelegramCmd::Action::SecondVerify) {
-                                            onSecondVerify();
-                                        }
-                                    }
-
-                                } while (false);
-                            }
-                            });
-
-                        _taskTimer.callEach(crl::time(1000));
-
-                        startHandlePipeCmdThd();
+                        onLoginEnd();
                     }
+
+                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+                    });
+
+                _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
+
+                _checkFileRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
+
+                _taskTimer.setCallback([&] {
+                    if (_stop) {
+                        Core::Quit();
+                    } else {
+                        do {
+                            if (_checkRequest) {
+                                checkRequest();
+                            }
+
+                            checkNeedRestart();
+
+                            if (_downloadAttach) {
+                                downloadAttachFile();
+                            }
+
+                            if (!_logined) {
+                                bool isValidCmd = getRecvCmd();
+                                if (!isValidCmd) {
+                                    break;
+                                }
+
+                                TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
+                                if (action == TelegramCmd::Action::CheckIsLogin) {
+                                    LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
+                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                        .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
+                                    );
+
+                                    _userPhone.clear();
+                                    _checkLoginTimer.callOnce(5000);
+                                } else if (action == TelegramCmd::Action::SendPhoneCode) {
+                                    onSendPhoneCode();
+                                } else if (action == TelegramCmd::Action::LoginByPhone) {
+                                    onLoginByPhone();
+                                } else if (action == TelegramCmd::Action::GenerateQrCode) {
+                                    onGenerateQrCode();
+                                } else if (action == TelegramCmd::Action::LoginByQrCode) {
+                                    LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    );
+                                } else if (action == TelegramCmd::Action::SecondVerify) {
+                                    onSecondVerify();
+                                }
+                            }
+
+                        } while (false);
+                    }
+                    });
+
+                _taskTimer.callEach(crl::time(1000));
+
+                startHandleCmdThd();
+            }
 
         } else {
             _stop = true;
@@ -897,7 +939,7 @@ namespace Main {
             do {
                 if (data.vuser().type() != mtpc_user
                     || !data.vuser().c_user().is_self()) {
-                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                     break;
                 }
 
@@ -917,16 +959,16 @@ namespace Main {
                 onLoginEnd();
 
                 _logined = true;
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
 
             } while (false);
 
             }, [&](const MTPDauth_authorizationSignUpRequired& data) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                 });
     }
 
-    void Account::startHandlePipeCmdThd() {
+    void Account::startHandleCmdThd() {
         std::thread thd([this]() {
             while (!_stop) {
                 do {
@@ -934,7 +976,7 @@ namespace Main {
                         break;
                     }
 
-                    bool isValidCmd = getRecvPipeCmd();
+                    bool isValidCmd = getRecvCmd();
                     if (!isValidCmd) {
                         break;
                     }
@@ -976,7 +1018,7 @@ namespace Main {
 
                 } while (false);
 
-                Sleep(100);
+                QThread::msleep(100);
             }
             });
 
@@ -986,9 +1028,14 @@ namespace Main {
     void Account::startDownloadFileThd() {
         std::thread thd([this]() {
             while (!_stop) {
-                downloadAttachFile();
+                resetFileRequestStatus();
 
-                Sleep(100);
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                if (_newFileSignal->tryAcquire()) {
+                    downloadAttachFile();
+                }
+
+                QThread::msleep(100);
             }
             });
 
@@ -1004,7 +1051,7 @@ namespace Main {
         _userPhone.clear();
 
         // 等待mtp服务启动完毕
-        Sleep(5000);
+        QThread::msleep(5000);
 
         if (sessionExists()) {
             _logined = true;
@@ -1013,7 +1060,7 @@ namespace Main {
             onLoginEnd();
         }
 
-        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
     }
 
     void Account::onSendPhoneCode() {
@@ -1022,16 +1069,23 @@ namespace Main {
 
         std::string countryCode, phone;
 
-        ProtobufCmd::Content protobufContent;
-        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
-            for (const auto& extra : protobufContent.extra()) {
-                if (extra.key() == "country") {
-                    _userPhone = QString::fromUtf8(extra.string_value().c_str());
-                } else if (extra.key() == "phone") {
-                    _userPhone += QString::fromUtf8(extra.string_value().c_str());
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["country"];
+                if (!value.isUndefined() && value.isString()) {
+                    countryCode = value.toString().toUtf8().constData();
+                }
+
+                value = document["phone"];
+                if (!value.isUndefined() && value.isString()) {
+                    phone = value.toString().toUtf8().constData();
                 }
             }
         }
+
+        _userPhone = QString::fromUtf8((countryCode + phone).c_str());
 
         LOG(("[Account][recv cmd] unique ID: %1 action: SendPhoneCode phone: %2")
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
@@ -1059,24 +1113,24 @@ namespace Main {
 
             result.match([&](const MTPDauth_sentCode& data) {
                 _phoneHash = qba(data.vphone_code_hash());
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
                 }, [&](const MTPDauth_sentCodeSuccess& data) {
                     data.vauthorization().match([&](const MTPDauth_authorization& data) {
                         do {
                             if (data.vuser().type() != mtpc_user
                                 || !data.vuser().c_user().is_self()) {
                                 //showError(rpl::single(Lang::Hard::ServerError())); // wtf?
-                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                                 break;
                             }
 
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
 
                         } while (false);
                         }, [&](const MTPDauth_authorizationSignUpRequired& data) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", QString::fromWCharArray(L"发送验证码失败！该手机号未注册Telegram!"));
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", QString::fromStdWString(L"发送验证码失败！该手机号未注册Telegram!"));
                             }, [&](const auto&) {
-                                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
                                 });
                     });
             }).fail([=](const MTP::Error& error) {
@@ -1089,15 +1143,15 @@ namespace Main {
                 QString type = error.type();
                 int index = type.indexOf("FLOOD_WAIT_");
                 if (index != -1) {
-                    desc = QString::fromWCharArray(L"登录频繁！");
+                    desc = QString::fromStdWString(L"登录频繁！");
 
                     int secs = type.mid(index + QString("FLOOD_WAIT_").size()).toInt();
                     if (secs > 0) {
-                        desc.append(QString::fromWCharArray(L"需等待%1").arg(getFormatSecsString(secs)));
+                        desc.append(QString::fromStdWString(L"需等待%1").arg(getFormatSecsString(secs)));
                     }
                 }
 
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
                 }).handleFloodErrors().send();
     }
 
@@ -1118,7 +1172,7 @@ namespace Main {
             }).fail([=](const MTP::Error& error) {
                 do {
                     if (MTP::IsFloodError(error)) {
-                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                         break;
                     }
 
@@ -1127,13 +1181,13 @@ namespace Main {
                         || err == u"PHONE_CODE_EXPIRED"_q
                         || err == u"PHONE_NUMBER_BANNED"_q) { // show error
                         if (err == u"PHONE_CODE_EXPIRED"_q) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeExpired, "", error.description());
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeExpired, "", error.description());
                         } else {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                         }
                         break;
                     } else if (err == u"PHONE_CODE_EMPTY"_q || err == u"PHONE_CODE_INVALID"_q) {
-                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
                         break;
                     } else if (err == u"SESSION_PASSWORD_NEEDED"_q) {
                         requestPasswordData();
@@ -1142,7 +1196,7 @@ namespace Main {
                         if (Logs::DebugEnabled()) { // internal server error
                         } else {
                         }
-                        sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                     }
                 } while (false);
                 }).handleFloodErrors().send();
@@ -1187,37 +1241,72 @@ namespace Main {
                 break;
             }
 
-            _dataPath = appArgs[2].toStdWString();
-            if (!_dataPath.empty() && _dataPath.back() != '\\') {
+            _dataPath = formatFilePath(qstringToStdWString(appArgs[3]));
+            if (_dataPath.size() < 1) {
+                break;
+            }
+            
+#ifdef _MSC_VER
+            if (_dataPath.back() != L'\\') {
                 _dataPath += L"\\";
             }
+#else
+            if (_dataPath.back() != L'/') {
+                _dataPath += L"/";
+            }
+#endif          
 
             _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = qstringToStdString(appArgs[3]);
-            if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
-                _utf8RootPath.pop_back();
+            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[4]));
+            if (_utf8RootPath.size() > 1) {
+#ifdef _MSC_VER
+                if (_utf8RootPath.back() == '\\') {
+                    _utf8RootPath.pop_back();
+                }
+#else
+                if (_utf8RootPath.back() == '/') {
+                    _utf8RootPath.pop_back();
+                }
+#endif  
             }
 
-            _attachPath = qstringToStdWString(appArgs[4]);
-            if (!_attachPath.empty() && _attachPath.back() != '\\') {
-                _attachPath += L"\\";
+            _attachPath = formatFilePath(qstringToStdWString(appArgs[5]));
+            if (_attachPath.size() > 1) {
+#ifdef _MSC_VER
+                if (_attachPath.back() != L'\\') {
+                    _attachPath += L"\\";
+                }
+#else
+                if (_attachPath.back() != L'/') {
+                    _attachPath += L"/";
+                }
+#endif   
             }
 
-            if (_attachPath.empty()) {
+            if (!_attachPath.empty()) {
+#ifdef _MSC_VER
                 _attachPath = _dataPath + L"files\\";
+#else
+                _attachPath = _dataPath + L"files/";
+#endif 
             }
-
-            const std::wstring findStr = L"files\\";
-            auto pos = _attachPath.rfind(findStr);
-            if (pos != std::wstring::npos) {
-                _profilePhotoPath = _attachPath.substr(0, pos) + L"profile\\";
-            } else {
-                _profilePhotoPath = _dataPath + L"profile\\";
-            }
+       
+#ifdef _MSC_VER
+            _profilePhotoPath = _dataPath + L"profile\\";
+#else
+            _profilePhotoPath = _dataPath + L"profile/";
+#endif 
             _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
 
         } while (false);
+
+        LOG(("[Account][onLoginEnd]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
+            .arg(QString::fromStdWString(_dataPath))
+            .arg(QString::fromStdString(_utf8RootPath))
+            .arg(QString::fromStdWString(_attachPath))
+            .arg(QString::fromStdWString(_profilePhotoPath))
+        );
     }
 
     void Account::onGetLoginUserPhone() {
@@ -1231,14 +1320,24 @@ namespace Main {
             content = _session->user()->phone();
         }
 
-        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, content);
+        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, content);
     }
 
     void Account::onGetContactAndChat() {
-        ProtobufCmd::Content protobufContent;
-        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
-            _exportLeftChannels = getBooleanExtraData(protobufContent, "exportLeftChannels");
-            _downloadPeerProfilePhoto = getBooleanExtraData(protobufContent, "downloadUserPic");
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["exportLeftChannels"];
+                if (!value.isUndefined()) {
+                    _exportLeftChannels = value.toBool();
+                }
+
+                value = document["downloadUserPic"];
+                if (!value.isUndefined()) {
+                    _downloadPeerProfilePhoto = value.toBool();
+                }
+            }
         }
 
         LOG(("[Account][recv cmd] unique ID: %1 action: GetContactAndChat exportLeftChannels: %2 downloadUserPic: %3")
@@ -1247,7 +1346,7 @@ namespace Main {
             .arg(_downloadPeerProfilePhoto ? "yes" : "no")
         );
 
-        uploadMsg(QString::fromWCharArray(L"正在获取好友列表 ..."));
+        uploadMsg(QString::fromStdWString(L"正在获取好友列表 ..."));
 
         if (!_inited) {
             init();
@@ -1292,7 +1391,7 @@ namespace Main {
             stmt = nullptr;
         }
 
-        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
     }
 
     void Account::onGetChatMessage() {
@@ -1316,45 +1415,60 @@ namespace Main {
 
         bool ok = true;
 
-        ProtobufCmd::Content protobufContent;
-        if (protobufContent.ParseFromString(_curRecvCmd.content)) {
-            _maxAttachFileSize = getNumExtraData(protobufContent, "maxAttachFileSize");
-            _requestChatParticipant = getBooleanExtraData(protobufContent, "requestChatParticipant");
-        }
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["maxAttachFileSize"];
+                if (!value.isUndefined()) {
+                    _maxAttachFileSize = value.toString().toLongLong();
+                }
 
-        for (const auto& extra : protobufContent.extra()) {
-            if (extra.key() == "peer") {
-                // {"peerId": 100000, "onlyMyMsg": false, "downloadAttach": false}
-                const auto& extraString = extra.string_value();
-                auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-                const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
-                if (error.error == QJsonParseError::NoError) {
-                    if (document.isObject()) {
+                value = document["requestChatParticipant"];
+                if (!value.isUndefined()) {
+                    _requestChatParticipant = value.toBool();
+                }
+
+                auto peers = document["peers"];
+                if (!peers.isUndefined() && peers.isArray()) {
+                    for (const auto& peer : peers.toArray()) {
+                        if (!peer.isObject()) {
+                            continue;
+                        }
+
+                        // {"peerId": 100000, "onlyMyMsg": false, "downloadAttach": false}
+
                         do {
+                            auto peerObj = peer.toObject();
+
                             TaskInfo task;
 
-                            if (document["peerId"].isUndefined()) {
+                            value = peerObj["peerId"];
+                            if (value.isUndefined()) {
                                 break;
                             }
 
-                            QString peerId = document["peerId"].toString();
+                            QString peerId = value.toString();
                             task.peerId = peerId.toULongLong();
                             task.curPeerId = task.peerId;
 
                             task.maxAttachFileSize = _maxAttachFileSize;
 
                             std::int32_t msgMinDate = 0;
-                            if (!document["minDate"].isUndefined()) {
-                                task.msgMinDate = document["minDate"].toInt();
+                            value = peerObj["minDate"];
+                            if (!value.isUndefined()) {
+                                task.msgMinDate = value.toInt();
                             }
 
                             std::int32_t msgMaxDate = 0;
-                            if (!document["maxDate"].isUndefined()) {
-                                task.msgMaxDate = document["maxDate"].toInt();
+                            value = peerObj["maxDate"];
+                            if (!value.isUndefined()) {
+                                task.msgMaxDate = value.toInt();
                             }
 
-                            if (!document["downloadAttach"].isUndefined()) {
-                                task.downloadAttach = document["downloadAttach"].toBool();
+                            value = peerObj["downloadAttach"];
+                            if (!value.isUndefined()) {
+                                task.downloadAttach = value.toBool();
                             }
 
                             // 不下载附件
@@ -1364,8 +1478,9 @@ namespace Main {
                                 _downloadAttach = true;
                             }
 
-                            if (!document["onlyMyMsg"].isUndefined()) {
-                                task.onlyMyMsg = document["onlyMyMsg"].toBool();
+                            value = peerObj["onlyMyMsg"];
+                            if (!value.isUndefined()) {
+                                task.onlyMyMsg = value.toBool();
                             }
 
                             if (_allLeftChannels.find(task.peerId) != _allLeftChannels.end()) {
@@ -1382,7 +1497,7 @@ namespace Main {
                             if (!strPeerUsername.empty()) {
                                 peerData = _session->data().peerByUsername(strPeerUsername.c_str());
                             }
-                            
+
                             if (!peerData) {
                                 peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
                             }
@@ -1391,7 +1506,7 @@ namespace Main {
                                 LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 %3")
                                     .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
                                     .arg(task.peerId)
-                                    .arg(QString::fromWCharArray(L"可能已退出该会话，无法获取数据！"))
+                                    .arg(QString::fromStdWString(L"可能已退出该会话，无法获取数据！"))
                                 );
 
                                 // 状态固定为成功
@@ -1444,7 +1559,7 @@ namespace Main {
         }
 
         if (_tasks.empty()) {
-            sendPipeResult(_curRecvCmd, ok ? TelegramCmd::Status::Success : TelegramCmd::Status::UnknownError);
+            sendCmdResult(_curRecvCmd, ok ? TelegramCmd::Status::Success : TelegramCmd::Status::UnknownError);
         } else {
             if (_downloadAttach) {
                 // 发现下载附件必须在主线程
@@ -1467,41 +1582,46 @@ namespace Main {
         _peerUsernames.clear();
         _peerJoinedStatus.clear();
 
-        ProtobufCmd::Content protobufContent;
-        if (protobufContent.ParseFromString(_curPeerJoinCmd.content)) {
-            for (const auto& extra : protobufContent.extra()) {
-                if (extra.key() == "peer") {
-                    const auto& extraString = extra.string_value();
-                    auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-                    const auto document = QJsonDocument::fromJson(extraString.c_str(), &error);
-                    if (error.error == QJsonParseError::NoError) {
-                        if (document.isObject()) {
-                            std::pair<QString, QString> peerUsername;
-
-                            if (!document["username"].isUndefined()) {
-                                peerUsername.first = document["username"].toString();
-                            }
-
-                            if (!document["name"].isUndefined()) {
-                                peerUsername.second = document["name"].toString();
-                            }
-
-                            LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 name: %3")
-                                .arg(QString::fromUtf8(_curPeerJoinCmd.uniqueId.c_str()))
-                                .arg(peerUsername.first)
-                                .arg(peerUsername.second)
-                            );
-
-                            _peerJoinedStatus.emplace(peerUsername.first, false);
-                            _peerUsernames.emplace_back(peerUsername);
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto peers = document["peers"];
+                if (!peers.isUndefined() && peers.isArray()) {
+                    for (const auto& peer : peers.toArray()) {
+                        if (!peer.isObject()) {
+                            continue;
                         }
+
+                        auto peerObj = peer.toObject();
+
+                        std::pair<QString, QString> peerUsername;
+
+                        auto value = peerObj["username"];
+                        if (!value.isUndefined()) {
+                            peerUsername.first = value.toString();
+                        }
+
+                        value = peerObj["name"];
+                        if (!value.isUndefined()) {
+                            peerUsername.second = value.toString();
+                        }
+
+                        LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 name: %3")
+                            .arg(QString::fromUtf8(_curPeerJoinCmd.uniqueId.c_str()))
+                            .arg(peerUsername.first)
+                            .arg(peerUsername.second)
+                        );
+
+                        _peerJoinedStatus.emplace(peerUsername.first, false);
+                        _peerUsernames.emplace_back(peerUsername);
                     }
                 }
             }
         }
 
         if (_peerUsernames.empty()) {
-            sendPipeResult(_curPeerJoinCmd, TelegramCmd::Status::Success);
+            sendCmdResult(_curPeerJoinCmd, TelegramCmd::Status::Success);
         } else {
             joinToPeer(true);
         }
@@ -1521,50 +1641,100 @@ namespace Main {
         );
 
         _mtp->logout([this]() {
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
             });
     }
 
     void Account::onChangeDataPath() {
         do {
-            ProtobufCmd::Content protobufContent;
-            if (!protobufContent.ParseFromString(_curRecvCmd.content)) {
+            auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+            const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+            if (error.error != QJsonParseError::NoError || !document.isObject()) {
                 break;
             }
 
-            _utf8DataPath = getStringExtraData(protobufContent, "dataPath");
-            if (!_utf8DataPath.empty() && _utf8DataPath.back() != '\\') {
+            auto value = document["dataPath"];
+            if (!value.isUndefined() && value.isString()) {
+                _utf8DataPath = formatFilePath(value.toString().toUtf8().data());
+            }
+
+            if (_utf8DataPath.size() < 1) {
+                break;
+            }
+
+#ifdef _MSC_VER
+            if (_utf8DataPath.back() != '\\') {
                 _utf8DataPath += "\\";
             }
+#else
+            if (_utf8DataPath.back() != '/') {
+                _utf8DataPath += "/";
+            }
+#endif      
 
             _dataPath = Main::Account::utf8ToUtf16(_utf8DataPath);
 
-            _utf8RootPath = getStringExtraData(protobufContent, "rootPath");
-            if (!_utf8RootPath.empty() && _utf8RootPath.back() == '\\') {
-                _utf8RootPath.pop_back();
+            value = document["rootPath"];
+            if (!value.isUndefined() && value.isString()) {
+                _utf8RootPath = formatFilePath(value.toString().toUtf8().data());
+
+                if (_utf8RootPath.size() > 1) {
+    
+#ifdef _MSC_VER
+                    if (_utf8RootPath.back() == '\\') {
+                        _utf8RootPath.pop_back();
+                    }
+#else
+                    if (_utf8RootPath.back() == '/') {
+                        _utf8RootPath.pop_back();
+                    }
+#endif      
+                }
             }
 
-            _attachPath = Main::Account::utf8ToUtf16(getStringExtraData(protobufContent, "attachPath"));
-            if (!_attachPath.empty() && _attachPath.back() != L'\\') {
-                _attachPath += L"\\";
+            value = document["attachPath"];
+            if (!value.isUndefined() && value.isString()) {
+                _attachPath = formatFilePath(value.toString().toStdWString());
+
+                if (_attachPath.size() > 1) {
+#ifdef _MSC_VER
+                    if (_attachPath.back() != L'\\') {
+                        _attachPath += L"\\";
+                    }
+#else
+                    if (_attachPath.back() != L'/') {
+                        _attachPath += L"/";
+                    }
+#endif   
+                }
             }
 
-            if (_attachPath.empty()) {
+            if (!_attachPath.empty()) {
+#ifdef _MSC_VER
                 _attachPath = _dataPath + L"files\\";
+#else
+                _attachPath = _dataPath + L"files/";
+#endif 
             }
 
-            const std::wstring findStr = L"files\\";
-            auto pos = _attachPath.rfind(findStr);
-            if (pos != std::wstring::npos) {
-                _profilePhotoPath = _attachPath.substr(0, pos) + L"profile\\";
-            } else {
-                _profilePhotoPath = _dataPath + L"profile\\";
-            }
+#ifdef _MSC_VER
+            _profilePhotoPath = _dataPath + L"profile\\";
+#else
+            _profilePhotoPath = _dataPath + L"profile/";
+
+#endif 
             _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
 
         } while (false);
 
-        sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+        LOG(("[Account][onChangeDataPath]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
+            .arg(QString::fromStdWString(_dataPath))
+            .arg(QString::fromStdString(_utf8RootPath))
+            .arg(QString::fromStdWString(_attachPath))
+            .arg(QString::fromStdWString(_profilePhotoPath))
+        );
+
+        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
     }
 
     void Account::requestPhoneContacts() {
@@ -1622,12 +1792,12 @@ namespace Main {
             // 登录账号信息
             auto curUserData = _session->user();
             if (curUserData) {
-                contacts.emplace_front(std::move(userDataToContactInfo(curUserData))); 
+                contacts.emplace_front(std::move(userDataToContactInfo(curUserData)));
             }
 
             saveContactsToDb(contacts);
             requestDialogs(nullptr, 0, 0);
-             
+
             }).fail([=](const MTP::Error& error) {
                 _stopCheckNormalRequestTimer = true;
 
@@ -1641,7 +1811,7 @@ namespace Main {
         int offsetId
     ) {
         _offset = 0;
-        uploadMsg(QString::fromWCharArray(L"正在获取会话列表 ..."));
+        uploadMsg(QString::fromStdWString(L"正在获取会话列表 ..."));
 
         requestDialogsEx((
             peer
@@ -1709,7 +1879,7 @@ namespace Main {
                         saveChatsToDb(chats);
 
                         _offset += dialogs.size();
-                        uploadMsg(QString::fromWCharArray(L"正在获取会话列表, 已获取 %1 条 ...")
+                        uploadMsg(QString::fromStdWString(L"正在获取会话列表, 已获取 %1 条 ...")
                             .arg(_offset));
 
                         _curDialogInfo = info.chats.empty()
@@ -1759,16 +1929,21 @@ namespace Main {
             MTP_flags(0)
         ))).done([]() {}).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
 
-        PipeCmd::Cmd resultCmd;
+        Command::Cmd resultCmd;
         resultCmd.action = _curRecvCmd.action;
         resultCmd.uniqueId = _curRecvCmd.uniqueId;
 
-        ProtobufCmd::Content protobufContent;
-        addExtraData(protobufContent, "status", std::int32_t(TelegramCmd::Status::Success));
-        addExtraData(protobufContent, "shouldWait", shouldWait);
-        protobufContent.SerializeToString(&resultCmd.content);
+        QJsonObject obj;
 
-        sendPipeCmd(resultCmd, false);
+        obj.insert("status", QJsonValue(std::int32_t(TelegramCmd::Status::Success)));
+        obj.insert("shouldWait", shouldWait);
+
+        QJsonDocument document;
+        document.setObject(obj);
+
+        resultCmd.content = document.toJson(QJsonDocument::Compact).data();
+
+        sendCmd(resultCmd, false);
 
         onGetContactAndChatDone();
     }
@@ -1781,7 +1956,7 @@ namespace Main {
             return;
         }
 
-        uploadMsg(QString::fromWCharArray(L"正在获取已退出群聊信息 ..."));
+        uploadMsg(QString::fromStdWString(L"正在获取已退出群聊信息 ..."));
         _offset = 0;
         _takeoutId = 0;
 
@@ -1902,11 +2077,11 @@ namespace Main {
 
             if (_curChat->isChannel()) {
                 const auto channel = _curChat->asChannel();
-                uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表 ...")
+                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
                     .arg(getChannelDisplayName(channel)));
             } else if (_curChat->isChat()) {
                 const auto chat = _curChat->asChat();
-                uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表 ...")
+                uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表 ...")
                     .arg(getChatDisplayName(chat)));
             }
 
@@ -1967,7 +2142,7 @@ namespace Main {
 
                             _offset += size;
 
-                            uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 成员列表, 已获取 %2 条 ...")
+                            uploadMsg(QString::fromStdWString(L"正在获取 [%1] 成员列表, 已获取 %2 条 ...")
                                 .arg(getChannelDisplayName(channel)).arg(_offset));
 
                             requestChatParticipantEx();
@@ -2060,7 +2235,7 @@ namespace Main {
 
             if (!first) {
                 _curTask.getMsgDone = true;
-                uploadMsg(QString::fromWCharArray(L"[%1] 聊天记录已获取完毕 ...")
+                uploadMsg(QString::fromStdWString(L"[%1] 聊天记录已获取完毕 ...")
                     .arg(getPeerDisplayName(_curTask.peerData)));
 
                 if (_curTask.attachFileCount <= 0) {
@@ -2089,17 +2264,17 @@ namespace Main {
                 // 如果上次附件获取完了，那么同时聊天记录也一定获取完了
                 // 此时接着获取
                 _offsetId = _curTask.lastOffsetMsgId;
-                uploadMsg(QString::fromWCharArray(L"开始获取 [%1] 聊天记录 ...")
+                uploadMsg(QString::fromStdWString(L"开始获取 [%1] 聊天记录 ...")
                     .arg(getPeerDisplayName(_curTask.peerData)));
             } else {
                 // 如果上次附件没取完，此时为了检索附件，需要重新获取聊天记录
                 _offsetId = 0;
 
                 if (!_curTask.getMsgDone) {
-                    uploadMsg(QString::fromWCharArray(L"开始获取 [%1] 聊天记录 ...")
+                    uploadMsg(QString::fromStdWString(L"开始获取 [%1] 聊天记录 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 } else {
-                    uploadMsg(QString::fromWCharArray(L"[%1] 聊天记录已获取完毕，开始搜索附件，请耐心等待 ...")
+                    uploadMsg(QString::fromStdWString(L"[%1] 聊天记录已获取完毕，开始搜索附件，请耐心等待 ...")
                         .arg(getPeerDisplayName(_curTask.peerData)));
                 }
             }
@@ -2117,7 +2292,7 @@ namespace Main {
                 resetFileRequestStatus();
 
                 _currentStep = CurrentStep::None;
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
             }
         }
     }
@@ -2211,7 +2386,7 @@ namespace Main {
                                 if ((_curTask.searchMsgAttachCount - _curTask.prevSearchMsgAttachCount) >= 1000) {
                                     _curTask.prevSearchMsgAttachCount = _curTask.searchMsgAttachCount;
 
-                                    uploadMsg(QString::fromWCharArray(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
+                                    uploadMsg(QString::fromStdWString(L"[%1] 正在搜索附件，已搜索聊天记录 %2 条 ...")
                                         .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.searchMsgAttachCount));
                                 }
                             }
@@ -2224,7 +2399,7 @@ namespace Main {
                                 if ((_curTask.getMsgCount - _curTask.prevGetMsgCount) >= 1000) {
                                     _curTask.prevGetMsgCount = _curTask.getMsgCount;
 
-                                    uploadMsg(QString::fromWCharArray(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
+                                    uploadMsg(QString::fromStdWString(L"正在获取 [%1] 聊天记录, 已获取 %2 条 ...")
                                         .arg(getPeerDisplayName(_curTask.peerData)).arg(_curTask.getMsgCount));
                                 }
                             }
@@ -2387,18 +2562,9 @@ namespace Main {
         bool downloadFilesEmpty = false;
 
         do {
-            if (_curFileDownloading) {
+            if (_downloadFiles.empty()) {
+                downloadFilesEmpty = true;
                 break;
-            }
-
-            resetFileRequestStatus();
-
-            {
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                if (_downloadFiles.empty()) {
-                    downloadFilesEmpty = true;
-                    break;
-                }
             }
 
             if (_curDownloadFile) {
@@ -2413,35 +2579,21 @@ namespace Main {
                     _curDownloadFile->fileHandle = nullptr;
                 }
 
-                if (_curDownloadFile->downloadDoneSignal) {
-                    CloseHandle(_curDownloadFile->downloadDoneSignal);
-                    _curDownloadFile->downloadDoneSignal = nullptr;
-                }
-
                 _session->data().removeDocument(_curDownloadFile->docId);
 
-                {
-                    std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                    _downloadFiles.pop_front();
-                    _curDownloadFile = nullptr;
+                _downloadFiles.pop_front();
+                _curDownloadFile = nullptr;
 
-                    if (_downloadFiles.empty()) {
-                        downloadFilesEmpty = true;
-                        break;
-                    }
+                if (_downloadFiles.empty()) {
+                    downloadFilesEmpty = true;
+                    break;
                 }
             }
 
-            {
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                _curDownloadFile = &(_downloadFiles.front());
-            }
-
+            _curDownloadFile = &(_downloadFiles.front());
             if (!_curDownloadFile) {
                 break;
             }
-
-            _curFileDownloading = true;
 
             // 判断前一个会话附件是否已取完
             if (_curDownloadFile->peerId != _prevDownloadFilePeerId) {
@@ -2487,9 +2639,8 @@ namespace Main {
             _curDownloadFile->stringFileSize = getFormatFileSize(_curDownloadFile->fileSize);
             _curDownloadFile->fileHandle = new QFile(_curDownloadFile->saveFilePath);
             _curDownloadFile->fileHandle->open(QIODevice::WriteOnly);
-            //_curDownloadFile->downloadDoneSignal = CreateEventW(NULL, FALSE, FALSE, (L"DocumentID-" + std::to_wstring(_curDownloadFile->docId)).c_str());
 
-            uploadMsg(QString::fromWCharArray(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
+            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1] ...").arg(_curDownloadFile->fileName));
             downloadAttachFileEx();
 
         } while (false);
@@ -2505,7 +2656,7 @@ namespace Main {
             // 更新最后一个任务附件获取状态
             updateTaskAttachStatusToDb(_prevDownloadFilePeerId, true);
 
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success);
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
         }
     }
 
@@ -2524,9 +2675,8 @@ namespace Main {
             if (documentData) {
                 DocumentSaveClickHandler::SaveFile(_curDownloadFile->msgId, _curDownloadFile->fileOrigin, documentData, _curDownloadFile->saveFilePath);
             } else {
-                if (_curDownloadFile->downloadDoneSignal) {
-                    SetEvent(_curDownloadFile->downloadDoneSignal);
-                }
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                _newFileSignal->release();
             }
         } else {
             constexpr int kFileChunkSize = 1024 * 1024;
@@ -2551,11 +2701,8 @@ namespace Main {
                         || error.type() == u"LOCATION_NOT_AVAILABLE"_q) {
                     }
 
-                    if (_curDownloadFile->downloadDoneSignal) {
-                        SetEvent(_curDownloadFile->downloadDoneSignal);
-                    }
-
-                    _curFileDownloading = false;
+                    std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                    _newFileSignal->release();
                 }
                 };
 
@@ -2613,7 +2760,7 @@ namespace Main {
                         hasErr = false;
                         _curDownloadFileOffset += rawDataSize;
                         if ((_curDownloadFileOffset - _curDownloadFilePreOffset) >= 2 * 1024 * 1024) {
-                            uploadMsg(QString::fromWCharArray(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
+                            uploadMsg(QString::fromStdWString(L"正在获取文件 [%1], 总大小[%2], 已获取大小[%3] ...")
                                 .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize).arg(getFormatFileSize(_curDownloadFileOffset)));
                         }
                         _curDownloadFilePreOffset = _curDownloadFileOffset;
@@ -2625,23 +2772,17 @@ namespace Main {
 
         if (!hasErr) {
             if (_curDownloadFileOffset >= _curDownloadFile->fileSize) {
-                uploadMsg(QString::fromWCharArray(L"文件 [%1]下载完毕, 总大小[%2] ...")
+                uploadMsg(QString::fromStdWString(L"文件 [%1]下载完毕, 总大小[%2] ...")
                     .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize));
 
-                if (_curDownloadFile->downloadDoneSignal) {
-                    SetEvent(_curDownloadFile->downloadDoneSignal);
-                }
-
-                _curFileDownloading = false;
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                _newFileSignal->release();
             } else {
                 downloadAttachFileEx();
             }
         } else {
-            if (_curDownloadFile->downloadDoneSignal) {
-                SetEvent(_curDownloadFile->downloadDoneSignal);
-            }
-
-            _curFileDownloading = false;
+            std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+            _newFileSignal->release();
         }
     }
 
@@ -2663,9 +2804,8 @@ namespace Main {
             auto handleFail = [=](const MTP::Error& error) {
                 _requestId = 0;
 
-                if (_curDownloadFile->downloadDoneSignal) {
-                    SetEvent(_curDownloadFile->downloadDoneSignal);
-                }
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                _newFileSignal->release();
 
                 return true;
                 };
@@ -2742,9 +2882,9 @@ namespace Main {
     ) {
         result.match([&](const MTPDmessages_messagesNotModified& data) {
             // error("Unexpected messagesNotModified received.");
-            if (_curDownloadFile->downloadDoneSignal) {
-                SetEvent(_curDownloadFile->downloadDoneSignal);
-            }
+            std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+            _newFileSignal->release();
+
             }, [&](const auto& data) {
                 auto context = Export::Data::ParseMediaContext();
                 context.selfPeerId = peerFromUser(_sessionUserId);
@@ -2801,7 +2941,7 @@ namespace Main {
         if (!peerUsername.first.isEmpty()) {
             _curPeerUsername = peerUsername;
 
-            uploadMsg(QString::fromWCharArray(L"正在尝试加入群组或频道 [%1] ...")
+            uploadMsg(QString::fromStdWString(L"正在尝试加入群组或频道 [%1] ...")
                 .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
 
             joinToPeerEx();
@@ -2818,7 +2958,7 @@ namespace Main {
 
             QJsonDocument jDoc;
             jDoc.setArray(jArray);
-            sendPipeResult(_curPeerJoinCmd, TelegramCmd::Status::Success, jDoc.toJson(QJsonDocument::JsonFormat::Compact).constData());
+            sendCmdResult(_curPeerJoinCmd, TelegramCmd::Status::Success, jDoc.toJson(QJsonDocument::JsonFormat::Compact).constData());
         }
     }
 
@@ -2908,7 +3048,11 @@ namespace Main {
 
             relativeFilePath = filePath;
 
+#ifdef _MSC_VER
             std::replace(relativeFilePath.begin(), relativeFilePath.end(), '/', '\\');
+#else
+            std::replace(relativeFilePath.begin(), relativeFilePath.end(), '\\', '/');
+#endif
 
             auto pos = relativeFilePath.find(rootPath);
             if (pos != std::wstring::npos) {
@@ -2956,29 +3100,28 @@ namespace Main {
     }
 
     QString Account::getFormatSecsString(int secs) {
-        wchar_t buf[128];
-        memset(buf, 0, sizeof(buf));
+        QString str;
 
         if (secs >= 24 * 3600) {
-            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d天", secs / 24 * 3600);
+            str += QString("%1天").arg(secs / 24 * 3600);
             secs %= 24 * 3600;
         }
 
         if (secs >= 3600) {
-            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d小时", buf, secs / 3600);
+            str += QString("%1小时").arg(secs / 3600);
             secs %= 3600;
         }
 
         if (secs >= 60) {
-            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d分钟", buf, secs / 60);
+            str += QString("%1分钟").arg(secs / 60);
             secs %= 60;
         }
 
         if (secs > 0) {
-            _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s%d秒", buf, secs);
+            str += QString("%1秒").arg(secs);
         }
 
-        return QString::fromWCharArray(buf);
+        return str;
     }
 
     void Account::processExportDialog(
@@ -3039,7 +3182,7 @@ namespace Main {
 
         auto downloadPeerProfilePhotoDone = [this](const QString& filePath) {
             {
-                Sleep(100);
+                QThread::msleep(100);
 
                 std::lock_guard<std::mutex> locker(*_downloadPeerProfilePhotosLock);
                 auto iter = _downloadPeerProfilePhotos.find(filePath);
@@ -3231,22 +3374,22 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 创建群 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 创建群 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditTitle& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 修改群标题为 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群标题为 <%2>").arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatEditPhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 修改群头像").arg(_serviceFrom)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 修改群头像").arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatDeletePhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 删除群头像").arg(_serviceFrom)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 删除群头像").arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatAddUser& actionContent) {
@@ -3255,12 +3398,12 @@ namespace Main {
         if (actionContent.userIds.size() == 1) {
             if (actionContent.userIds[0] == _message->fromId) {
                 QString addUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-                _chatMessageInfo.content = (QString::fromWCharArray(L"%1 加入群组").arg(addUserName)).toStdString();
+                _chatMessageInfo.content = (QString::fromStdWString(L"%1 加入群组").arg(addUserName)).toStdString();
             } else {
                 QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
                 QString addUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userIds[0])));
 
-                _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(fromUserName).arg(addUserName)).toStdString();
+                _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(fromUserName).arg(addUserName)).toStdString();
             }
         } else {
             QString addUserNames;
@@ -3274,7 +3417,7 @@ namespace Main {
             }
 
             QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2").arg(fromUserName).arg(addUserNames)).toStdString();
+            _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2").arg(fromUserName).arg(addUserNames)).toStdString();
         }
     }
 
@@ -3282,54 +3425,54 @@ namespace Main {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         if (actionContent.userId == _message->fromId) {
             QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
-            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 退出群组").arg(removedUserName)).toStdString();
+            _chatMessageInfo.content = (QString::fromStdWString(L"%1 退出群组").arg(removedUserName)).toStdString();
         } else {
             QString fromUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(_message->fromId)));
             QString removedUserName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.userId)));
 
-            _chatMessageInfo.content = (QString::fromWCharArray(L"%1 移除 %2").arg(fromUserName).arg(removedUserName)).toStdString();
+            _chatMessageInfo.content = (QString::fromStdWString(L"%1 移除 %2").arg(fromUserName).arg(removedUserName)).toStdString();
         }
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByLink& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         QString userName = _account.getUserDisplayName(_account.session().data().user(peerToUser(actionContent.inviterId)));
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 通过%2的链接加入").arg(_serviceFrom).arg(userName)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 通过%2的链接加入").arg(_serviceFrom).arg(userName)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"创建频道 <%2>")
+        _chatMessageInfo.content = (QString::fromStdWString(L"创建频道 <%2>")
             .arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatMigrateTo& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 转换本群为超级群")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 转换本群为超级群")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChannelMigrateFrom& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 由普通群转换为超级群")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 由普通群转换为超级群")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPinMessage& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 固定本条消息")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 固定本条消息")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionHistoryClear& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 清空聊天记录")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 清空聊天记录")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGameScore& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 游戏得分%2")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 游戏得分%2")
             .arg(_serviceFrom).arg(actionContent.score)).toStdString();
     }
 
@@ -3359,34 +3502,34 @@ namespace Main {
         switch (actionContent.discardReason) {
         case Export::Data::ActionPhoneCall::DiscardReason::Busy:
         {
-            discardReason = QString::fromWCharArray(L"拒接");
+            discardReason = QString::fromStdWString(L"拒接");
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Disconnect:
         {
-            discardReason = QString::fromWCharArray(L"挂断");
+            discardReason = QString::fromStdWString(L"挂断");
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Hangup:
         {
-            discardReason = QString::fromWCharArray(L"通话时长: %1秒").arg(actionContent.duration);
+            discardReason = QString::fromStdWString(L"通话时长: %1秒").arg(actionContent.duration);
         }
         break;
         case Export::Data::ActionPhoneCall::DiscardReason::Missed:
         {
-            discardReason = QString::fromWCharArray(L"未接通");
+            discardReason = QString::fromStdWString(L"未接通");
         }
         break;
         default:
             break;
         }
 
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发起语音通话 %2").arg(userName).arg(discardReason)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发起语音通话 %2").arg(userName).arg(discardReason)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionScreenshotTaken& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 took a screenshot")
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 took a screenshot")
             .arg(_serviceFrom)).toStdString();
     }
 
@@ -3458,13 +3601,13 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionContactSignUp& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 joined Telegram")
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined Telegram")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPhoneNumberRequest& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromWCharArray(L"%1 requested your phone number")
+        _chatMessageInfo.content = _chatMessageInfo.content = (QString::fromStdWString(L"%1 requested your phone number")
             .arg(_serviceFrom)).toStdString();
     }
 
@@ -3505,7 +3648,7 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGroupCall& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_CALL;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发起群通话, 时长: %2秒").arg(_serviceFrom).arg(actionContent.duration)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发起群通话, 时长: %2秒").arg(_serviceFrom).arg(actionContent.duration)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionInviteToGroupCall& actionContent) {
@@ -3519,7 +3662,7 @@ namespace Main {
             msgContent += _account.getUserDisplayName(_account.session().data().user(peerToUser(userId)));
         }
 
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 添加 %2 进行语音通话").arg(_serviceFrom).arg(msgContent)).toStdString();
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 添加 %2 进行语音通话").arg(_serviceFrom).arg(msgContent)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetMessagesTTL& actionContent) {
@@ -3571,13 +3714,13 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSetChatTheme& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 设置聊天背景")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 设置聊天背景")
             .arg(_serviceFrom)).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionChatJoinedByRequest& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 joined group by request")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 joined group by request")
             .arg(_serviceFrom)).toStdString();
     }
 
@@ -3614,19 +3757,19 @@ namespace Main {
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicCreate& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 发布公告: %2")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 发布公告: %2")
             .arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionTopicEdit& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 编辑公告: %2")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 编辑公告: %2")
             .arg(_serviceFrom).arg(actionContent.title.constData())).toStdString();
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionSuggestProfilePhoto& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
-        _chatMessageInfo.content = (QString::fromWCharArray(L"%1 suggests to use this photo")
+        _chatMessageInfo.content = (QString::fromStdWString(L"%1 suggests to use this photo")
             .arg(_serviceFrom)).toStdString();
     }
 
@@ -3656,6 +3799,26 @@ namespace Main {
     }
 
     void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionBoostApply& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPaymentRefunded& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionGiftStars& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionPrizeStars& actionContent) {
+        _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
+        _chatMessageInfo.content = QString("requested: "_q).toStdString();
+    }
+
+    void Main::Account::ServerMessageVisitor::operator()(const Export::Data::ActionStarGift& actionContent) {
         _chatMessageInfo.msgType = IMMsgType::APP_SYSTEM_TEXT;
         _chatMessageInfo.content = QString("requested: "_q).toStdString();
     }
@@ -3717,7 +3880,7 @@ namespace Main {
             _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toStdString());
 
             if (file.size == 0 || file.size > _account._maxAttachFileSize) {
-                _account.uploadMsg(QString::fromWCharArray(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
+                _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
@@ -3726,7 +3889,7 @@ namespace Main {
 
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
-                _account.uploadMsg(QString::fromWCharArray(L"附件: [%1] 已下载，跳过 ...")
+                _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
@@ -3844,7 +4007,7 @@ namespace Main {
             }
 
             if (file.size == 0 || file.size > _account._maxAttachFileSize) {
-                _account.uploadMsg(QString::fromWCharArray(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
+                _account.uploadMsg(QString::fromStdWString(L"附件大小限制为：%1，跳过文件 [%2] 大小：%3 ...")
                     .arg(_account.getFormatFileSize(_account._maxAttachFileSize))
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
@@ -3853,7 +4016,7 @@ namespace Main {
 
             // 跳过已存在文件
             if (file.size > 0 && QFileInfo(downloadFileInfo.saveFilePath).size() >= file.size) {
-                _account.uploadMsg(QString::fromWCharArray(L"附件: [%1] 已下载，跳过 ...")
+                _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
                     .arg(downloadFileInfo.fileName));
                 break;
             }
@@ -3903,6 +4066,15 @@ namespace Main {
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::Poll& media) {}
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::GiveawayStart& media) {}
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::GiveawayResults& media) {}
+
+    void Main::Account::MessageMediaVisitor::operator()(const Export::Data::PaidMedia& media) {
+        /*for (auto& extendedMedia : media.extended) {
+            Main::Account::MessageMediaVisitor visitor(_account, _chatMessageInfo, _message);
+            std::visit(visitor, extendedMedia->content);
+        }*/
+    }
 
     void Main::Account::MessageMediaVisitor::operator()(const Export::Data::UnsupportedMedia& media) {}
 
@@ -4984,7 +5156,6 @@ namespace Main {
 
     bool Account::init() {
         bool ok = false;
-        const wchar_t* errMsg = nullptr;
 
         do {
             QString activeAccount = Core::App().activeAccountId();
@@ -4992,20 +5163,30 @@ namespace Main {
                 break;
             }
 
-            if (GetFileAttributesW(_dataPath.c_str()) == -1) {
-                CreateDirectoryW(_dataPath.c_str(), nullptr);
+            QDir dir;
+            QString path = QString::fromStdWString(_dataPath);
+
+            if (!dir.exists(path)) {
+                dir.mkdir(path);
             }
 
-            if (GetFileAttributesW(_profilePhotoPath.c_str()) == -1) {
-                CreateDirectoryW(_profilePhotoPath.c_str(), nullptr);
+            path = QString::fromStdWString(_profilePhotoPath);
+            if (!dir.exists(path)) {
+                dir.mkdir(path);
             }
 
-            if (GetFileAttributesW(_attachPath.c_str()) == -1) {
-                CreateDirectoryW(_attachPath.c_str(), nullptr);
+            path = QString::fromStdWString(_attachPath);
+            if (!dir.exists(path)) {
+                dir.mkdir(path);
             }
 
+#ifdef _MSC_VER
             std::wstring dataDbPath = _dataPath + _session->user()->phone().toStdWString() + L".db";
             int ret = sqlite3_open16(dataDbPath.c_str(), &_dataDb);
+#else
+            std::string dataDbPath = _utf8DataPath + qstringToStdString(_session->user()->phone()) + ".db";
+            int ret = sqlite3_open(dataDbPath.c_str(), &_dataDb);
+#endif
             if (ret != SQLITE_OK) {
                 break;
             }
@@ -5148,76 +5329,78 @@ namespace Main {
 
         } while (false);
 
-        if (!ok && _dataDb) {
-            errMsg = (const wchar_t*)sqlite3_errmsg16(_dataDb);
-        }
-
         return ok;
     }
 
-    bool Account::getRecvPipeCmd() {
+    bool Account::getRecvCmd() {
         bool isValidCmd = false;
         {
-            std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
-            if (!_recvPipeCmds.empty()) {
-                auto iter = _runningPipeCmds.find(_curRecvCmd.uniqueId);
-                if (iter != _runningPipeCmds.end()) {
+            std::lock_guard<std::mutex> locker(*_cmdsLock);
+            if (!_recvCmds.empty()) {
+                auto iter = _runningCmds.find(_curRecvCmd.uniqueId);
+                if (iter != _runningCmds.end()) {
                     isValidCmd = false;
                 } else {
                     _curRecvCmd.Clear();
-                    _curRecvCmd = _recvPipeCmds.front();
-                    _recvPipeCmds.pop_front();
-                    _runningPipeCmds.emplace(_curRecvCmd.uniqueId);
+                    _curRecvCmd = _recvCmds.front();
+                    _recvCmds.pop_front();
+                    _runningCmds.emplace(_curRecvCmd.uniqueId);
                     isValidCmd = true;
+
+                    LOG(("[Account][recv cmd] %1").arg(QString::fromUtf8(_curRecvCmd.content.c_str())));
                 }
             }
         }
         return isValidCmd;
     }
 
-    PipeCmd::Cmd Account::sendPipeCmd(
-        const PipeCmd::Cmd& cmd,
+    Command::Cmd Account::sendCmd(
+        const Command::Cmd& cmd,
         bool waitDone
     ) {
         {
-            std::lock_guard<std::mutex> locker(*_pipeCmdsLock);
-            auto iter = _runningPipeCmds.find(cmd.uniqueId);
-            if (iter != _runningPipeCmds.end()) {
-                _runningPipeCmds.erase(iter);
+            std::lock_guard<std::mutex> locker(*_cmdsLock);
+            auto iter = _runningCmds.find(cmd.uniqueId);
+            if (iter != _runningCmds.end()) {
+                _runningCmds.erase(iter);
             }
         }
 
-        PipeCmd::Cmd resultCmd;
+        Command::Cmd resultCmd;
         {
-            std::lock_guard<std::mutex> locker(*_sendPipeCmdLock);
-            resultCmd = _pipe->SendCmd(cmd, waitDone);
+            std::lock_guard<std::mutex> locker(*_sendCmdLock);
+            resultCmd = _socketWrapper->sendCmd(cmd, waitDone);
         }
 
         return resultCmd;
     }
 
-    PipeCmd::Cmd Account::sendPipeResult(
-        const PipeCmd::Cmd& recvCmd,
+    Command::Cmd Account::sendCmdResult(
+        const Command::Cmd& recvCmd,
         TelegramCmd::Status status,
         const QString& content,
         const QString& error
     ) {
-        PipeCmd::Cmd resultCmd;
+        Command::Cmd resultCmd;
         resultCmd.action = recvCmd.action;
         resultCmd.uniqueId = recvCmd.uniqueId;
         resultCmd.content = content.toUtf8().constData();
 
-        ProtobufCmd::Content protobufContent;
-        addExtraData(protobufContent, "content", content.toUtf8().constData());
-        addExtraData(protobufContent, "status", std::int32_t(status));
+        QJsonObject obj;
+
+        obj.insert("status", QJsonValue(std::int32_t(status)));
+        obj.insert("content", content);
 
         if (!error.isEmpty()) {
-            addExtraData(protobufContent, "error", error.toUtf8().constData());
+            obj.insert("error", error);
         }
 
-        protobufContent.SerializeToString(&resultCmd.content);
+        QJsonDocument document;
+        document.setObject(obj);
 
-        LOG(("[Account][sendPipeResult] unique ID: %1 action: %2 status: %3 content:%4 %5")
+        resultCmd.content = document.toJson(QJsonDocument::Compact).data();
+
+        LOG(("[Account][sendCmdResult] unique ID: %1 action: %2 status: %3 content:%4 %5")
             .arg(QString::fromUtf8(resultCmd.uniqueId.c_str()))
             .arg(telegramActionToString((TelegramCmd::Action)resultCmd.action))
             .arg((std::int32_t)status)
@@ -5225,11 +5408,11 @@ namespace Main {
             .arg(!error.isEmpty() ? ("error: " + error) : "")
         );
 
-        return sendPipeCmd(resultCmd, false);
+        return sendCmd(resultCmd, false);
     }
 
     void Account::uploadMsg(const QString& content) {
-        PipeCmd::Cmd cmd;
+        Command::Cmd cmd;
         cmd.action = std::int32_t(TelegramCmd::Action::UploadMsg);
         cmd.content = content.toUtf8().constData();
 
@@ -5237,7 +5420,7 @@ namespace Main {
             .arg(content)
         );
 
-        sendPipeCmd(cmd, false);
+        sendCmd(cmd, false);
     }
 
     void Account::checkForTokenUpdate(const MTPUpdates& updates) {
@@ -5283,7 +5466,7 @@ namespace Main {
         } else if (base::take(_forceRefresh)) {
             refreshQrCode();
         } else {
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
         }
     }
 
@@ -5324,11 +5507,11 @@ namespace Main {
             }
 
             if (_curRecvCmd.action == std::int32_t(TelegramCmd::Action::GenerateQrCode)) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::Success, qrcodeString);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, qrcodeString);
             } else {
-                PipeCmd::Cmd cmd;
+                Command::Cmd cmd;
                 cmd.action = std::int32_t(TelegramCmd::Action::GenerateQrCode);
-                sendPipeResult(cmd, TelegramCmd::Status::Success, qrcodeString);
+                sendCmdResult(cmd, TelegramCmd::Status::Success, qrcodeString);
             }
             }, [&](const MTPDauth_loginTokenMigrateTo& data) {
                 importTo(data.vdc_id().v, data.vtoken().v);
@@ -5370,17 +5553,17 @@ namespace Main {
             const auto& d = result.c_account_password();
             _passwordState = Core::ParseCloudPasswordState(d);
             if (!d.vcurrent_algo() || !d.vsrp_id() || !d.vsrp_B()) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", "API Error: No current password received on login.");
             } else if (!_passwordState.hasPassword) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
             } else {
                 if ((TelegramCmd::Action)_curRecvCmd.action == TelegramCmd::Action::SecondVerify) {
                     checkPasswd(_curRecvCmd.content);
                 } else {
-                    sendPipeResult(_curRecvCmd, TelegramCmd::Status::NeedVerify);
+                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::NeedVerify);
                 }
             }}).fail([=](const MTP::Error& error) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
                 }).handleFloodErrors().send();
     }
 
@@ -5390,7 +5573,7 @@ namespace Main {
                 _passwordState.mtp.request,
                 _passwordHash);
             if (!check) {
-                sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                 break;
             }
 
@@ -5406,15 +5589,15 @@ namespace Main {
                             QString type = error.type();
                             int index = type.indexOf("FLOOD_WAIT_");
                             if (index != -1) {
-                                desc = QString::fromWCharArray(L"登录频繁！");
+                                desc = QString::fromStdWString(L"登录频繁！");
 
                                 int secs = type.mid(index + QString("FLOOD_WAIT_").size()).toInt();
                                 if (secs > 0) {
-                                    desc.append(QString::fromWCharArray(L"需等待%1").arg(getFormatSecsString(secs)));
+                                    desc.append(QString::fromStdWString(L"需等待%1").arg(getFormatSecsString(secs)));
                                 }
                             }
 
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
                             break;
                         }
 
@@ -5422,11 +5605,11 @@ namespace Main {
                         const auto& type = error.type();
                         if (type == u"PASSWORD_HASH_INVALID"_q
                             || type == u"SRP_PASSWORD_CHANGED"_q) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
                             break;
                         } else if (type == u"PASSWORD_EMPTY"_q
                             || type == u"AUTH_KEY_UNREGISTERED"_q) {
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                             break;
                         } else if (type == u"SRP_ID_INVALID"_q) {
                             handleSrpIdInvalid();
@@ -5438,7 +5621,7 @@ namespace Main {
                                 //showError(rpl::single(Lang::Hard::ServerError()));
                             }
 
-                            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                         }
                     } while (false);
                     }).handleFloodErrors().send();
@@ -5450,7 +5633,7 @@ namespace Main {
         if (_lastSrpIdInvalidTime > 0
             && now - _lastSrpIdInvalidTime < Core::kHandleSrpIdInvalidTimeout) {
             _passwordState.mtp.request.id = 0;
-            sendPipeResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
         } else {
             _lastSrpIdInvalidTime = now;
             requestPasswordData();
@@ -5468,139 +5651,6 @@ namespace Main {
         if (!_requestId && status == MTP::RequestSent) {
             _checkRequest = false;
         }
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        const std::string& value
-    ) {
-        ProtobufCmd::Extra* extra = content.add_extra();
-        if (extra) {
-            extra->set_type(ProtobufCmd::ExtraType::String);
-            extra->set_key(key);
-            extra->set_string_value(value);
-        }
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        long long value
-    ) {
-        ProtobufCmd::Extra* extra = content.add_extra();
-        if (extra) {
-            extra->set_type(ProtobufCmd::ExtraType::Num);
-            extra->set_key(key);
-            extra->set_num_value(value);
-        }
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        unsigned long long value
-    ) {
-        ProtobufCmd::Extra* extra = content.add_extra();
-        if (extra) {
-            extra->set_type(ProtobufCmd::ExtraType::Num);
-            extra->set_key(key);
-            extra->set_num_value(value);
-        }
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        int value
-    ) {
-        return addExtraData(content, key, (long long)value);
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        unsigned int value
-    ) {
-        return addExtraData(content, key, (unsigned long long)value);
-    }
-
-    void Account::addExtraData(
-        ProtobufCmd::Content& content,
-        const std::string& key,
-        double value
-    ) {
-        ProtobufCmd::Extra* extra = content.add_extra();
-        if (extra) {
-            extra->set_type(ProtobufCmd::ExtraType::Real);
-            extra->set_key(key);
-            extra->set_real_value(value);
-        }
-    }
-
-    std::string Account::getStringExtraData(
-        const ProtobufCmd::Content& content,
-        const std::string& key
-    ) {
-        std::string data;
-
-        for (const auto& extra : content.extra()) {
-            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::String) {
-                data = extra.string_value();
-                break;
-            }
-        }
-
-        return data;
-    }
-
-    long long Account::getNumExtraData(
-        const ProtobufCmd::Content& content,
-        const std::string& key
-    ) {
-        long long data = -1LL;
-
-        for (const auto& extra : content.extra()) {
-            auto key = extra.key();
-            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Num) {
-                data = extra.num_value();
-                break;
-            }
-        }
-
-        return data;
-    }
-
-    double Account::getRealExtraData(
-        const ProtobufCmd::Content& content,
-        const std::string& key
-    ) {
-        double data = 0.0;
-
-        for (const auto& extra : content.extra()) {
-            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Real) {
-                data = extra.real_value();
-                break;
-            }
-        }
-
-        return data;
-    }
-
-    bool Account::getBooleanExtraData(
-        const ProtobufCmd::Content& content,
-        const std::string& key
-    ) {
-        bool data = false;
-
-        for (const auto& extra : content.extra()) {
-            if (extra.key() == key && extra.type() == ProtobufCmd::ExtraType::Num) {
-                data = extra.num_value() != 0;
-                break;
-            }
-        }
-
-        return data;
     }
 
     QString Account::telegramActionToString(TelegramCmd::Action action) {
@@ -5743,7 +5793,7 @@ namespace Main {
     }
 
     [[nodiscard]] QString Account::validatedInternalLinksDomain() {
-        QString dominLink = MTP::ConfigFields().internalLinksDomain;
+        QString dominLink = MTP::ConfigFields(MTP::Environment::Production).internalLinksDomain;
 
         // This domain should start with 'http[s]://' and end with '/'.
         // Like 'https://telegram.me/' or 'https://t.me/'.
@@ -5756,7 +5806,7 @@ namespace Main {
             if (domain.startsWith(prefix, Qt::CaseInsensitive)) {
                 dominLink = domain.endsWith('/')
                     ? domain
-                    : MTP::ConfigFields().internalLinksDomain;
+                    : MTP::ConfigFields(MTP::Environment::Production).internalLinksDomain;
                 break;
             }
         }
@@ -5908,7 +5958,7 @@ namespace Main {
                     channel,
                     Data::PeerUpdate::Flag::ChannelAmIn);
                 _peerJoinedStatus[_curPeerUsername.first] = true;
-                uploadMsg(QString::fromWCharArray(L"已加入群组或频道 [%1] ！")
+                uploadMsg(QString::fromStdWString(L"已加入群组或频道 [%1] ！")
                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
             } else {
                 sendJoinRequest = true;
@@ -5917,7 +5967,7 @@ namespace Main {
                 )).done([=](const MTPUpdates& result) {
                     _peerJoinedStatus[_curPeerUsername.first] = true;
                     session().api().applyUpdates(result);
-                    uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 成功！")
+                    uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 成功！")
                         .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
                     joinToPeer();
                     }).fail([=](const MTP::Error& error) {
@@ -5927,28 +5977,28 @@ namespace Main {
                             && channel->invitePeekExpires()) {
                             channel->privateErrorReceived();
                         } else if (type == u"CHANNELS_TOO_MUCH"_q) {
-                            uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！达到人数上限！")
+                            uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！达到人数上限！")
                                 .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first));
                         } else {
                             const QString text = [&] {
                                 if (type == u"INVITE_REQUEST_SENT"_q) {
                                     return channel->isMegagroup()
-                                        ? QString::fromWCharArray(L"一旦群组管理员批准您的请求，您就会被添加到群组中。")
-                                        : QString::fromWCharArray(L"一旦频道管理员批准您的请求，您就会被添加到该频道。");
+                                        ? QString::fromStdWString(L"一旦群组管理员批准您的请求，您就会被添加到群组中。")
+                                        : QString::fromStdWString(L"一旦频道管理员批准您的请求，您就会被添加到该频道。");
                                 } else if (type == u"CHANNEL_PRIVATE"_q
                                     || type == u"CHANNEL_PUBLIC_GROUP_NA"_q
                                     || type == u"USER_BANNED_IN_CHANNEL"_q) {
                                     return channel->isMegagroup()
-                                        ? QString::fromWCharArray(L"该群组无法访问。")
-                                        : QString::fromWCharArray(L"该频道无法访问。");
+                                        ? QString::fromStdWString(L"该群组无法访问。")
+                                        : QString::fromStdWString(L"该频道无法访问。");
                                 } else if (type == u"USERS_TOO_MUCH"_q) {
-                                    return QString::fromWCharArray(L"这个群已经满了。");
+                                    return QString::fromStdWString(L"这个群已经满了。");
                                 }
                                 return QString();
                                 }();
 
                             if (!text.isEmpty()) {
-                                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                                uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！%2")
                                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
                                     .arg(text));
                             }
@@ -5986,7 +6036,7 @@ namespace Main {
 
                 }
 
-                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！%2")
                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
                     .arg(error.description()));
 
@@ -6002,8 +6052,12 @@ namespace Main {
             done(peer);
             return;
         }
+
+        MTPflags<MTPcontacts_resolveUsername::Flags> flags = tl::make_flags(MTPcontacts_resolveUsername::Flag::f_referer);
         _session->api().request(MTPcontacts_ResolveUsername(
-            MTP_string(username)
+            flags,
+            MTP_string(username),
+            MTP_string("referrer")
         )).done([=](const MTPcontacts_ResolvedPeer& result) {
             resolvePeerDone(result, done);
             }).fail([=](const MTP::Error& error) {
@@ -6011,7 +6065,7 @@ namespace Main {
 
                 }
 
-                uploadMsg(QString::fromWCharArray(L"加入群组或频道 [%1] 失败！%2")
+                uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！%2")
                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
                     .arg(error.description()));
 
@@ -6100,9 +6154,9 @@ namespace Main {
     }
 
     void Account::checkRequestTimerCallback() {
-        PipeCmd::Cmd cmd;
+        Command::Cmd cmd;
         cmd.action = (std::int32_t)TelegramCmd::Action::Restart;
-        sendPipeCmd(cmd);
+        sendCmd(cmd);
     }
 
 } // namespace Main

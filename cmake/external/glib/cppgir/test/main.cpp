@@ -599,6 +599,21 @@ test_wrap()
     w1 = wrap(exc, transfer_full);
     // wrapper will clean up
   }
+
+  { // compile checks on cs_ptr helper
+    using Object = gi::repository::GObject::Object;
+    auto g = [](Object) {};
+    auto f = [&g](const gi::cs_ptr<Object> &ob) {
+      ob->handler_block(0);
+      Object obx = ob;
+      auto y = ob;
+      auto x = [y]() { y->handler_block(1); };
+      g(ob);
+    };
+    Object ob{};
+    if (false)
+      f(ob);
+  }
 }
 
 using gi::detail::Collection;

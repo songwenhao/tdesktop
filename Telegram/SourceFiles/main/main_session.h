@@ -26,6 +26,7 @@ struct ConfigFields;
 namespace Support {
 class Helper;
 class Templates;
+class FastButtonsBots;
 } // namespace Support
 
 namespace Data {
@@ -35,7 +36,14 @@ class RecentPeers;
 class ScheduledMessages;
 class SponsoredMessages;
 class TopPeers;
+class Factchecks;
+class LocationPickers;
+class Credits;
 } // namespace Data
+
+namespace HistoryView::Reactions {
+class CachedIconFactory;
+} // namespace HistoryView::Reactions
 
 namespace Storage {
 class DownloadManagerMtproto;
@@ -120,6 +128,18 @@ public:
 	[[nodiscard]] Data::TopPeers &topPeers() const {
 		return *_topPeers;
 	}
+	[[nodiscard]] Data::TopPeers &topBotApps() const {
+		return *_topBotApps;
+	}
+	[[nodiscard]] Data::Factchecks &factchecks() const {
+		return *_factchecks;
+	}
+	[[nodiscard]] Data::LocationPickers &locationPickers() const {
+		return *_locationPickers;
+	}
+	[[nodiscard]] Data::Credits &credits() const {
+		return *_credits;
+	}
 	[[nodiscard]] Api::Updates &updates() const {
 		return *_updates;
 	}
@@ -155,6 +175,10 @@ public:
 	}
 	[[nodiscard]] InlineBots::AttachWebView &attachWebView() const {
 		return *_attachWebView;
+	}
+	[[nodiscard]] auto cachedReactionIconFactory() const
+	-> HistoryView::Reactions::CachedIconFactory & {
+		return *_cachedReactionIconFactory;
 	}
 
 	void saveSettings();
@@ -210,14 +234,13 @@ public:
 	[[nodiscard]] bool supportMode() const;
 	[[nodiscard]] Support::Helper &supportHelper() const;
 	[[nodiscard]] Support::Templates &supportTemplates() const;
+	[[nodiscard]] Support::FastButtonsBots &fastButtonsBots() const;
 
 	[[nodiscard]] auto colorIndicesValue()
 		-> rpl::producer<Ui::ColorIndicesCompressed>;
 
 private:
 	static constexpr auto kDefaultSaveDelay = crl::time(1000);
-
-	void parseColorIndices(const MTPDhelp_peerColors &data);
 
 	const UserId _userId;
 	const not_null<Account*> _account;
@@ -245,8 +268,16 @@ private:
 	const std::unique_ptr<Data::ScheduledMessages> _scheduledMessages;
 	const std::unique_ptr<Data::SponsoredMessages> _sponsoredMessages;
 	const std::unique_ptr<Data::TopPeers> _topPeers;
+	const std::unique_ptr<Data::TopPeers> _topBotApps;
+	const std::unique_ptr<Data::Factchecks> _factchecks;
+	const std::unique_ptr<Data::LocationPickers> _locationPickers;
+	const std::unique_ptr<Data::Credits> _credits;
+
+	using ReactionIconFactory = HistoryView::Reactions::CachedIconFactory;
+	const std::unique_ptr<ReactionIconFactory> _cachedReactionIconFactory;
 
 	const std::unique_ptr<Support::Helper> _supportHelper;
+	const std::unique_ptr<Support::FastButtonsBots> _fastButtonsBots;
 
 	std::shared_ptr<QImage> _selfUserpicView;
 	rpl::variable<bool> _premiumPossible = false;

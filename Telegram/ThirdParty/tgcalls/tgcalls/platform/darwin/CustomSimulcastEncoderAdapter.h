@@ -31,6 +31,7 @@
 #include "rtc_base/experiments/encoder_info_settings.h"
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/system/rtc_export.h"
+#include "api/field_trials_view.h"
 
 namespace webrtc {
 
@@ -48,7 +49,8 @@ class RTC_EXPORT CustomSimulcastEncoderAdapter : public VideoEncoder {
   // will be used if InitEncode() fails for the primary encoder.
   CustomSimulcastEncoderAdapter(VideoEncoderFactory* primary_factory,
                           VideoEncoderFactory* hardware_factory,
-                          const SdpVideoFormat& format);
+                          const SdpVideoFormat& format,
+                          const FieldTrialsView& field_trials);
   ~CustomSimulcastEncoderAdapter() override;
 
   // Implements VideoEncoder.

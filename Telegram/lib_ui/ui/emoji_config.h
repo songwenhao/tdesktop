@@ -104,17 +104,12 @@ public:
 		return "emoji://e." + QString::number(index());
 	}
 
-	[[nodiscard]] uint8 surrogatePairs() const {
-		return _surrogatePairs;
-	}
-
 private:
 	const QString _id;
 	const EmojiPtr _original = nullptr;
 	const uint32 _index = 0;
 	const bool _hasPostfix = false;
 	const bool _colorizable = false;
-	const uint8 _surrogatePairs;
 
 	friend void internal::Init();
 
@@ -132,8 +127,8 @@ private:
 	return internal::Find(start, end, outLength);
 }
 
-[[nodiscard]] inline EmojiPtr Find(const QString &text, int *outLength = nullptr) {
-	return Find(text.constBegin(), text.constEnd(), outLength);
+[[nodiscard]] inline EmojiPtr Find(QStringView text, int *outLength = nullptr) {
+	return Find(text.begin(), text.end(), outLength);
 }
 
 [[nodiscard]] QString IdFromOldKey(uint64 oldKey);

@@ -35,7 +35,7 @@ inline bool contains(const Container &container, const T &value) {
 
 template <typename Container>
 inline void reorder(Container &container, int oldPosition, int newPosition) {
-	const auto b = begin(container);
+	const auto b = container.begin();
 	if (oldPosition < newPosition) {
 		std::rotate(
 			b + oldPosition,
@@ -48,6 +48,19 @@ inline void reorder(Container &container, int oldPosition, int newPosition) {
 			b + oldPosition + 1);
 	}
 
+}
+
+[[nodiscard]] inline int reorder_index(
+		int index,
+		int oldPosition,
+		int newPosition) {
+	return (index == oldPosition)
+		? newPosition
+		: (oldPosition < index && index <= newPosition)
+		? (index - 1)
+		: (oldPosition > index && index >= newPosition)
+		? (index + 1)
+		: index;
 }
 
 template <typename D, typename T>

@@ -68,9 +68,15 @@ public:
   operator Gio::Cancellable() { return cancellable(); }
 };
 
+#if GI_CONST_METHOD
+#define CONST_METHOD const
+#else
+#define CONST_METHOD
+#endif
+
 template<typename Result, typename Object>
 qt_future<Result> make_future(
-    Result (Object::*mf)(Gio::AsyncResult, GLib::Error *))
+    Result (Object::*mf)(Gio::AsyncResult, GLib::Error *) CONST_METHOD)
 {
   ResultExtractor<Result> f;
   f = [mf](GObject_::Object cbobj, Gio::AsyncResult result,

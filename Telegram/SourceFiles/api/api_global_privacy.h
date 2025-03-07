@@ -23,6 +23,10 @@ enum class UnarchiveOnNewMessage {
 	AnyUnmuted,
 };
 
+[[nodiscard]] PeerId ParsePaidReactionShownPeer(
+	not_null<Main::Session*> session,
+	const MTPPaidReactionPrivacy &value);
+
 class GlobalPrivacy final {
 public:
 	explicit GlobalPrivacy(not_null<ApiWrap*> api);
@@ -49,6 +53,11 @@ public:
 	[[nodiscard]] bool newRequirePremiumCurrent() const;
 	[[nodiscard]] rpl::producer<bool> newRequirePremium() const;
 
+	void loadPaidReactionShownPeer();
+	void updatePaidReactionShownPeer(PeerId shownPeer);
+	[[nodiscard]] PeerId paidReactionShownPeerCurrent() const;
+	[[nodiscard]] rpl::producer<PeerId> paidReactionShownPeer() const;
+
 private:
 	void apply(const MTPGlobalPrivacySettings &data);
 
@@ -67,7 +76,9 @@ private:
 	rpl::variable<bool> _showArchiveAndMute = false;
 	rpl::variable<bool> _hideReadTime = false;
 	rpl::variable<bool> _newRequirePremium = false;
+	rpl::variable<PeerId> _paidReactionShownPeer = false;
 	std::vector<Fn<void()>> _callbacks;
+	bool _paidReactionShownPeerLoaded = false;
 
 };
 

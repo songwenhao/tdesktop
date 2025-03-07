@@ -30,17 +30,21 @@ Box {
 	bg: color;
 	titleAdditionalFg: color;
 	shadowIgnoreTopSkip: bool;
+	shadowIgnoreBottomSkip: bool;
 }
 
 boxDuration: 200;
 boxRadius: 8px;
 
 boxButtonFont: font(boxFontSize semibold);
+defaultBoxButtonTextStyle: TextStyle(semiboldTextStyle) {
+	font: font(14px semibold);
+}
 defaultBoxButton: RoundButton(defaultLightButton) {
 	width: -30px;
 	height: 34px;
 	textTop: 7px;
-	font: font(14px semibold);
+	style: defaultBoxButtonTextStyle;
 }
 
 boxLabelStyle: TextStyle(boxTextStyle) {
@@ -105,9 +109,7 @@ boxTitleClose: IconButton(defaultIconButton) {
 
 	rippleAreaPosition: point(4px, 4px);
 	rippleAreaSize: 40px;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 
 boxLinkButton: LinkButton(defaultLinkButton) {
@@ -172,15 +174,14 @@ defaultSubsectionTitlePadding: margins(22px, 7px, 10px, 9px);
 separatePanelBorderCacheSize: 60px;
 separatePanelTitleHeight: 62px;
 separatePanelNoTitleHeight: 32px;
+separatePanelTitleBadgeSkip: 6px;
 separatePanelClose: IconButton(boxTitleClose) {
 	width: 60px;
 	height: 60px;
 
 	rippleAreaPosition: point(8px, 8px);
 	rippleAreaSize: 44px;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 separatePanelMenu: IconButton(separatePanelClose) {
 	width: 44px;
@@ -202,11 +203,43 @@ separatePanelTitle: FlatLabel(defaultFlatLabel) {
 separatePanelTitleTop: 18px;
 separatePanelTitleLeft: 22px;
 separatePanelTitleSkip: 0px;
+separatePanelTitleBadgeTop: 4px;
+separatePanelSearch: IconButton(separatePanelClose) {
+	width: 44px;
+
+	icon: icon {{ "box_search", boxTitleCloseFg }};
+	iconOver: icon {{ "box_search", boxTitleCloseFgOver }};
+
+	rippleAreaPosition: point(0px, 8px);
+}
 separatePanelBack: IconButton(separatePanelClose) {
 	icon: icon {{ "box_button_back", boxTitleCloseFg }};
 	iconOver: icon {{ "box_button_back", boxTitleCloseFgOver }};
 }
 separatePanelDuration: 150;
+
+fullScreenPanelClose: IconButton {
+	width: 44px;
+	height: 44px;
+
+	icon: icon {{ "box_button_close", radialFg }};
+	iconOver: icon {{ "box_button_close", radialFg }};
+	iconPosition: point(-1px, -1px);
+
+	rippleAreaPosition: point(0px, 0px);
+	rippleAreaSize: 44px;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: shadowFg;
+	}
+}
+fullScreenPanelBack: IconButton(fullScreenPanelClose) {
+	icon: icon {{ "box_button_back", radialFg }};
+	iconOver: icon {{ "box_button_back", radialFg }};
+}
+fullScreenPanelMenu: IconButton(fullScreenPanelClose) {
+	icon: icon {{ "title_menu_dots", radialFg }};
+	iconOver: icon {{ "title_menu_dots", radialFg }};
+}
 
 webviewDialogButton: defaultBoxButton;
 webviewDialogDestructiveButton: attentionBoxButton;
@@ -214,6 +247,6 @@ webviewDialogSubmit: RoundButton(defaultActiveButton) {
 	width: -48px;
 	height: 34px;
 	textTop: 7px;
-	font: font(14px semibold);
+	style: defaultBoxButtonTextStyle;
 }
 webviewDialogPadding: margins(8px, 12px, 15px, 12px);

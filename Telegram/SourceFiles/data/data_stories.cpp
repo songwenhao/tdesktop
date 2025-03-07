@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_stories.h"
 
-#include "api/api_report.h"
 #include "base/unixtime.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -63,7 +62,9 @@ using UpdateFlag = StoryUpdate::Flag;
 	}, [&](const MTPDmessageMediaDocument &data)
 		-> std::optional<StoryMedia> {
 		if (const auto document = data.vdocument()) {
-			const auto result = owner->processDocument(*document);
+			const auto result = owner->processDocument(
+				*document,
+				data.valt_documents());
 			if (!result->isNull()
 				&& (result->isGifv() || result->isVideoFile())) {
 				result->setStoryMedia(true);
@@ -311,7 +312,7 @@ void Stories::scheduleExpireTimer() {
 			const auto nearest = _expiring.front().first;
 			const auto now = base::unixtime::now();
 			const auto delay = (nearest > now)
-				? (nearest - now)
+				? std::min(nearest - now, 86'400)
 				: 0;
 			_expireTimer.callOnce(delay * crl::time(1000));
 		}
@@ -1903,17 +1904,6 @@ void Stories::togglePinnedList(
 		_savedChanged.fire_copy(peerId);
 	}).send();
 
-}
-
-void Stories::report(
-		std::shared_ptr<Ui::Show> show,
-		FullStoryId id,
-		Ui::ReportReason reason,
-		QString text) {
-	if (const auto maybeStory = lookup(id)) {
-		const auto story = *maybeStory;
-		Api::SendReport(show, story->peer(), reason, text, story->id());
-	}
 }
 
 bool Stories::isQuitPrevent() {

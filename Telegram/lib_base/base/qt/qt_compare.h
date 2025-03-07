@@ -21,11 +21,13 @@ template <typename P>
 	return a.get() <=> b.get();
 }
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
 [[nodiscard]] inline std::strong_ordering operator<=>(
 		const QString &a,
 		const QString &b) noexcept {
 	return a.compare(b) <=> 0;
 }
+#endif // Qt < 6.8.0
 
 template <typename T>
 [[nodiscard]] inline std::strong_ordering operator<=>(
@@ -49,7 +51,7 @@ namespace base::details {
 
 template <typename T>
 using compare_three_way_result_t = decltype(
-    (std::declval<const std::remove_reference_t<T>&>()
+	(std::declval<const std::remove_reference_t<T>&>()
 		<=> std::declval<const std::remove_reference_t<T>&>()));
 
 template <typename ...Types>

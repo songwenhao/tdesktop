@@ -21,12 +21,14 @@ struct MessageToEdit {
 	FullMsgId fullId;
 	Api::SendOptions options;
 	TextWithTags textWithTags;
+	bool spoilered = false;
 };
 struct VoiceToSend {
 	QByteArray bytes;
 	VoiceWaveform waveform;
 	crl::time duration = 0;
 	Api::SendOptions options;
+	bool video = false;
 };
 struct SendActionUpdate {
 	Api::SendProgressType type = Api::SendProgressType();
@@ -46,6 +48,7 @@ struct WriteRestriction {
 	QString text;
 	QString button;
 	Type type = Type::None;
+	int boostsToLift = false;
 
 	[[nodiscard]] bool empty() const {
 		return (type == Type::None);

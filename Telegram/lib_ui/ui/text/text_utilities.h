@@ -50,7 +50,9 @@ inline constexpr auto Upper = details::ToUpperType{};
 	return { text };
 }
 
-[[nodiscard]] TextWithEntities SingleCustomEmoji(QString data);
+[[nodiscard]] TextWithEntities SingleCustomEmoji(
+	QString data,
+	QString text = QString());
 
 [[nodiscard]] inline auto ToUpper() {
 	return rpl::map(Upper);
@@ -89,6 +91,10 @@ inline constexpr auto Upper = details::ToUpperType{};
 [[nodiscard]] TextWithEntities Filtered(
 	const TextWithEntities &result,
 	const std::vector<EntityType> &types);
+
+[[nodiscard]] QString FixAmpersandInAction(QString text);
+
+[[nodiscard]] TextWithEntities WrapEmailPattern(const QString &);
 
 } // namespace Text
 } // namespace Ui

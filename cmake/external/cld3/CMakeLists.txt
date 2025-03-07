@@ -13,13 +13,13 @@ init_target(external_cld3_bundled "(external)")
 set(cld3_loc ${third_party_loc}/cld3)
 set(cld3_src ${cld3_loc}/src)
 
-set(gen_loc ${cld3_loc}/build/gen)
+set(gen_loc ${CMAKE_CURRENT_BINARY_DIR}/gen)
 set(gen_dst ${gen_loc}/cld_3/protos)
 
 if (DESKTOP_APP_USE_PACKAGED OR LINUX)
-    find_package(Protobuf)
-    if (NOT Protobuf_FOUND)
-        find_package(protobuf REQUIRED CONFIG)
+    find_package(protobuf CONFIG)
+    if (NOT protobuf_FOUND)
+        find_package(Protobuf MODULE REQUIRED)
     endif()
     set(protoc_executable protobuf::protoc)
     set(protobuf_lib protobuf::libprotobuf-lite)
@@ -82,6 +82,11 @@ PRIVATE
     script_span/text_processing.cc
     script_span/text_processing.h
     script_span/fixunicodevalue.cc
+)
+
+target_compile_definitions(external_cld3_bundled
+PUBLIC
+    $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
 )
 
 target_compile_options_if_exists(external_cld3_bundled

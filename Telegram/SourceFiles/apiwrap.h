@@ -59,6 +59,7 @@ class Show;
 namespace Api {
 
 struct SearchResult;
+struct GlobalMediaResult;
 
 class Updates;
 class Authorizations;
@@ -164,7 +165,9 @@ public:
 	void requestMessageData(PeerData *peer, MsgId msgId, Fn<void()> done);
 	QString exportDirectMessageLink(
 		not_null<HistoryItem*> item,
-		bool inRepliesContext);
+		bool inRepliesContext,
+		bool forceNonPublicLink = false,
+		std::optional<TimeId> videoTimestamp = {});
 	QString exportDirectStoryLink(not_null<Data::Story*> item);
 
 	void requestContacts();
@@ -244,7 +247,10 @@ public:
 	void updateSavedGifs();
 	void updateMasks();
 	void updateCustomEmoji();
-	void requestRecentStickersForce(bool attached = false);
+	void requestSpecialStickersForce(
+		bool faved,
+		bool recent,
+		bool attached);
 	void setGroupStickerSet(
 		not_null<ChannelData*> megagroup,
 		const StickerSetIdentifier &set);
@@ -274,12 +280,22 @@ public:
 		Fn<void(not_null<PeerData*>, MsgId)> callback);
 
 	using SliceType = Data::LoadDirection;
+	void requestHistory(
+		not_null<History*> history,
+		MsgId messageId,
+		SliceType slice);
 	void requestSharedMedia(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		Storage::SharedMediaType type,
 		MsgId messageId,
 		SliceType slice);
+	mtpRequestId requestGlobalMedia(
+		Storage::SharedMediaType type,
+		const QString &query,
+		int32 offsetRate,
+		Data::MessagePosition offsetPosition,
+		Fn<void(Api::GlobalMediaResult)> done);
 
 	void readFeaturedSetDelayed(uint64 setId);
 
@@ -310,6 +326,7 @@ public:
 		QByteArray result,
 		VoiceWaveform waveform,
 		crl::time duration,
+		bool video,
 		const SendAction &action);
 	void sendFiles(
 		Ui::PreparedList &&list,
@@ -352,7 +369,8 @@ public:
 		not_null<UserData*> bot,
 		not_null<InlineBots::Result*> data,
 		const SendAction &action,
-		std::optional<MsgId> localMessageId);
+		std::optional<MsgId> localMessageId,
+		Fn<void(bool)> done = nullptr);
 	void sendMessageFail(
 		const MTP::Error &error,
 		not_null<PeerData*> peer,
@@ -473,9 +491,10 @@ private:
 	void requestStickers(TimeId now);
 	void requestMasks(TimeId now);
 	void requestCustomEmoji(TimeId now);
-	void requestRecentStickers(TimeId now, bool attached = false);
-	void requestRecentStickersWithHash(uint64 hash, bool attached = false);
-	void requestFavedStickers(TimeId now);
+	void requestRecentStickers(
+		std::optional<TimeId> now,
+		bool attached);
+	void requestFavedStickers(std::optional<TimeId> now);
 	void requestFeaturedStickers(TimeId now);
 	void requestFeaturedEmoji(TimeId now);
 	void requestSavedGifs(TimeId now);
@@ -498,6 +517,10 @@ private:
 		MsgId topicRootId,
 		SharedMediaType type,
 		Api::SearchResult &&parsed);
+	void globalMediaDone(
+		SharedMediaType type,
+		FullMsgId messageId,
+		Api::GlobalMediaResult &&parsed);
 
 	void sendSharedContact(
 		const QString &phone,
@@ -511,7 +534,8 @@ private:
 		not_null<PeerData*> peer,
 		bool justClear,
 		bool revoke);
-	void applyAffectedMessages(const MTPmessages_AffectedMessages &result) const;
+	void applyAffectedMessages(
+		const MTPmessages_AffectedMessages &result) const;
 
 	void deleteAllFromParticipantSend(
 		not_null<ChannelData*> channel,
@@ -539,6 +563,10 @@ private:
 		const MTPInputMedia &media,
 		Api::SendOptions options,
 		uint64 randomId,
+		Fn<void(bool)> done = nullptr);
+	void sendMultiPaidMedia(
+		not_null<HistoryItem*> item,
+		not_null<SendingAlbum*> album,
 		Fn<void(bool)> done = nullptr);
 
 	void getTopPromotionDelayed(TimeId now, TimeId next);
@@ -644,6 +672,28 @@ private:
 			const SharedMediaRequest&) = default;
 	};
 	base::flat_set<SharedMediaRequest> _sharedMediaRequests;
+
+	struct HistoryRequest {
+		not_null<PeerData*> peer;
+		MsgId aroundId = 0;
+		SliceType sliceType = {};
+
+		friend inline auto operator<=>(
+			const HistoryRequest&,
+			const HistoryRequest&) = default;
+	};
+	base::flat_set<HistoryRequest> _historyRequests;
+
+	struct GlobalMediaRequest {
+		SharedMediaType mediaType = {};
+		FullMsgId aroundId;
+		SliceType sliceType = {};
+
+		friend inline auto operator<=>(
+			const GlobalMediaRequest&,
+			const GlobalMediaRequest&) = default;
+	};
+	base::flat_set<GlobalMediaRequest> _globalMediaRequests;
 
 	std::unique_ptr<DialogsLoadState> _dialogsLoadState;
 	TimeId _dialogsLoadTill = 0;

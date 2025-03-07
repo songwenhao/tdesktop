@@ -106,9 +106,9 @@ TextWithEntities RichLangValue(const QString &text) {
 	return result;
 }
 
-TextWithEntities SingleCustomEmoji(QString data) {
+TextWithEntities SingleCustomEmoji(QString data, QString text) {
 	return {
-		u"@"_q,
+		text.isEmpty() ? u"@"_q : text,
 		{ EntityInText(EntityType::CustomEmoji, 0, 1, data) },
 	};
 }
@@ -154,6 +154,24 @@ TextWithEntities Filtered(
 		return ranges::contains(types, entity.type());
 	}) | ranges::to<EntitiesInText>();
 	return { .text = text.text, .entities = std::move(result) };
+}
+
+QString FixAmpersandInAction(QString text) {
+	return text.replace('&', u"&&"_q);
+}
+
+TextWithEntities WrapEmailPattern(const QString &pattern) {
+	constexpr auto kHidden = '*';
+	const auto from = int(pattern.indexOf(kHidden));
+	const auto to = int(pattern.lastIndexOf(kHidden));
+
+	if (from != -1 && to != -1 && from <= to) {
+		const auto length = to - from + 1;
+		auto result = TextWithEntities{ pattern };
+		result.entities.push_back({ EntityType::Spoiler, from, length });
+		return result;
+	}
+	return { pattern };
 }
 
 } // namespace Text

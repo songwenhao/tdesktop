@@ -127,15 +127,6 @@ wrap(const char *s)
 }
 
 static int
-getnumber(const char *s)
-{
-  auto v = getenv(s);
-  if (v)
-    return atoi(v);
-  return 0;
-}
-
-static int
 die(const std::string &desc, const std::string &msg = "")
 {
   std::cout << msg << std::endl << std::endl;
@@ -169,7 +160,8 @@ Option
 make_parser(bool *val)
 {
   auto h = [val](const char *v) {
-    *val = v ? getnumber(v) : true;
+    // no arg for command-line option, set to true in that case
+    *val = v ? atoi(v) : true;
     return true;
   };
   return {"", h};
@@ -219,6 +211,7 @@ main(int argc, char *argv[])
   bool dofullclass{};
   bool use_dl{};
   bool use_expected{};
+  bool const_method{};
   bool dump_ignore{};
   std::string gir_path;
 
@@ -250,6 +243,8 @@ main(int argc, char *argv[])
           make_parser(&use_dl)},
       {"expected", "GI_EXPECTED", "use expected<> return rather than exception",
           make_parser(&use_expected)},
+      {"const-method", "GI_CONST_METHOD", "generate const methods",
+          make_parser(&const_method)},
   };
 
   // optionally dump embedded ignore
@@ -442,6 +437,7 @@ Supported options and environment variables
   options.classfull = dofullclass;
   options.dl = use_dl;
   options.expected = use_expected;
+  options.const_method = const_method;
 
   logger(Log::INFO, "generating to directory {}", options.rootdir);
 

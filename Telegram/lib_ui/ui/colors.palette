@@ -669,3 +669,9 @@ statisticsChartLineOrange: #f28c39; // represents orange color on statistical ch
 statisticsChartLineIndigo: #7f79f3; // represents indigo color on statistical charts
 statisticsChartLinePurple: #9f79e8; // represents purple color on statistical charts
 statisticsChartLineCyan: #40d0ca; // represents cyan color on statistical charts
+
+creditsBg1: #f7d05f; // credits icon gradient 1, normal
+creditsBg2: #fcecc0; // credits icon gradient 2, light
+creditsBg3: #f0b400; // credits icon gradient 3, dark
+creditsFg: #ba7000; // credits text on light background
+creditsStroke: #da8735; // credits icon stroke

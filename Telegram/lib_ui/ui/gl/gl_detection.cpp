@@ -9,23 +9,20 @@
 #include "ui/gl/gl_shader.h"
 #include "ui/integration.h"
 #include "base/debug_log.h"
-#include "base/options.h"
 #include "base/platform/base_platform_info.h"
 
 #include <QtCore/QSet>
 #include <QtCore/QFile>
-#include <QtGui/QtEvents>
 #include <QtGui/QWindow>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLFunctions>
-#include <QOpenGLWindow>
 #include <QOpenGLWidget>
 
-#ifdef Q_OS_WIN
+#ifdef DESKTOP_APP_USE_ANGLE
 #include <QtGui/QGuiApplication>
 #include <qpa/qplatformnativeinterface.h>
 #include <EGL/egl.h>
-#endif // Q_OS_WIN
+#endif // DESKTOP_APP_USE_ANGLE
 
 #define LOG_ONCE(x) [[maybe_unused]] static auto logged = [&] { LOG(x); return true; }();
 
@@ -33,18 +30,24 @@ namespace Ui::GL {
 namespace {
 
 bool ForceDisabled/* = false*/;
+bool LastCheckCrashed/* = false*/;
 
-#ifdef Q_OS_WIN
+#ifdef DESKTOP_APP_USE_ANGLE
 ANGLE ResolvedANGLE/* = ANGLE::Auto*/;
-#endif // Q_OS_WIN
 
-base::options::toggle AllowLinuxNvidiaOpenGL({
-	.id = kOptionAllowLinuxNvidiaOpenGL,
-	.name = "Allow OpenGL on the NVIDIA drivers (Linux)",
-	.description = "Qt+OpenGL have problems on Linux with NVIDIA drivers.",
-	.scope = base::options::linux,
-	.restartRequired = true,
-});
+QList<QByteArray> EGLExtensions(not_null<QOpenGLContext*> context) {
+	const auto native = QGuiApplication::platformNativeInterface();
+	Assert(native != nullptr);
+
+	const auto display = static_cast<EGLDisplay>(
+		native->nativeResourceForContext(
+			QByteArrayLiteral("egldisplay"),
+			context));
+	return display
+		? QByteArray(eglQueryString(display, EGL_EXTENSIONS)).split(' ')
+		: QList<QByteArray>();
+}
+#endif // DESKTOP_APP_USE_ANGLE
 
 void CrashCheckStart() {
 	auto f = QFile(Integration::Instance().openglCheckFilePath());
@@ -56,12 +59,15 @@ void CrashCheckStart() {
 
 } // namespace
 
-const char kOptionAllowLinuxNvidiaOpenGL[] = "allow-linux-nvidia-opengl";
-
-Capabilities CheckCapabilities(QWidget *widget, bool avoidWidgetCreation) {
-	if (ForceDisabled) {
-		LOG_ONCE(("OpenGL: Force-disabled."));
-		return {};
+Capabilities CheckCapabilities(QWidget *widget) {
+	if (!Platform::IsMac()) {
+		if (ForceDisabled) {
+			LOG_ONCE(("OpenGL: Force-disabled."));
+			return {};
+		} else if (LastCheckCrashed) {
+			LOG_ONCE(("OpenGL: Last-crashed."));
+			return {};
+		}
 	}
 
 	[[maybe_unused]] static const auto BugListInited = [] {
@@ -73,60 +79,31 @@ Capabilities CheckCapabilities(QWidget *widget, bool avoidWidgetCreation) {
 		return true;
 	}();
 
-	auto format = QSurfaceFormat();
-	if (widget) {
-		if (!widget->window()->windowHandle()) {
-			widget->window()->createWinId();
-		}
-		if (!widget->window()->windowHandle()) {
-			LOG(("OpenGL: Could not create window for widget."));
-			return {};
-		}
-		format = widget->window()->windowHandle()->format();
-		format.setAlphaBufferSize(8);
-		widget->window()->windowHandle()->setFormat(format);
-	} else {
-		format.setAlphaBufferSize(8);
-	}
-
 	CrashCheckStart();
-	const auto tester = [&] {
-		std::unique_ptr<QObject> result;
-		if (avoidWidgetCreation) {
-			const auto w = new QOpenGLWindow();
-			auto e = QResizeEvent(QSize(), QSize());
-			w->setFormat(format);
-			w->create();
-			static_cast<QObject*>(w)->event(&e); // Force initialize().
-			w->grabFramebuffer(); // Force makeCurrent().
-			result.reset(w);
-		} else {
-			const auto w = new QOpenGLWidget(widget);
-			w->setFormat(format);
-			w->grabFramebuffer(); // Force initialize().
-			if (!w->window()->windowHandle()) {
-				w->window()->createWinId();
-			}
-			result.reset(w);
-		}
-		return result;
-	}();
-	const auto testerWidget = avoidWidgetCreation
-		? nullptr
-		: static_cast<QOpenGLWidget*>(tester.get());
-	const auto testerWindow = avoidWidgetCreation
-		? static_cast<QOpenGLWindow*>(tester.get())
-		: nullptr;
-	/*const auto testerQWindow = avoidWidgetCreation
-		? static_cast<QWindow*>(tester.get())
-		: testerWidget->window()->windowHandle();*/
-	CrashCheckFinish();
+	const auto guard = gsl::finally([=] {
+		CrashCheckFinish();
+	});
 
-	const auto context = avoidWidgetCreation ? testerWindow->context() : testerWidget->context();
+	auto tester = QOpenGLWidget(widget);
+	auto format = tester.format();
+	format.setAlphaBufferSize(8);
+	tester.setFormat(format);
+	const auto guard2 = [&]() -> std::optional<gsl::final_action<Fn<void()>>> {
+		if (!tester.window()->windowHandle()) {
+			tester.window()->createWinId();
+			return gsl::finally(Fn<void()>([&] {
+				tester.window()->windowHandle()->destroy();
+				tester.window()->setAttribute(Qt::WA_OutsideWSRange, false);
+			}));
+		}
+		return std::nullopt;
+	}();
+	tester.grabFramebuffer(); // Force initialize().
+
+	const auto context = tester.context();
 	if (!context
-		|| !context->isValid()/*
-		// This check doesn't work for a widget with WA_NativeWindow.
-		|| !context->makeCurrent(testerQWindow)*/) {
+		|| !context->isValid()
+		|| !context->makeCurrent(tester.window()->windowHandle())) {
 		LOG_ONCE(("OpenGL: Could not create widget in a window."));
 		return {};
 	}
@@ -193,25 +170,13 @@ Capabilities CheckCapabilities(QWidget *widget, bool avoidWidgetCreation) {
 		}
 		LOG(("OpenGL Extensions: %1").arg(list.join(", ")));
 
-#ifdef Q_OS_WIN
+#ifdef DESKTOP_APP_USE_ANGLE
 		auto egllist = QStringList();
 		for (const auto &extension : EGLExtensions(context)) {
 			egllist.append(QString::fromLatin1(extension));
 		}
 		LOG(("EGL Extensions: %1").arg(egllist.join(", ")));
-#endif // Q_OS_WIN
-
-		if (::Platform::IsLinux()
-			&& version
-			&& QByteArray(version).contains("NVIDIA")) {
-			// https://github.com/telegramdesktop/tdesktop/issues/16830
-			if (AllowLinuxNvidiaOpenGL.value()) {
-				LOG_ONCE(("OpenGL: Allow on NVIDIA driver (experimental)."));
-			} else {
-				LOG_ONCE(("OpenGL: Disable on NVIDIA driver on Linux."));
-				return false;
-			}
-		}
+#endif // DESKTOP_APP_USE_ANGLE
 
 		return true;
 	}();
@@ -243,8 +208,17 @@ Backend ChooseBackendDefault(Capabilities capabilities) {
 	return use ? Backend::OpenGL : Backend::Raster;
 }
 
+void DetectLastCheckCrash() {
+	[[maybe_unused]] static const auto Once = [] {
+		LastCheckCrashed = !Platform::IsMac()
+			&& QFile::exists(Integration::Instance().openglCheckFilePath());
+		return false;
+	}();
+}
+
 bool LastCrashCheckFailed() {
-	return QFile::exists(Integration::Instance().openglCheckFilePath());
+	DetectLastCheckCrash();
+	return LastCheckCrashed;
 }
 
 void CrashCheckFinish() {
@@ -252,11 +226,12 @@ void CrashCheckFinish() {
 }
 
 void ForceDisable(bool disable) {
-	ForceDisabled = disable;
+	if (!Platform::IsMac()) {
+		ForceDisabled = disable;
+	}
 }
 
-#ifdef Q_OS_WIN
-
+#ifdef DESKTOP_APP_USE_ANGLE
 void ConfigureANGLE() {
 	qunsetenv("DESKTOP_APP_QT_ANGLE_PLATFORM");
 	const auto path = Ui::Integration::Instance().angleBackendFilePath();
@@ -307,20 +282,6 @@ void ChangeANGLE(ANGLE backend) {
 ANGLE CurrentANGLE() {
 	return ResolvedANGLE;
 }
-
-QList<QByteArray> EGLExtensions(not_null<QOpenGLContext*> context) {
-	const auto native = QGuiApplication::platformNativeInterface();
-	Assert(native != nullptr);
-
-	const auto display = static_cast<EGLDisplay>(
-		native->nativeResourceForContext(
-			QByteArrayLiteral("egldisplay"),
-			context));
-	return display
-		? QByteArray(eglQueryString(display, EGL_EXTENSIONS)).split(' ')
-		: QList<QByteArray>();
-}
-
-#endif // Q_OS_WIN
+#endif // DESKTOP_APP_USE_ANGLE
 
 } // namespace Ui::GL

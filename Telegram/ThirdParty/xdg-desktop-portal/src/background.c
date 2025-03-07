@@ -137,7 +137,7 @@ static Permission
 get_one_permission (const char *app_id,
                     GVariant   *perms)
 {
-  const char **permissions;
+  g_autofree const char **permissions = NULL;
 
   if (perms == NULL)
     {
@@ -854,7 +854,7 @@ validate_commandline (const char *key,
                       GError **error)
 {
   gsize length;
-  const char **strv = g_variant_get_strv (value, &length);
+  g_autofree const char **strv = g_variant_get_strv (value, &length);
 
   if (strv[0] == NULL)
     {
@@ -867,6 +867,13 @@ validate_commandline (const char *key,
     {
       g_set_error (error, XDG_DESKTOP_PORTAL_ERROR, XDG_DESKTOP_PORTAL_ERROR_INVALID_ARGUMENT,
                    "Not accepting overly long commandlines");
+      return FALSE;
+    }
+
+  if (*strv[0] == ' ' || *strv[0] == '-')
+    {
+      g_set_error (error, XDG_DESKTOP_PORTAL_ERROR, XDG_DESKTOP_PORTAL_ERROR_INVALID_ARGUMENT,
+                   "First commandline item can't start with whitespace nor hyphens");
       return FALSE;
     }
 
@@ -917,7 +924,7 @@ handle_request_background (XdpDbusBackground *object,
 
   impl_request =
     xdp_dbus_impl_request_proxy_new_sync (g_dbus_proxy_get_connection (G_DBUS_PROXY (access_impl)),
-                                          G_DBUS_PROXY_FLAGS_NONE,
+                                          G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
                                           g_dbus_proxy_get_name (G_DBUS_PROXY (access_impl)),
                                           request->id,
                                           NULL, &error);

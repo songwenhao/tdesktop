@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 struct WebPageData;
 class VoiceSeekClickHandler;
+class ReplyKeyboard;
 
 namespace Ui {
 struct ChatPaintContext;
@@ -31,6 +32,8 @@ struct GeometryDescriptor;
 namespace Data {
 class Session;
 class Story;
+class SavedSublist;
+struct UnavailableReason;
 } // namespace Data
 
 namespace Media::Player {
@@ -46,6 +49,13 @@ class Element;
 class Document;
 class TranscribeButton;
 } // namespace HistoryView
+
+namespace style {
+struct BotKeyboardButton;
+} // namespace style
+
+extern const char kOptionFastButtonsMode[];
+[[nodiscard]] bool FastButtonsMode();
 
 struct HistoryMessageVia : public RuntimeComponent<HistoryMessageVia, HistoryItem> {
 	void create(not_null<Data::Session*> owner, UserId userId);
@@ -125,7 +135,9 @@ private:
 };
 
 struct HistoryMessageForwarded : public RuntimeComponent<HistoryMessageForwarded, HistoryItem> {
-	void create(const HistoryMessageVia *via) const;
+	void create(
+		const HistoryMessageVia *via,
+		not_null<const HistoryItem*> item) const;
 
 	[[nodiscard]] bool forwardOfForward() const {
 		return savedFromSender || savedFromHiddenSenderInfo;
@@ -495,6 +507,7 @@ public:
 		int outerWidth,
 		const QRect &clip) const;
 	ClickHandlerPtr getLink(QPoint point) const;
+	ClickHandlerPtr getLinkByIndex(int index) const;
 
 	void clickHandlerActiveChanged(
 		const ClickHandlerPtr &p,
@@ -528,6 +541,7 @@ private:
 	};
 
 	void startAnimation(int i, int j, int direction);
+	[[nodiscard]] bool hasFastButtonMode() const;
 
 	ButtonCoords findButtonCoordsByClickHandler(const ClickHandlerPtr &p);
 
@@ -558,6 +572,39 @@ struct HistoryMessageLogEntryOriginal
 
 	WebPageData *page = nullptr;
 
+};
+
+struct MessageFactcheck {
+	TextWithEntities text;
+	QString country;
+	uint64 hash = 0;
+	bool needCheck = false;
+
+	[[nodiscard]] bool empty() const {
+		return text.empty() && country.isEmpty() && !hash;
+	}
+	explicit operator bool() const {
+		return !empty();
+	}
+};
+
+[[nodiscard]] MessageFactcheck FromMTP(
+	not_null<HistoryItem*> item,
+	const tl::conditional<MTPFactCheck> &factcheck);
+[[nodiscard]] MessageFactcheck FromMTP(
+	not_null<Main::Session*> session,
+	const tl::conditional<MTPFactCheck> &factcheck);
+
+struct HistoryMessageFactcheck
+: public RuntimeComponent<HistoryMessageFactcheck, HistoryItem> {
+	MessageFactcheck data;
+	WebPageData *page = nullptr;
+	bool requested = false;
+};
+
+struct HistoryMessageRestrictions
+: public RuntimeComponent<HistoryMessageRestrictions, HistoryItem> {
+	std::vector<Data::UnavailableReason> reasons;
 };
 
 struct HistoryServiceData
@@ -613,10 +660,11 @@ struct HistoryServicePayment
 : public RuntimeComponent<HistoryServicePayment, HistoryItem>
 , public HistoryServiceDependentData {
 	QString slug;
-	QString amount;
+	TextWithEntities amount;
 	ClickHandlerPtr invoiceLink;
 	bool recurringInit = false;
 	bool recurringUsed = false;
+	bool isCreditsCurrency = false;
 };
 
 struct HistoryServiceSameBackground
@@ -632,6 +680,15 @@ struct HistoryServiceGiveawayResults
 struct HistoryServiceCustomLink
 : public RuntimeComponent<HistoryServiceCustomLink, HistoryItem> {
 	ClickHandlerPtr link;
+};
+
+struct HistoryServicePaymentRefund
+: public RuntimeComponent<HistoryServicePaymentRefund, HistoryItem> {
+	ClickHandlerPtr link;
+	PeerData *peer = nullptr;
+	QString transactionId;
+	QString currency;
+	uint64 amount = 0;
 };
 
 enum class HistorySelfDestructType {
@@ -694,8 +751,7 @@ struct HistoryDocumentCaptioned : public RuntimeComponent<HistoryDocumentCaption
 };
 
 struct HistoryDocumentNamed : public RuntimeComponent<HistoryDocumentNamed, HistoryView::Document> {
-	QString name;
-	int namew = 0;
+	Ui::Text::String name;
 };
 
 struct HistoryDocumentVoicePlayback {

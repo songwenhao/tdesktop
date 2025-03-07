@@ -139,7 +139,7 @@ public:
 	void setPenOverride(std::optional<QPen> pen);
 	void finishNumbersAnimation();
 
-	int contentWidth() const;
+	[[nodiscard]] int contentWidth() const;
 
 	void setFullWidth(int newFullWidth);
 	void setFullRadius(bool enabled);
@@ -162,10 +162,10 @@ private:
 	void setNumbersText(const QString &numbersText, int numbers);
 	void numbersAnimationCallback();
 	void resizeToText(const QString &text);
+	[[nodiscard]] int addedWidth() const;
 
 	rpl::variable<QString> _textFull;
-	QString _text;
-	int _textWidth;
+	Ui::Text::String _text;
 
 	std::unique_ptr<NumbersAnimation> _numbers;
 
@@ -308,5 +308,19 @@ private:
 	std::optional<QColor> _textColorOverride;
 
 };
+
+[[nodiscard]] not_null<RippleButton*> CreateSimpleRectButton(
+	QWidget *parent,
+	const style::RippleAnimation &st);
+[[nodiscard]] not_null<RippleButton*> CreateSimpleSettingsButton(
+	QWidget *parent,
+	const style::RippleAnimation &st,
+	const style::color &bg);
+[[nodiscard]] not_null<RippleButton*> CreateSimpleCircleButton(
+	QWidget *parent,
+	const style::RippleAnimation &st);
+[[nodiscard]] not_null<RippleButton*> CreateSimpleRoundButton(
+	QWidget *parent,
+	const style::RippleAnimation &st);
 
 } // namespace Ui

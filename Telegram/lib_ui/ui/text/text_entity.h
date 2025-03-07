@@ -28,6 +28,7 @@ enum class EntityType : uchar {
 	BotCommand,
 	MediaTimestamp,
 	Colorized, // Senders in chat list, attachments in chat list, etc.
+	Phone,
 
 	Bold,
 	Semibold,
@@ -289,7 +290,7 @@ bool IsValidProtocol(const QString &protocol);
 bool IsValidTopDomain(const QString &domain);
 
 const QRegularExpression &RegExpMailNameAtEnd();
-const QRegularExpression &RegExpHashtag();
+const QRegularExpression &RegExpHashtag(bool allowWithMention);
 const QRegularExpression &RegExpHashtagExclude();
 const QRegularExpression &RegExpMention();
 const QRegularExpression &RegExpBotCommand();
@@ -313,6 +314,7 @@ QString SingleLine(const QString &text);
 TextWithEntities SingleLine(const TextWithEntities &text);
 QString RemoveAccents(const QString &text);
 QString RemoveEmoji(const QString &text);
+QString NameSortKey(const QString &text);
 QStringList PrepareSearchWords(const QString &query, const QRegularExpression *SplitterOverride = nullptr);
 bool CutPart(TextWithEntities &sending, TextWithEntities &left, int limit);
 
@@ -366,6 +368,7 @@ inline const auto kMentionTagStart = qstr("mention://");
 	const QString &tag,
 	const QString &removed);
 [[nodiscard]] QString TagWithAdded(const QString &tag, const QString &added);
+[[nodiscard]] TextWithTags::Tags SimplifyTags(TextWithTags::Tags tags);
 
 EntitiesInText ConvertTextTagsToEntities(const TextWithTags::Tags &tags);
 TextWithTags::Tags ConvertEntitiesToTextTags(

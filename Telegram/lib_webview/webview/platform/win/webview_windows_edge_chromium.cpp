@@ -7,11 +7,16 @@
 #include "webview/platform/win/webview_windows_edge_chromium.h"
 
 #include "webview/webview_data_stream.h"
+#include "webview/webview_embed.h"
 #include "webview/platform/win/webview_windows_data_stream.h"
 #include "base/algorithm.h"
 #include "base/basic_types.h"
+#include "base/event_filter.h"
 #include "base/flat_map.h"
+#include "base/invoke_queued.h"
+#include "base/options.h"
 #include "base/variant.h"
+#include "base/unique_qptr.h"
 #include "base/weak_ptr.h"
 #include "base/platform/base_platform_info.h"
 #include "base/platform/win/base_windows_co_task_mem.h"
@@ -20,8 +25,11 @@
 
 #include <QtCore/QUrl>
 #include <QtGui/QDesktopServices>
+#include <QtGui/QWindow>
+#include <QtWidgets/QWidget>
 
 #include <crl/common/crl_common_on_main_guarded.h>
+#include <rpl/variable.h>
 
 #include <string>
 #include <locale>
@@ -90,14 +98,20 @@ class Handler
 		ICoreWebView2PermissionRequestedEventHandler,
 		ICoreWebView2NavigationStartingEventHandler,
 		ICoreWebView2NavigationCompletedEventHandler,
+		ICoreWebView2ContentLoadingEventHandler,
+		ICoreWebView2DocumentTitleChangedEventHandler,
+		ICoreWebView2SourceChangedEventHandler,
 		ICoreWebView2NewWindowRequestedEventHandler,
 		ICoreWebView2ScriptDialogOpeningEventHandler,
-		ICoreWebView2WebResourceRequestedEventHandler>
+		ICoreWebView2WebResourceRequestedEventHandler,
+		ICoreWebView2ZoomFactorChangedEventHandler>
+	, public ZoomController
 	, public base::has_weak_ptr {
 
 public:
 	Handler(
 		Config config,
+		HWND handle,
 		std::function<void(not_null<Handler*>)> saveThis,
 		std::function<void()> readyHandler);
 	~Handler();
@@ -137,6 +151,15 @@ public:
 		ICoreWebView2NavigationCompletedEventArgs *args) override;
 	HRESULT STDMETHODCALLTYPE Invoke(
 		ICoreWebView2 *sender,
+		ICoreWebView2ContentLoadingEventArgs *args) override;
+	HRESULT STDMETHODCALLTYPE Invoke(
+		ICoreWebView2 *sender,
+		IUnknown *args) override;
+	HRESULT STDMETHODCALLTYPE Invoke(
+		ICoreWebView2 *sender,
+		ICoreWebView2SourceChangedEventArgs *args) override;
+	HRESULT STDMETHODCALLTYPE Invoke(
+		ICoreWebView2 *sender,
 		ICoreWebView2NewWindowRequestedEventArgs *args) override;
 	HRESULT STDMETHODCALLTYPE Invoke(
 		ICoreWebView2 *sender,
@@ -144,8 +167,30 @@ public:
 	HRESULT STDMETHODCALLTYPE Invoke(
 		ICoreWebView2 *sender,
 		ICoreWebView2WebResourceRequestedEventArgs *args) override;
+	HRESULT STDMETHODCALLTYPE Invoke(
+		ICoreWebView2Controller *sender,
+		IUnknown *args) override;
+
+	rpl::producer<int> zoomValue() override {
+		return _zoomValue.value();
+	}
+	void setZoom(int zoom) {
+		if (_controller) {
+			_controller->put_ZoomFactor(zoom / 100.);
+		}
+	}
+
+	rpl::producer<NavigationHistoryState> navigationHistoryState() {
+		return _navigationHistoryState.value();
+	}
+
+	[[nodiscard]] ZoomController *zoomController() {
+		return this;
+	}
 
 private:
+	void updateHistoryStates();
+
 	HWND _window = nullptr;
 	winrt::com_ptr<ICoreWebView2Environment> _environment;
 	winrt::com_ptr<ICoreWebView2Controller> _controller;
@@ -160,6 +205,9 @@ private:
 		winrt::com_ptr<ICoreWebView2WebResourceRequestedEventArgs>,
 		winrt::com_ptr<ICoreWebView2Deferral>> _pending;
 
+	rpl::variable<NavigationHistoryState> _navigationHistoryState;
+	rpl::variable<int> _zoomValue;
+
 	QColor _opaqueBg;
 	bool _debug = false;
 
@@ -167,9 +215,10 @@ private:
 
 Handler::Handler(
 	Config config,
+	HWND handle,
 	std::function<void(not_null<Handler*>)> saveThis,
 	std::function<void()> readyHandler)
-: _window(static_cast<HWND>(config.window))
+: _window(handle)
 , _messageHandler(std::move(config.messageHandler))
 , _navigationStartHandler(std::move(config.navigationStartHandler))
 , _navigationDoneHandler(std::move(config.navigationDoneHandler))
@@ -235,9 +284,14 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
 	_webview->add_PermissionRequested(this, &token);
 	_webview->add_NavigationStarting(this, &token);
 	_webview->add_NavigationCompleted(this, &token);
+	_webview->add_ContentLoading(this, &token);
+	_webview->add_DocumentTitleChanged(this, &token);
+	_webview->add_SourceChanged(this, &token);
 	_webview->add_NewWindowRequested(this, &token);
 	_webview->add_ScriptDialogOpening(this, &token);
 	_webview->add_WebResourceRequested(this, &token);
+
+	_controller->add_ZoomFactorChanged(this, &token);
 
 	const auto filter = ToWide(kDataUrlPrefix) + L'*';
 	auto hr = _webview->AddWebResourceRequestedFilter(
@@ -298,8 +352,10 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
 		if (_navigationStartHandler
 			&& !_navigationStartHandler(FromWide(uri), false)) {
 			args->put_Cancel(TRUE);
+			return S_OK;
 		}
 	}
+	updateHistoryStates();
 	return S_OK;
 }
 
@@ -312,7 +368,28 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
 	if (_navigationDoneHandler) {
 		_navigationDoneHandler(result == S_OK && isSuccess);
 	}
+	updateHistoryStates();
+	return S_OK;
+}
 
+HRESULT STDMETHODCALLTYPE Handler::Invoke(
+		ICoreWebView2 *sender,
+		ICoreWebView2ContentLoadingEventArgs *args) {
+	updateHistoryStates();
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE Handler::Invoke(
+		ICoreWebView2 *sender,
+		IUnknown *args) {
+	updateHistoryStates();
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE Handler::Invoke(
+		ICoreWebView2 *sender,
+		ICoreWebView2SourceChangedEventArgs *args) {
+	updateHistoryStates();
 	return S_OK;
 }
 
@@ -384,6 +461,15 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
 			args->put_ResultText(wide.c_str());
 		}
 	}
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE Handler::Invoke(
+		ICoreWebView2Controller *sender,
+		IUnknown *args) {
+	auto zoom = float64(0);
+	sender->get_ZoomFactor(&zoom);
+	_zoomValue = zoom * 100;
 	return S_OK;
 }
 
@@ -521,6 +607,26 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
 	return S_OK;
 }
 
+void Handler::updateHistoryStates() {
+	if (!_webview) {
+		return;
+	};
+	auto canGoBack = BOOL(FALSE);
+	auto canGoForward = BOOL(FALSE);
+	auto url = base::CoTaskMemString();
+	auto title = base::CoTaskMemString();
+	_webview->get_CanGoBack(&canGoBack);
+	_webview->get_CanGoForward(&canGoForward);
+	_webview->get_Source(url.put());
+	_webview->get_DocumentTitle(title.put());
+	_navigationHistoryState = NavigationHistoryState{
+		.url = FromWide(url),
+		.title = FromWide(title),
+		.canGoBack = (canGoBack == TRUE),
+		.canGoForward = (canGoForward == TRUE),
+	};
+}
+
 class Instance final : public Interface, public base::has_weak_ptr {
 public:
 	explicit Instance(Config &&config);
@@ -528,13 +634,9 @@ public:
 
 	[[nodiscard]] bool failed() const;
 
-	bool finishEmbedding() override;
-
 	void navigate(std::string url) override;
 	void navigateToData(std::string id) override;
 	void reload() override;
-
-	void resizeToWindow() override;
 
 	void init(std::string js) override;
 	void eval(std::string js) override;
@@ -542,9 +644,14 @@ public:
 	void focus() override;
 
 	QWidget *widget() override;
-	void *winId() override;
+
+	void refreshNavigationHistoryState() override;
+	auto navigationHistoryState()
+	-> rpl::producer<NavigationHistoryState> override;
 
 	void setOpaqueBg(QColor opaqueBg) override;
+
+	[[nodiscard]] ZoomController *zoomController() override;
 
 private:
 	struct NavigateToUrl {
@@ -569,19 +676,28 @@ private:
 	void start(Config &&config);
 	[[nodiscard]] bool ready() const;
 	void processReadySteps();
+	void resizeToWindow();
 
-	HWND _window = nullptr;
+	base::unique_qptr<QWindow> _window;
+	HWND _handle = nullptr;
 	winrt::com_ptr<IUnknown> _ownedHandler;
 	Handler *_handler = nullptr;
 	std::vector<ReadyStep> _waitingForReady;
-	bool _pendingResize = false;
+	base::unique_qptr<QWidget> _widget;
 	bool _pendingFocus = false;
 	bool _readyFlag = false;
 
 };
 
 Instance::Instance(Config &&config)
-: _window(static_cast<HWND>(config.window)) {
+: _window(MakeFramelessWindow())
+, _handle(HWND(_window->winId()))
+, _widget(
+	QWidget::createWindowContainer(
+		_window,
+		config.parent,
+		Qt::FramelessWindowHint)) {
+	_widget->show();
 	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
 	init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}");
@@ -589,6 +705,12 @@ Instance::Instance(Config &&config)
 }
 
 Instance::~Instance() {
+	if (_handler) {
+		if (_handler->valid()) {
+			_handler->controller()->Close();
+		}
+		_handler = nullptr;
+	}
 	CoUninitialize();
 }
 
@@ -600,14 +722,17 @@ void Instance::start(Config &&config) {
 		L"--disable-features=ElasticOverscroll");
 
 	auto handler = (Handler*)nullptr;
-	auto owned = winrt::make<Handler>(config, [&](not_null<Handler*> that) {
-		handler = that;
-	}, crl::guard(this, [=] {
+	const auto ready = [=] {
 		_readyFlag = true;
 		if (_handler) {
 			processReadySteps();
 		}
-	}));
+	};
+	auto owned = winrt::make<Handler>(
+		config,
+		_handle,
+		[&](not_null<Handler*> that) { handler = that; },
+		crl::guard(this, ready));
 	const auto wpath = ToWide(config.userDataPath);
 	const auto result = CreateCoreWebView2EnvironmentWithOptions(
 		nullptr,
@@ -632,6 +757,8 @@ void Instance::processReadySteps() {
 
 	const auto guard = base::make_weak(this);
 	if (!_handler->valid()) {
+		_widget = nullptr;
+		_handle = nullptr;
 		_window = nullptr;
 		_handler = nullptr;
 		base::take(_ownedHandler);
@@ -640,7 +767,13 @@ void Instance::processReadySteps() {
 	if (guard) {
 		_handler->controller()->put_IsVisible(TRUE);
 	}
-	if (guard && _pendingResize) {
+	if (const auto widget = guard ? _widget.get() : nullptr) {
+		base::install_event_filter(widget, [=](not_null<QEvent*> e) {
+			if (e->type() == QEvent::Resize || e->type() == QEvent::Move) {
+				InvokeQueued(widget, [=] { resizeToWindow(); });
+			}
+			return base::EventFilterResult::Continue;
+		});
 		resizeToWindow();
 	}
 	if (guard) {
@@ -665,11 +798,7 @@ void Instance::processReadySteps() {
 }
 
 bool Instance::ready() const {
-	return _window && _handler && _readyFlag;
-}
-
-bool Instance::finishEmbedding() {
-	return true;
+	return _handle && _handler && _readyFlag;
 }
 
 void Instance::navigate(std::string url) {
@@ -700,12 +829,8 @@ void Instance::reload() {
 }
 
 void Instance::resizeToWindow() {
-	if (!ready()) {
-		_pendingResize = true;
-		return;
-	}
 	auto bounds = RECT{};
-	GetClientRect(_window, &bounds);
+	GetClientRect(_handle, &bounds);
 	_handler->controller()->put_Bounds(bounds);
 }
 
@@ -731,8 +856,11 @@ void Instance::eval(std::string js) {
 
 void Instance::focus() {
 	if (_window) {
-		SetForegroundWindow(_window);
-		SetFocus(_window);
+		_window->requestActivate();
+	}
+	if (_handle) {
+		SetForegroundWindow(_handle);
+		SetFocus(_handle);
 	}
 	if (!ready()) {
 		_pendingFocus = true;
@@ -743,11 +871,22 @@ void Instance::focus() {
 }
 
 QWidget *Instance::widget() {
-	return nullptr;
+	return _widget.get();
 }
 
-void *Instance::winId() {
-	return nullptr;
+void Instance::refreshNavigationHistoryState() {
+	// Not needed here, there are events.
+}
+
+auto Instance::navigationHistoryState()
+-> rpl::producer<NavigationHistoryState> {
+	return _handler
+		? _handler->navigationHistoryState()
+		: rpl::single(NavigationHistoryState());
+}
+
+ZoomController *Instance::zoomController() {
+	return _handler->zoomController();
 }
 
 void Instance::setOpaqueBg(QColor opaqueBg) {
@@ -759,6 +898,9 @@ void Instance::setOpaqueBg(QColor opaqueBg) {
 } // namespace
 
 bool Supported() {
+	if (base::options::value<bool>(kOptionWebviewLegacyEdge)) {
+		return false;
+	}
 	auto version = LPWSTR(nullptr);
 	const auto result = GetAvailableCoreWebView2BrowserVersionString(
 		nullptr,

@@ -136,6 +136,10 @@ class AudioDeviceModuleIOS : public AudioDeviceModule {
   int GetPlayoutAudioParameters(AudioParameters* params) const override;
   int GetRecordAudioParameters(AudioParameters* params) const override;
 #endif  // WEBRTC_IOS
+    
+ public:
+    void (^mutedSpeechDetectionChanged)(bool);
+
  private:
   const bool bypass_voice_processing_;
   const bool disable_recording_;

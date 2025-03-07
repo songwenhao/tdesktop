@@ -19,10 +19,6 @@ bool SupportsEmbedAfterCreate() {
 	return true;
 }
 
-bool NavigateToDataSupported() {
-	return false;
-}
-
 bool SeparateStorageIdSupported() {
 	return true;
 }

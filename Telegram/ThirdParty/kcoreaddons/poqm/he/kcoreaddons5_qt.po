@@ -17,16 +17,18 @@
 # Meni Livne <livne@kde.org>, 2007.
 # tahmar1900 <tahmar1900@gmail.com>, 2008, 2009.
 # Elkana Bardugo <ttv200@gmail.com>, 2017. #zanata
+# SPDX-FileCopyrightText: 2024 Yaron Shahrabani <sh.yaron@gmail.com>
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2017-05-16 06:49-0400\n"
-"Last-Translator: Copied by Zanata <copied-by-zanata@zanata.org>\n"
-"Language-Team: Hebrew <kde-i18n-doc@kde.org>\n"
+"Project-Id-Version: \n"
+"PO-Revision-Date: 2024-04-08 19:11+0300\n"
+"Last-Translator: Yaron Shahrabani <sh.yaron@gmail.com>\n"
+"Language-Team: צוות התרגום של KDE ישראל\n"
 "Language: he\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Zanata 3.9.6\n"
+"X-Generator: Lokalize 23.08.5\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Qt-Contexts: true\n"
 
@@ -87,121 +89,121 @@ msgstr ""
 "בדוק אם ישנם תנאי רישיון כלשהם\n"
 "בתיעוד או בקוד המקור.\n"
 
-#: lib/kaboutdata.cpp:273
+#: lib/kaboutdata.cpp:277
 #, fuzzy, qt-format
 msgctxt "KAboutLicense|"
 msgid "This program is distributed under the terms of the %1."
 msgstr "תוכנית זו מופצת תחת התנאים של %1."
 
-#: lib/kaboutdata.cpp:317
+#: lib/kaboutdata.cpp:321
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "GPL v2"
 msgstr "GPL v2"
 
-#: lib/kaboutdata.cpp:318
+#: lib/kaboutdata.cpp:322
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 2"
 msgstr "GNU General Public License Version 2"
 
-#: lib/kaboutdata.cpp:321
+#: lib/kaboutdata.cpp:325
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v2"
 msgstr "LGPL v2"
 
-#: lib/kaboutdata.cpp:322
+#: lib/kaboutdata.cpp:326
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2"
 msgstr "GNU Lesser General Public License Version 2"
 
-#: lib/kaboutdata.cpp:325
-#, fuzzy
-msgctxt "KAboutLicense|@item license (short name)"
-msgid "BSD License"
-msgstr "BSD License"
-
-#: lib/kaboutdata.cpp:326
-#, fuzzy
-msgctxt "KAboutLicense|@item license"
-msgid "BSD License"
-msgstr "BSD License"
-
 #: lib/kaboutdata.cpp:329
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
-msgid "Artistic License"
-msgstr "Artistic License"
+msgid "BSD License"
+msgstr "BSD License"
 
 #: lib/kaboutdata.cpp:330
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
+msgid "BSD License"
+msgstr "BSD License"
+
+#: lib/kaboutdata.cpp:333
+#, fuzzy
+msgctxt "KAboutLicense|@item license (short name)"
 msgid "Artistic License"
 msgstr "Artistic License"
 
-#: lib/kaboutdata.cpp:333
+#: lib/kaboutdata.cpp:334
+#, fuzzy
+msgctxt "KAboutLicense|@item license"
+msgid "Artistic License"
+msgstr "Artistic License"
+
+#: lib/kaboutdata.cpp:337
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "QPL v1.0"
 msgstr "QPL v1.0"
 
-#: lib/kaboutdata.cpp:334
+#: lib/kaboutdata.cpp:338
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "Q Public License"
 msgstr "Q Public License"
 
-#: lib/kaboutdata.cpp:337
+#: lib/kaboutdata.cpp:341
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "GPL v3"
 msgstr "GPL v3"
 
-#: lib/kaboutdata.cpp:338
+#: lib/kaboutdata.cpp:342
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "GNU General Public License Version 3"
 msgstr "GNU General Public License Version 3"
 
-#: lib/kaboutdata.cpp:341
+#: lib/kaboutdata.cpp:345
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v3"
 msgstr "LGPL v3"
 
-#: lib/kaboutdata.cpp:342
+#: lib/kaboutdata.cpp:346
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 3"
 msgstr "GNU Lesser General Public License Version 3"
 
-#: lib/kaboutdata.cpp:345
+#: lib/kaboutdata.cpp:349
 #, fuzzy
 msgctxt "KAboutLicense|@item license (short name)"
 msgid "LGPL v2.1"
 msgstr "LGPL v2"
 
-#: lib/kaboutdata.cpp:346
+#: lib/kaboutdata.cpp:350
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "GNU Lesser General Public License Version 2.1"
 msgstr "GNU Lesser General Public License Version 2"
 
-#: lib/kaboutdata.cpp:350
+#: lib/kaboutdata.cpp:354
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "Custom"
 msgstr "מותאם־אישית"
 
-#: lib/kaboutdata.cpp:353
+#: lib/kaboutdata.cpp:357
 #, fuzzy
 msgctxt "KAboutLicense|@item license"
 msgid "Not specified"
 msgstr "לא צוין"
 
-#: lib/kaboutdata.cpp:967
+#: lib/kaboutdata.cpp:972
 #, fuzzy
 msgctxt "KAboutData|replace this with information about your translation team"
 msgid ""
@@ -216,35 +218,35 @@ msgstr ""
 "כללי על בנאום KDE, בקר באתר <a href=\"http://i10n.kde.org\">http://i10n.kde."
 "org</a></p >"
 
-#: lib/kaboutdata.cpp:1225
+#: lib/kaboutdata.cpp:1232
 #, fuzzy
 msgctxt "KAboutData CLI|"
 msgid "Show author information."
 msgstr "הצג מידע על הכותב"
 
-#: lib/kaboutdata.cpp:1226
+#: lib/kaboutdata.cpp:1233
 #, fuzzy
 msgctxt "KAboutData CLI|"
 msgid "Show license information."
 msgstr "הצג מידע אודות הרישיון"
 
-#: lib/kaboutdata.cpp:1228
+#: lib/kaboutdata.cpp:1235
 msgctxt "KAboutData CLI|"
 msgid "The base file name of the desktop entry for this application."
 msgstr ""
 
-#: lib/kaboutdata.cpp:1229
+#: lib/kaboutdata.cpp:1236
 msgctxt "KAboutData CLI|"
 msgid "file name"
 msgstr ""
 
-#: lib/kaboutdata.cpp:1239
+#: lib/kaboutdata.cpp:1246
 #, fuzzy
 msgctxt "KAboutData CLI|"
 msgid "This application was written by somebody who wants to remain anonymous."
 msgstr "התוכנית נכתבה על ידי מישהו שמעוניין להישאר בעילום שם."
 
-#: lib/kaboutdata.cpp:1241
+#: lib/kaboutdata.cpp:1248
 #, fuzzy, qt-format
 msgctxt "KAboutData CLI|"
 msgid "%1 was written by:"
@@ -252,13 +254,13 @@ msgstr ""
 "‏%1 נכתב על ידי\n"
 "%2"
 
-#: lib/kaboutdata.cpp:1252
+#: lib/kaboutdata.cpp:1259
 #, fuzzy
 msgctxt "KAboutData CLI|"
 msgid "Please use https://bugs.kde.org to report bugs."
 msgstr "אנא השתמש ב־http://bugs.kde.org כדי לדווח על באגים.\n"
 
-#: lib/kaboutdata.cpp:1254
+#: lib/kaboutdata.cpp:1261
 #, fuzzy, qt-format
 msgctxt "KAboutData CLI|"
 msgid "Please report bugs to %1."
@@ -450,192 +452,192 @@ msgstr ""
 
 #. MetricBinaryDialect size in bytes
 #: lib/util/kformatprivate.cpp:212
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 B"
-msgstr "%1 ב'"
+msgstr "%1 ב׳"
 
 #. MetricBinaryDialect size in 1000 bytes
 #: lib/util/kformatprivate.cpp:215
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 kB"
-msgstr "%1 ק\"ב"
+msgstr "%1 ק״ב"
 
 #. MetricBinaryDialect size in 10^6 bytes
 #: lib/util/kformatprivate.cpp:218
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 MB"
-msgstr "%1 מ\"ב"
+msgstr "%1 מ״ב"
 
 #. MetricBinaryDialect size in 10^9 bytes
 #: lib/util/kformatprivate.cpp:221
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 GB"
-msgstr "%1 ג\"ב"
+msgstr "%1 ג״ב"
 
 #. MetricBinaryDialect size in 10^12 bytes
 #: lib/util/kformatprivate.cpp:224
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 TB"
-msgstr "%1 ט\"ב"
+msgstr "%1 ט״ב"
 
 #. MetricBinaryDialect size in 10^15 bytes
 #: lib/util/kformatprivate.cpp:227
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 PB"
-msgstr "%1 פ\"ב"
+msgstr "%1 פ״ב"
 
 #. MetricBinaryDialect size in 10^18 byte
 #: lib/util/kformatprivate.cpp:230
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 EB"
-msgstr "%1 א\"ב"
+msgstr "%1 א״ב"
 
 #. MetricBinaryDialect size in 10^21 bytes
 #: lib/util/kformatprivate.cpp:233
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 ZB"
-msgstr "%1 ז\"ב"
+msgstr "%1 ז״ב"
 
 #. MetricBinaryDialect size in 10^24 bytes
 #: lib/util/kformatprivate.cpp:236
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|MetricBinaryDialect"
 msgid "%1 YB"
-msgstr "%1 י\"ב"
+msgstr "%1 י״ב"
 
 #. JEDECBinaryDialect memory size in bytes
 #: lib/util/kformatprivate.cpp:242
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 B"
-msgstr "%1 ב'"
+msgstr "%1 ב׳"
 
 #. JEDECBinaryDialect memory size in 1024 bytes
 #: lib/util/kformatprivate.cpp:245
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 KB"
-msgstr "%1 ק\"ב"
+msgstr "%1 ק״ב"
 
 #. JEDECBinaryDialect memory size in 10^20 bytes
 #: lib/util/kformatprivate.cpp:248
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 MB"
-msgstr "%1 מ\"ב"
+msgstr "%1 מ״ב"
 
 #. JEDECBinaryDialect memory size in 10^30 bytes
 #: lib/util/kformatprivate.cpp:251
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 GB"
-msgstr "%1 ג\"ב"
+msgstr "%1 ג״ב"
 
 #. JEDECBinaryDialect memory size in 10^40 bytes
 #: lib/util/kformatprivate.cpp:254
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 TB"
-msgstr "%1 ט\"ב"
+msgstr "%1 ט״ב"
 
 #. JEDECBinaryDialect memory size in 10^50 bytes
 #: lib/util/kformatprivate.cpp:257
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 PB"
-msgstr "%1 פ\"ב"
+msgstr "%1 פ״ב"
 
 #. JEDECBinaryDialect memory size in 10^60 bytes
 #: lib/util/kformatprivate.cpp:260
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 EB"
-msgstr "%1 א\"ב"
+msgstr "%1 א״ב"
 
 #. JEDECBinaryDialect memory size in 10^70 bytes
 #: lib/util/kformatprivate.cpp:263
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 ZB"
-msgstr "%1 ז\"ב"
+msgstr "%1 ז״ב"
 
 #. JEDECBinaryDialect memory size in 10^80 bytes
 #: lib/util/kformatprivate.cpp:266
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|JEDECBinaryDialect"
 msgid "%1 YB"
-msgstr "%1 י\"ב"
+msgstr "%1 י״ב"
 
 #. IECBinaryDialect size in bytes
 #: lib/util/kformatprivate.cpp:272
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 B"
-msgstr "%1 ב'"
+msgstr "%1 ב׳"
 
 #. IECBinaryDialect size in 1024 bytes
 #: lib/util/kformatprivate.cpp:275
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 KiB"
-msgstr "%1 ק\"ב"
+msgstr "%1 KiB"
 
 #. IECBinaryDialect size in 10^20 bytes
 #: lib/util/kformatprivate.cpp:278
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 MiB"
-msgstr "%1 מ\"ב"
+msgstr "%1 MiB"
 
 #. IECBinaryDialect size in 10^30 bytes
 #: lib/util/kformatprivate.cpp:281
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 GiB"
-msgstr "%1 ג\"ב"
+msgstr "%1 GiB"
 
 #. IECBinaryDialect size in 10^40 bytes
 #: lib/util/kformatprivate.cpp:284
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 TiB"
-msgstr "%1 ט\"ב"
+msgstr "%1 TiB"
 
 #. IECBinaryDialect size in 10^50 bytes
 #: lib/util/kformatprivate.cpp:287
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 PiB"
-msgstr "%1 פ\"ב"
+msgstr "%1 PiB"
 
 #. IECBinaryDialect size in 10^60 bytes
 #: lib/util/kformatprivate.cpp:290
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 EiB"
-msgstr "%1 א\"ב"
+msgstr "%1 EiB"
 
 #. IECBinaryDialect size in 10^70 bytes
 #: lib/util/kformatprivate.cpp:293
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 ZiB"
-msgstr "%1 ז\"ב"
+msgstr "%1 ZiB"
 
 #. IECBinaryDialect size in 10^80 bytes
 #: lib/util/kformatprivate.cpp:296
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|IECBinaryDialect"
 msgid "%1 YiB"
-msgstr "%1 י\"ב"
+msgstr "%1 YiB"
 
 #. @item:intext Duration format minutes, seconds and milliseconds
 #: lib/util/kformatprivate.cpp:333
@@ -704,28 +706,28 @@ msgstr ""
 
 #. @item:intext %1 is a real number, e.g. 1.23 days
 #: lib/util/kformatprivate.cpp:383
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|"
 msgid "%1 days"
 msgstr "%1 ימים"
 
 #. @item:intext %1 is a real number, e.g. 1.23 hours
 #: lib/util/kformatprivate.cpp:386
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|"
 msgid "%1 hours"
 msgstr "%1 שעות"
 
 #. @item:intext %1 is a real number, e.g. 1.23 minutes
 #: lib/util/kformatprivate.cpp:389
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|"
 msgid "%1 minutes"
 msgstr "%1 דקות"
 
 #. @item:intext %1 is a real number, e.g. 1.23 seconds
 #: lib/util/kformatprivate.cpp:392
-#, fuzzy, qt-format
+#, qt-format
 msgctxt "KFormat|"
 msgid "%1 seconds"
 msgstr "%1 שניות"

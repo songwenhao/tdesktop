@@ -66,6 +66,7 @@ public:
 	}
 
 	void setDiceIndex(const QString &emoji, int index);
+	void setPlayingOnce(bool once);
 	void setCustomCachingTag(ChatHelpers::StickerLottieSize tag);
 	void setCustomEmojiPart();
 	void setEmojiSticker();
@@ -91,6 +92,7 @@ public:
 		not_null<DocumentData*> document);
 	[[nodiscard]] static QSize UsualPremiumEffectSize();
 	[[nodiscard]] static QSize EmojiEffectSize();
+	[[nodiscard]] static QSize MessageEffectSize();
 	[[nodiscard]] static QSize EmojiSize();
 	[[nodiscard]] static ClickHandlerPtr ShowSetHandler(
 		not_null<DocumentData*> document);
@@ -140,6 +142,7 @@ private:
 	bool _customEmojiPart : 1 = false;
 	bool _emojiSticker : 1 = false;
 	bool _webpagePart : 1 = false;
+	bool _playingOnce : 1 = false;
 
 };
 

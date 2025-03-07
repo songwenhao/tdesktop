@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_replies_section.h"
 
 #include "history/view/controls/history_view_compose_controls.h"
+#include "history/view/controls/history_view_compose_search.h"
 #include "history/view/controls/history_view_draft_options.h"
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_schedule_box.h"
@@ -23,15 +24,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_drag_area.h"
 #include "history/history_item_components.h"
-#include "history/history_item_helpers.h" // GetErrorTextForSending.
+#include "history/history_item_helpers.h" // GetErrorForSending.
+#include "history/history_view_swipe.h"
 #include "ui/chat/pinned_bar.h"
 #include "ui/chat/chat_style.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/effects/message_sending_animation_controller.h"
+#include "ui/ui_utility.h"
 #include "base/timer_rpl.h"
 #include "api/api_bot.h"
 #include "api/api_editing.h"
@@ -205,6 +209,7 @@ RepliesWidget::RepliesWidget(
 	not_null<History*> history,
 	MsgId rootId)
 : Window::SectionWidget(parent, controller, history->peer)
+, WindowListDelegate(controller)
 , _history(history)
 , _rootId(rootId)
 , _root(lookupRoot())
@@ -223,9 +228,7 @@ RepliesWidget::RepliesWidget(
 			listShowPremiumToast(emoji);
 		},
 		.mode = ComposeControls::Mode::Normal,
-		.sendMenuType = _topic
-			? SendMenu::Type::Scheduled
-			: SendMenu::Type::SilentOnly,
+		.sendMenuDetails = [=] { return sendMenuDetails(); },
 		.regularWindow = controller,
 		.stickerOrEmojiChosen = controller->stickerOrEmojiChosen(),
 		.scheduledToggleValue = _topic
@@ -289,7 +292,9 @@ RepliesWidget::RepliesWidget(
 	}, _topBar->lifetime());
 	_topBar->searchRequest(
 	) | rpl::start_with_next([=] {
-		searchInTopic();
+		if (!preventsClose(crl::guard(this, [=]{ searchInTopic(); }))) {
+			searchInTopic();
+		}
 	}, _topBar->lifetime());
 
 	controller->adaptive().value(
@@ -299,7 +304,7 @@ RepliesWidget::RepliesWidget(
 
 	_inner = _scroll->setOwnedWidget(object_ptr<ListWidget>(
 		this,
-		controller,
+		&controller->session(),
 		static_cast<ListDelegate*>(this)));
 	_scroll->move(0, _topBar->height());
 	_scroll->show();
@@ -323,15 +328,22 @@ RepliesWidget::RepliesWidget(
 	}, _inner->lifetime());
 
 	_inner->replyToMessageRequested(
-	) | rpl::start_with_next([=](auto fullId) {
+	) | rpl::start_with_next([=](ListWidget::ReplyToMessageRequest request) {
 		const auto canSendReply = _topic
 			? Data::CanSendAnything(_topic)
 			: Data::CanSendAnything(_history->peer);
-		if (_joinGroup || !canSendReply) {
-			Controls::ShowReplyToChatBox(controller->uiShow(), { fullId });
-		} else {
-			replyToMessage(fullId);
+		const auto &to = request.to;
+		const auto still = _history->owner().message(to.messageId);
+		const auto allowInAnotherChat = still && still->allowsForward();
+		if (allowInAnotherChat
+			&& (_joinGroup || !canSendReply || request.forceAnotherChat)) {
+			Controls::ShowReplyToChatBox(controller->uiShow(), { to });
+		} else if (!_joinGroup && canSendReply) {
+			replyToMessage(to);
 			_composeControls->focus();
+			if (_composeSearch) {
+				_composeSearch->hideAnimated();
+			}
 		}
 	}, _inner->lifetime());
 
@@ -395,6 +407,7 @@ RepliesWidget::RepliesWidget(
 
 	setupTopicViewer();
 	setupComposeControls();
+	setupSwipeReply();
 	orderWidgets();
 
 	if (_pinnedBar) {
@@ -654,7 +667,7 @@ void RepliesWidget::setupComposeControls() {
 			? _topic
 			: _history->peer->forumTopicFor(_rootId);
 		return (!topic || topic->canToggleClosed() || !topic->closed())
-			? std::optional<QString>()
+			? Data::SendError()
 			: tr::lng_forum_topic_closed(tr::now);
 	});
 	auto writeRestriction = rpl::combine(
@@ -663,7 +676,7 @@ void RepliesWidget::setupComposeControls() {
 			Data::PeerUpdate::Flag::Rights),
 		Data::CanSendAnythingValue(_history->peer),
 		std::move(topicWriteRestrictions)
-	) | rpl::map([=](auto, auto, std::optional<QString> topicRestriction) {
+	) | rpl::map([=](auto, auto, Data::SendError topicRestriction) {
 		const auto allWithoutPolls = Data::AllSendRestrictions()
 			& ~ChatRestriction::SendPolls;
 		const auto canSendAnything = _topic
@@ -680,10 +693,11 @@ void RepliesWidget::setupComposeControls() {
 				: tr::lng_group_not_accessible(tr::now))
 			: topicRestriction
 			? std::move(topicRestriction)
-			: std::optional<QString>();
+			: Data::SendError();
 		return text ? Controls::WriteRestriction{
 			.text = std::move(*text),
 			.type = Controls::WriteRestrictionType::Rights,
+			.boostsToLift = text.boostsToLift,
 		} : Controls::WriteRestriction();
 	});
 
@@ -736,7 +750,8 @@ void RepliesWidget::setupComposeControls() {
 	_composeControls->editRequests(
 	) | rpl::start_with_next([=](auto data) {
 		if (const auto item = session().data().message(data.fullId)) {
-			edit(item, data.options, saveEditMsgRequestId);
+			const auto spoiler = data.spoilered;
+			edit(item, data.options, saveEditMsgRequestId, spoiler);
 		}
 	}, lifetime());
 
@@ -756,8 +771,13 @@ void RepliesWidget::setupComposeControls() {
 		controller()->hideLayer(anim::type::normal);
 		controller()->sendingAnimation().appendSending(
 			data.messageSendingFrom);
-		const auto localId = data.messageSendingFrom.localId;
-		sendExistingDocument(data.document, data.options, localId);
+		auto messageToSend = Api::MessageToSend(
+			prepareSendAction(data.options));
+		messageToSend.textWithTags = base::take(data.caption);
+		sendExistingDocument(
+			data.document,
+			std::move(messageToSend),
+			data.messageSendingFrom.localId);
 	}, lifetime());
 
 	_composeControls->photoChosen(
@@ -785,7 +805,9 @@ void RepliesWidget::setupComposeControls() {
 		}
 	}, lifetime());
 
-	_composeControls->scrollKeyEvents(
+	rpl::merge(
+		_composeControls->scrollKeyEvents(),
+		_inner->scrollKeyEvents()
 	) | rpl::start_with_next([=](not_null<QKeyEvent*> e) {
 		_scroll->keyPressEvent(e);
 	}, lifetime());
@@ -855,11 +877,73 @@ void RepliesWidget::setupComposeControls() {
 	}
 }
 
+void RepliesWidget::setupSwipeReply() {
+	const auto can = [=](not_null<HistoryItem*> still) {
+		const auto canSendReply = _topic
+			? Data::CanSendAnything(_topic)
+			: Data::CanSendAnything(_history->peer);
+		const auto allowInAnotherChat = still && still->allowsForward();
+		if (allowInAnotherChat && (_joinGroup || !canSendReply)) {
+			return true;
+		} else if (!_joinGroup && canSendReply) {
+			return true;
+		}
+		return false;
+	};
+	HistoryView::SetupSwipeHandler(_inner, _scroll.get(), [=](
+			HistoryView::ChatPaintGestureHorizontalData data) {
+		const auto changed = (_gestureHorizontal.msgBareId != data.msgBareId)
+			|| (_gestureHorizontal.translation != data.translation)
+			|| (_gestureHorizontal.reachRatio != data.reachRatio);
+		if (changed) {
+			_gestureHorizontal = data;
+			const auto item = _history->peer->owner().message(
+				_history->peer->id,
+				MsgId{ data.msgBareId });
+			if (item) {
+				_history->owner().requestItemRepaint(item);
+			}
+		}
+	}, [=, show = controller()->uiShow()](int cursorTop) {
+		auto result = HistoryView::SwipeHandlerFinishData();
+		if (_inner->elementInSelectionMode(nullptr).inSelectionMode) {
+			return result;
+		}
+		const auto view = _inner->lookupItemByY(cursorTop);
+		if (!view
+			|| !view->data()->isRegular()
+			|| view->data()->isService()) {
+			return result;
+		}
+		if (!can(view->data())) {
+			return result;
+		}
+
+		result.msgBareId = view->data()->fullId().msg.bare;
+		result.callback = [=, itemId = view->data()->fullId()] {
+			const auto still = show->session().data().message(itemId);
+			const auto view = _inner->viewByPosition(still->position());
+			const auto selected = view
+				? view->selectedQuote(_inner->getSelectedTextRange(still))
+				: SelectedQuote();
+			const auto replyToItemId = (selected.item
+				? selected.item
+				: still)->fullId();
+			_inner->replyToMessageRequestNotify({
+				.messageId = replyToItemId,
+				.quote = selected.text,
+				.quoteOffset = selected.offset,
+			});
+		};
+		return result;
+	}, _inner->touchMaybeSelectingValue());
+}
+
 void RepliesWidget::chooseAttach(
 		std::optional<bool> overrideSendImagesAsPhotos) {
 	_choosingAttach = false;
 	if (const auto error = Data::AnyFileRestrictionError(_history->peer)) {
-		controller()->showToast(*error);
+		Data::ShowSendErrorToast(controller(), _history->peer, error);
 		return;
 	} else if (showSlowmodeError()) {
 		return;
@@ -947,7 +1031,7 @@ bool RepliesWidget::confirmSendingFiles(
 		_composeControls->getTextWithAppliedMarkdown(),
 		_history->peer,
 		Api::SendType::Normal,
-		SendMenu::Type::SilentOnly); // #TODO replies schedule
+		sendMenuDetails());
 
 	box->setConfirmedCallback(crl::guard(this, [=](
 			Ui::PreparedList &&list,
@@ -1080,7 +1164,6 @@ void RepliesWidget::checkReplyReturns() {
 void RepliesWidget::uploadFile(
 		const QByteArray &fileContent,
 		SendMediaType type) {
-	// #TODO replies schedule
 	session().api().sendFile(fileContent, type, prepareSendAction({}));
 }
 
@@ -1092,11 +1175,11 @@ bool RepliesWidget::showSendingFilesError(
 bool RepliesWidget::showSendingFilesError(
 		const Ui::PreparedList &list,
 		std::optional<bool> compress) const {
-	const auto text = [&] {
+	const auto error = [&]() -> Data::SendError {
 		const auto peer = _history->peer;
 		const auto error = Data::FileRestrictionError(peer, list, compress);
 		if (error) {
-			return *error;
+			return error;
 		} else if (const auto left = _history->peer->slowmodeSecondsLeft()) {
 			return tr::lng_slowmode_enabled(
 				tr::now,
@@ -1116,21 +1199,21 @@ bool RepliesWidget::showSendingFilesError(
 		}
 		return tr::lng_forward_send_files_cant(tr::now);
 	}();
-	if (text.isEmpty()) {
+	if (!error) {
 		return false;
-	} else if (text == u"(toolarge)"_q) {
+	} else if (error.text == u"(toolarge)"_q) {
 		const auto fileSize = list.files.back().size;
 		controller()->show(
 			Box(FileSizeLimitBox, &session(), fileSize, nullptr));
 		return true;
 	}
 
-	controller()->showToast(text);
+	Data::ShowSendErrorToast(controller(), _history->peer, error);
 	return true;
 }
 
 Api::SendAction RepliesWidget::prepareSendAction(
-	Api::SendOptions options) const {
+		Api::SendOptions options) const {
 	auto result = Api::SendAction(_history, options);
 	result.replyTo = replyTo();
 	result.options.sendAs = _composeControls->sendAsPeer();
@@ -1142,11 +1225,6 @@ void RepliesWidget::send() {
 		return;
 	}
 	send({});
-	// #TODO replies schedule
-	//const auto callback = [=](Api::SendOptions options) { send(options); };
-	//Ui::show(
-	//	PrepareScheduleBox(this, sendMenuType(), callback),
-	//	Ui::LayerOption::KeepOther);
 }
 
 void RepliesWidget::sendVoice(ComposeControls::VoiceToSend &&data) {
@@ -1155,6 +1233,7 @@ void RepliesWidget::sendVoice(ComposeControls::VoiceToSend &&data) {
 		data.bytes,
 		data.waveform,
 		data.duration,
+		data.video,
 		std::move(action));
 
 	_composeControls->cancelReplyMessage();
@@ -1175,7 +1254,7 @@ void RepliesWidget::send(Api::SendOptions options) {
 	message.textWithTags = _composeControls->getTextWithAppliedMarkdown();
 	message.webPage = _composeControls->webPageDraft();
 
-	const auto error = GetErrorTextForSending(
+	const auto error = GetErrorForSending(
 		_history->peer,
 		{
 			.topicRootId = _topic ? _topic->rootId() : MsgId(0),
@@ -1183,8 +1262,8 @@ void RepliesWidget::send(Api::SendOptions options) {
 			.text = &message.textWithTags,
 			.ignoreSlowmodeCountdown = (options.scheduled != 0),
 		});
-	if (!error.isEmpty()) {
-		controller()->showToast(error);
+	if (error) {
+		Data::ShowSendErrorToast(controller(), _history->peer, error);
 		return;
 	}
 
@@ -1207,7 +1286,8 @@ void RepliesWidget::send(Api::SendOptions options) {
 void RepliesWidget::edit(
 		not_null<HistoryItem*> item,
 		Api::SendOptions options,
-		mtpRequestId *const saveEditMsgRequestId) {
+		mtpRequestId *const saveEditMsgRequestId,
+		bool spoilered) {
 	if (*saveEditMsgRequestId) {
 		return;
 	}
@@ -1275,7 +1355,8 @@ void RepliesWidget::edit(
 		webpage,
 		options,
 		crl::guard(this, done),
-		crl::guard(this, fail));
+		crl::guard(this, fail),
+		spoilered);
 
 	_composeControls->hidePanelsAnimated();
 	doSetInnerFocus();
@@ -1325,27 +1406,15 @@ void RepliesWidget::refreshJoinGroupButton() {
 	}
 }
 
-void RepliesWidget::sendExistingDocument(
-		not_null<DocumentData*> document) {
-	sendExistingDocument(document, {}, std::nullopt);
-	// #TODO replies schedule
-	//const auto callback = [=](Api::SendOptions options) {
-	//	sendExistingDocument(document, options);
-	//};
-	//Ui::show(
-	//	PrepareScheduleBox(this, sendMenuType(), callback),
-	//	Ui::LayerOption::KeepOther);
-}
-
 bool RepliesWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
-		Api::SendOptions options,
+		Api::MessageToSend messageToSend,
 		std::optional<MsgId> localId) {
 	const auto error = Data::RestrictionError(
 		_history->peer,
 		ChatRestriction::SendStickers);
 	if (error) {
-		controller()->showToast(*error);
+		Data::ShowSendErrorToast(controller(), _history->peer, error);
 		return false;
 	} else if (showSlowmodeError()
 		|| ShowSendPremiumError(controller(), document)) {
@@ -1353,7 +1422,7 @@ bool RepliesWidget::sendExistingDocument(
 	}
 
 	Api::SendExistingDocument(
-		Api::MessageToSend(prepareSendAction(options)),
+		std::move(messageToSend),
 		document,
 		localId);
 
@@ -1364,13 +1433,6 @@ bool RepliesWidget::sendExistingDocument(
 
 void RepliesWidget::sendExistingPhoto(not_null<PhotoData*> photo) {
 	sendExistingPhoto(photo, {});
-	// #TODO replies schedule
-	//const auto callback = [=](Api::SendOptions options) {
-	//	sendExistingPhoto(photo, options);
-	//};
-	//Ui::show(
-	//	PrepareScheduleBox(this, sendMenuType(), callback),
-	//	Ui::LayerOption::KeepOther);
 }
 
 bool RepliesWidget::sendExistingPhoto(
@@ -1380,7 +1442,7 @@ bool RepliesWidget::sendExistingPhoto(
 		_history->peer,
 		ChatRestriction::SendPhotos);
 	if (error) {
-		controller()->showToast(*error);
+		Data::ShowSendErrorToast(controller(), _history->peer, error);
 		return false;
 	} else if (showSlowmodeError()) {
 		return false;
@@ -1398,9 +1460,8 @@ bool RepliesWidget::sendExistingPhoto(
 void RepliesWidget::sendInlineResult(
 		not_null<InlineBots::Result*> result,
 		not_null<UserData*> bot) {
-	const auto errorText = result->getErrorOnSend(_history);
-	if (!errorText.isEmpty()) {
-		controller()->showToast(errorText);
+	if (const auto error = result->getErrorOnSend(_history)) {
+		Data::ShowSendErrorToast(controller(), _history->peer, error);
 		return;
 	}
 	sendInlineResult(result, bot, {}, std::nullopt);
@@ -1440,13 +1501,10 @@ void RepliesWidget::sendInlineResult(
 	finishSending();
 }
 
-SendMenu::Type RepliesWidget::sendMenuType() const {
-	// #TODO replies schedule
-	return _history->peer->isSelf()
-		? SendMenu::Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_history->peer)
-		? SendMenu::Type::ScheduledToUser
-		: SendMenu::Type::Scheduled;
+SendMenu::Details RepliesWidget::sendMenuDetails() const {
+	using Type = SendMenu::Type;
+	const auto type = _topic ? Type::Scheduled : Type::SilentOnly;
+	return SendMenu::Details{ .type = type };
 }
 
 FullReplyTo RepliesWidget::replyTo() const {
@@ -1469,7 +1527,7 @@ void RepliesWidget::refreshTopBarActiveChat() {
 	};
 	_topBar->setActiveChat(state, _sendAction.get());
 	_composeControls->setCurrentDialogsEntryState(state);
-	controller()->setCurrentDialogsEntryState(state);
+	controller()->setDialogsEntryState(state);
 }
 
 void RepliesWidget::refreshUnreadCountBadge(std::optional<int> count) {
@@ -1953,7 +2011,11 @@ void RepliesWidget::checkActivation() {
 }
 
 void RepliesWidget::doSetInnerFocus() {
-	if (!_inner->getSelectedText().rich.text.isEmpty()
+	if (_composeSearch
+		&& _inner->getSelectedText().rich.text.isEmpty()
+		&& _inner->getSelectedItems().empty()) {
+		_composeSearch->setInnerFocus();
+	} else if (!_inner->getSelectedText().rich.text.isEmpty()
 		|| !_inner->getSelectedItems().empty()
 		|| !_composeControls->focus()) {
 		_inner->setFocus();
@@ -2389,6 +2451,16 @@ bool RepliesWidget::listScrollTo(int top, bool syntetic) {
 }
 
 void RepliesWidget::listCancelRequest() {
+	if (_composeSearch) {
+		if (_inner &&
+			(!_inner->getSelectedItems().empty()
+				|| !_inner->getSelectedText().rich.text.isEmpty())) {
+			clearSelected();
+		} else {
+			_composeSearch->hideAnimated();
+		}
+		return;
+	}
 	if (_inner && !_inner->getSelectedItems().empty()) {
 		clearSelected();
 		return;
@@ -2452,6 +2524,9 @@ void RepliesWidget::listSelectionChanged(SelectedItems &&items) {
 		}
 	}
 	_topBar->showSelected(state);
+	if ((state.count > 0) && _composeSearch) {
+		_composeSearch->hideAnimated();
+	}
 	if (items.empty()) {
 		doSetInnerFocus();
 	}
@@ -2631,6 +2706,11 @@ QString RepliesWidget::listElementAuthorRank(not_null<const Element*> view) {
 		: QString();
 }
 
+bool RepliesWidget::listElementHideTopicButton(
+		not_null<const Element*> view) {
+	return true;
+}
+
 History *RepliesWidget::listTranslateHistory() {
 	return _history;
 }
@@ -2640,6 +2720,31 @@ void RepliesWidget::listAddTranslatedItems(
 	if (_shownPinnedItem) {
 		tracker->add(_shownPinnedItem);
 	}
+}
+
+Ui::ChatPaintContext RepliesWidget::listPreparePaintContext(
+		Ui::ChatPaintContextArgs &&args) {
+	auto context = WindowListDelegate::listPreparePaintContext(
+		std::move(args));
+	context.gestureHorizontal = _gestureHorizontal;
+	return context;
+}
+
+base::unique_qptr<Ui::PopupMenu> RepliesWidget::listFillSenderUserpicMenu(
+		PeerId userpicPeerId) {
+	const auto searchInEntry = _topic
+		? Dialogs::Key(_topic)
+		: Dialogs::Key(_history);
+	auto menu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::popupMenuWithIcons);
+	Window::FillSenderUserpicMenu(
+		controller(),
+		_history->owner().peer(userpicPeerId),
+		_composeControls->fieldForMention(),
+		searchInEntry,
+		Ui::Menu::CreateAddActionCallback(menu.get()));
+	return menu->empty() ? nullptr : std::move(menu);
 }
 
 void RepliesWidget::setupEmptyPainter() {
@@ -2698,15 +2803,16 @@ void RepliesWidget::setupDragArea() {
 void RepliesWidget::setupShortcuts() {
 	Shortcuts::Requests(
 	) | rpl::filter([=] {
-		return _topic
-			&& Ui::AppInFocus()
+		return Ui::AppInFocus()
 			&& Ui::InFocusChain(this)
 			&& !controller()->isLayerShown()
 			&& (Core::App().activeWindow() == &controller()->window());
 	}) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
 		using Command = Shortcuts::Command;
 		request->check(Command::Search, 1) && request->handle([=] {
-			searchInTopic();
+			if (!preventsClose(crl::guard(this, [=]{ searchInTopic(); }))) {
+				searchInTopic();
+			}
 			return true;
 		});
 	}, lifetime());
@@ -2715,6 +2821,39 @@ void RepliesWidget::setupShortcuts() {
 void RepliesWidget::searchInTopic() {
 	if (_topic) {
 		controller()->searchInChat(_topic);
+	} else {
+		const auto update = [=] {
+			if (_composeSearch) {
+				_composeControls->hide();
+			} else {
+				_composeControls->show();
+			}
+			updateControlsGeometry();
+		};
+		const auto from = (PeerData*)(nullptr);
+		_composeSearch = std::make_unique<HistoryView::ComposeSearch>(
+			this,
+			controller(),
+			_history,
+			from);
+		_composeSearch->setTopMsgId(_rootId);
+
+		update();
+		doSetInnerFocus();
+
+		using Activation = HistoryView::ComposeSearch::Activation;
+		_composeSearch->activations(
+		) | rpl::start_with_next([=](Activation activation) {
+			showAtPosition(activation.item->position());
+		}, _composeSearch->lifetime());
+
+		_composeSearch->destroyRequests(
+		) | rpl::take(1) | rpl::start_with_next([=] {
+			_composeSearch = nullptr;
+
+			update();
+			doSetInnerFocus();
+		}, _composeSearch->lifetime());
 	}
 }
 

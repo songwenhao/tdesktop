@@ -2,15 +2,18 @@
     This file is part of the KDE libraries
 
     SPDX-FileCopyrightText: 2009 David Faure <faure@kde.org>
+    SPDX-FileCopyrightText: 2023 Harald Sitter <sitter@kde.org>
 
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
 
 #include <kdirwatch.h>
+#include <kdirwatch_p.h>
 
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -74,6 +77,8 @@ private Q_SLOTS: // test methods
     void testHardlinkChange();
     void stopAndRestart();
     void testRefcounting();
+    void testRelativeRefcounting();
+    void testMoveToThread();
 
 protected Q_SLOTS: // internal slots
     void nestedEventLoopSlot();
@@ -706,6 +711,57 @@ void KDirWatch_UnitTest::testRefcounting()
     QVERIFY(initialExists);
     QVERIFY(!secondExists);
 #endif
+}
+
+void KDirWatch_UnitTest::testRelativeRefcounting()
+{
+    // Relative files aren't supported but should still result in correct ref
+    // handling. Specifically when watch1 gets destroyed it should take all
+    // its entries with it regardless of whether the entry was well-formed
+    KDirWatch watch0;
+
+    if (watch0.internalMethod() != KDirWatch::INotify) {
+        // Only test on inotify. Otherwise Entry count expectations may diverge.
+        return;
+    }
+
+    const auto initialSize = watch0.d->m_mapEntries.size();
+    {
+        KDirWatch watch1;
+        watch1.addFile(QStringLiteral("AVeryRelativePath.txt"));
+        // NOTE: addFile actually adds two entires: one for '.' to watch for the appearance of the file and one for the file.
+        QCOMPARE(watch0.d->m_mapEntries.size(), initialSize + 2);
+    }
+    // NOTE: we leak the directory entry from above but it has no clients so it's mostly harmless
+    QCOMPARE(watch0.d->m_mapEntries.size(), initialSize + 1);
+}
+
+void KDirWatch_UnitTest::testMoveToThread()
+{
+    QTemporaryDir dir;
+    {
+        const QRegularExpression expression(QStringLiteral("KDirwatch is moving its thread. This is not supported at this time;.+"));
+        QTest::ignoreMessage(QtCriticalMsg, expression);
+
+        auto watch = new KDirWatch;
+        watch->addDir(dir.path());
+
+        auto thread = new QThread;
+        watch->moveToThread(thread);
+        thread->start();
+
+        waitUntilMTimeChange(dir.path());
+
+        QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+        QObject::connect(thread, &QThread::finished, watch, &QObject::deleteLater);
+
+        thread->quit();
+        thread->wait();
+    }
+    // trigger an event on the now deleted watch. This should not crash!
+    const QString file = dir.path() + QLatin1String("/bar");
+    createFile(file);
+    waitUntilMTimeChange(file);
 }
 
 #include "kdirwatch_unittest.moc"

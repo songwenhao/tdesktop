@@ -44,12 +44,12 @@ INTERFACE
     $<$<TARGET_EXISTS:Qt::Quick>:${qt_loc}/include/QtQuick>
     $<$<TARGET_EXISTS:Qt::QuickWidgets>:${qt_loc}/include/QtQuickWidgets>
     $<$<TARGET_EXISTS:Qt::WaylandCompositor>:${qt_loc}/include/QtWaylandCompositor>
-    ${qt_loc}/include/QtCore/${qt_version}
-    ${qt_loc}/include/QtGui/${qt_version}
-    ${qt_loc}/include/QtWidgets/${qt_version}
-    ${qt_loc}/include/QtCore/${qt_version}/QtCore
-    ${qt_loc}/include/QtGui/${qt_version}/QtGui
-    ${qt_loc}/include/QtWidgets/${qt_version}/QtWidgets
+    ${qt_loc}/include/QtCore/${QT_VERSION}
+    ${qt_loc}/include/QtGui/${QT_VERSION}
+    ${qt_loc}/include/QtWidgets/${QT_VERSION}
+    ${qt_loc}/include/QtCore/${QT_VERSION}/QtCore
+    ${qt_loc}/include/QtGui/${QT_VERSION}/QtGui
+    ${qt_loc}/include/QtWidgets/${QT_VERSION}/QtWidgets
 )
 
 target_compile_definitions(external_qt
@@ -114,7 +114,6 @@ if (TARGET Qt::Quick)
     list(PREPEND common_qt_libs
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Quick
         lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}Qml
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}QmlBuiltins
     )
 endif()
 
@@ -154,25 +153,59 @@ if (WIN32)
         ${qt_loc}/mkspecs/win32-msvc
     )
     set(qt_libs
-        plugins/bearer/${qt_lib_prefix}qgenericbearer
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}AccessibilitySupport
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}FontDatabaseSupport
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}EventDispatcherSupport
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}ThemeSupport
         ${common_qt_libs}
-        lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WindowsUIAutomationSupport
-        lib/${qt_lib_prefix}qtmain
-        lib/${qt_lib_prefix}qtfreetype
         plugins/platforms/${qt_lib_prefix}qwindows
     )
+    if (QT_VERSION GREATER 6)
+        list(APPEND qt_libs
+            plugins/tls/${qt_lib_prefix}qschannelbackend
+            plugins/networkinformation/${qt_lib_prefix}qnetworklistmanager
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}BundledFreetype
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}EntryPoint
+        )
+        list(APPEND qt_libs_list
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWindowsIntegrationPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QSchannelBackendPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QNLMNIPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWindowsIntegrationPlugin_resources_1>
+        )
+    else()
+        list(APPEND qt_libs
+            plugins/bearer/${qt_lib_prefix}qgenericbearer
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}AccessibilitySupport
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}FontDatabaseSupport
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}EventDispatcherSupport
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}ThemeSupport
+            lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WindowsUIAutomationSupport
+            lib/${qt_lib_prefix}qtmain
+            lib/${qt_lib_prefix}qtfreetype
+        )
+    endif()
     foreach (lib ${qt_libs})
         list(APPEND qt_libs_list "${qt_loc}/${lib}${qt_lib_suffix}")
     endforeach()
 
-    target_link_libraries(external_qt
-    INTERFACE
-        desktop-app::external_angle
-    )
+    if (QT_VERSION GREATER 6)
+        target_link_libraries(external_qt
+        INTERFACE
+            Authz
+            Dwrite
+            DXGI
+            dxguid
+            D3D9
+            D3D11
+            D3D12
+            SetupAPI
+            Shcore
+            Synchronization
+            WindowsApp
+        )
+    else()
+        target_link_libraries(external_qt
+        INTERFACE
+            desktop-app::external_angle
+        )
+    endif()
 elseif (APPLE)
     target_include_directories(external_qt SYSTEM
     INTERFACE
@@ -237,6 +270,7 @@ else()
             plugins/platforms/${qt_lib_prefix}qwayland-egl
             plugins/wayland-graphics-integration-client/${qt_lib_prefix}qt-plugin-wayland-egl
             plugins/wayland-shell-integration/${qt_lib_prefix}xdg-shell
+            plugins/wayland-decoration-client/${qt_lib_prefix}adwaita
             plugins/wayland-decoration-client/${qt_lib_prefix}bradient
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandEglClientHwIntegration
             lib/${qt_lib_prefix}Qt${QT_VERSION_MAJOR}WaylandClient
@@ -246,6 +280,7 @@ else()
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandEglPlatformIntegrationPlugin_init>
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandEglClientBufferPlugin_init>
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandXdgShellIntegrationPlugin_init>
+            $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandAdwaitaDecorationPlugin_init>
             $<TARGET_OBJECTS:Qt${QT_VERSION_MAJOR}::QWaylandBradientDecorationPlugin_init>
         )
     endif()
@@ -294,7 +329,9 @@ INTERFACE
 )
 
 if (WIN32)
-    if (build_win64)
+    if (build_winarm)
+        set(libwebp_release_folder ARM64)
+    elseif (build_win64)
         set(libwebp_release_folder x64)
     else()
         set(libwebp_release_folder x86)

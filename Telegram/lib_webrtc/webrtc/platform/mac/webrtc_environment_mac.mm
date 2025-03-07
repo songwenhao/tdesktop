@@ -11,6 +11,7 @@
 #include "webrtc/webrtc_create_adm.h"
 
 #include <modules/audio_device/include/audio_device_defines.h>
+#include <modules/audio_device/include/audio_device.h>
 #include <api/task_queue/default_task_queue_factory.h>
 
 #import <AVFoundation/AVFoundation.h>
@@ -44,6 +45,48 @@ namespace Webrtc::Platform {
 namespace {
 
 constexpr auto kMaxNameLength = 256;
+
+class EmptyCallback final : public webrtc::AudioTransport {
+public:
+	int32_t RecordedDataIsAvailable(
+			const void* audioSamples,
+			const size_t nSamples,
+			const size_t nBytesPerSample,
+			const size_t nChannels,
+			const uint32_t samplesPerSec,
+			const uint32_t totalDelayMS,
+			const int32_t clockDrift,
+			const uint32_t currentMicLevel,
+			const bool keyPressed,
+			uint32_t& newMicLevel) override {
+		return 0;
+	}
+
+	// Implementation has to setup safe values for all specified out parameters.
+	int32_t NeedMorePlayData(
+			const size_t nSamples,
+			const size_t nBytesPerSample,
+			const size_t nChannels,
+			const uint32_t samplesPerSec,
+			void* audioSamples,
+			size_t& nSamplesOut,  // NOLINT
+			int64_t* elapsed_time_ms,
+			int64_t* ntp_time_ms) override {
+		nSamplesOut = 0;
+		return 0;
+	}
+
+	void PullRenderData(
+		int bits_per_sample,
+		int sample_rate,
+		size_t number_of_channels,
+		size_t number_of_frames,
+		void* audio_data,
+		int64_t* elapsed_time_ms,
+		int64_t* ntp_time_ms) override {
+	}
+
+};
 
 class PropertyMonitor {
 public:
@@ -411,6 +454,10 @@ void EnvironmentMac::audioDeviceListChanged() {
 }
 
 QString EnvironmentMac::defaultId(DeviceType type) {
+	return DefaultId(type);
+}
+
+QString EnvironmentMac::DefaultId(DeviceType type) {
 	if (type == DeviceType::Camera) {
 		return CaptureDeviceId(
 			[AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo]);
@@ -565,6 +612,10 @@ void EnvironmentMac::captureMuteSubscribe() {
 		_adm = CreateAudioDeviceModule(
 			_admTaskQueueFactory.get(),
 			saveSetDeviceIdCallback);
+
+		// We don't need captured data, we need simply to have active recording.
+		static auto kEmptyCallback = EmptyCallback();
+		_adm->RegisterAudioCallback(&kEmptyCallback);
 
 		_captureMuteSubscriptionLifetime.add([=] {
 			_admSetDeviceIdCallback = nullptr;

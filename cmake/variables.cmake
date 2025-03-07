@@ -15,10 +15,12 @@ set(disable_autoupdate 0)
 if (DESKTOP_APP_SPECIAL_TARGET STREQUAL ""
     OR DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwp"
     OR DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwp64"
+    OR DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwparm"
     OR DESKTOP_APP_SPECIAL_TARGET STREQUAL "macstore")
     set(disable_autoupdate 1)
 endif()
 
+option(DESKTOP_APP_TEST_APPS "Build test apps, development only." OFF)
 option(DESKTOP_APP_LOTTIE_USE_CACHE "Use caching in lottie animations." ON)
 cmake_dependent_option(DESKTOP_APP_DISABLE_X11_INTEGRATION "Disable all code for X11 integration." OFF LINUX ON)
 cmake_dependent_option(DESKTOP_APP_USE_ALLOCATION_TRACER "Use simple allocation tracer." OFF LINUX OFF)
@@ -55,37 +57,33 @@ if (LINUX OR DESKTOP_APP_USE_CLD3)
 endif()
 
 set(build_macstore 0)
-set(build_winstore 0) # 32 or 64 bit
+set(build_winstore 0) # x86 or x64 or arm
 set(build_win64 0) # normal or uwp
-set(build_winstore64 0)
+set(build_winarm 0) # normal or uwp
 
 if (WIN32)
     if (DESKTOP_APP_SPECIAL_TARGET STREQUAL "win64")
         set(build_win64 1)
+    elseif (DESKTOP_APP_SPECIAL_TARGET STREQUAL "winarm")
+        set(build_winarm 1)
     elseif (DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwp")
         set(build_winstore 1)
     elseif (DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwp64")
         set(build_win64 1)
         set(build_winstore 1)
-        set(build_winstore64 1)
+    elseif (DESKTOP_APP_SPECIAL_TARGET STREQUAL "uwparm")
+        set(build_winarm 1)
+        set(build_winstore 1)
     elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(build_win64 1)
+        if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM")
+            set(build_winarm 1)
+        else()
+            set(build_win64 1)
+        endif()
     endif()
 elseif (APPLE)
     if (DESKTOP_APP_SPECIAL_TARGET STREQUAL "macstore")
         set(build_macstore 1)
-    endif()
-else()
-    if (DESKTOP_APP_SPECIAL_TARGET)
-        if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-            set(CMAKE_AR "gcc-ar")
-            set(CMAKE_RANLIB "gcc-ranlib")
-            set(CMAKE_NM "gcc-nm")
-        elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-            set(CMAKE_AR "llvm-ar")
-            set(CMAKE_RANLIB "llvm-ranlib")
-            set(CMAKE_NM "llvm-nm")
-        endif()
     endif()
 endif()
 

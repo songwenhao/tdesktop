@@ -6,6 +6,7 @@
 //
 #include "webview/platform/linux/webview_linux_compositor.h"
 
+#ifdef DESKTOP_APP_WEBVIEW_WAYLAND_COMPOSITOR
 #include "base/flat_map.h"
 #include "base/unique_qptr.h"
 #include "base/qt_signal_producer.h"
@@ -13,15 +14,26 @@
 
 #include <QtQuickWidgets/QQuickWidget>
 #include <QtWaylandCompositor/QWaylandXdgSurface>
+#include <QtWaylandCompositor/QWaylandXdgOutputV1>
 #include <QtWaylandCompositor/QWaylandQuickOutput>
 #include <QtWaylandCompositor/QWaylandQuickShellSurfaceItem>
 
 namespace Webview {
-namespace {
 
-class Output;
+struct Compositor::Private {
+	Private(Compositor *parent)
+	: shell(parent)
+	, xdgOutput(parent) {
+	}
 
-class Chrome : public QWaylandQuickShellSurfaceItem {
+	QPointer<QQuickWidget> widget;
+	base::unique_qptr<Output> output;
+	QWaylandXdgShell shell;
+	QWaylandXdgOutputManagerV1 xdgOutput;
+	rpl::lifetime lifetime;
+};
+
+class Compositor::Chrome : public QWaylandQuickShellSurfaceItem {
 public:
 	Chrome(
 		Output *output,
@@ -41,20 +53,45 @@ private:
 	rpl::lifetime _lifetime;
 };
 
-class Output : public QWaylandQuickOutput {
+class Compositor::Output : public QWaylandQuickOutput {
 public:
-	Output(
-			QWaylandCompositor *compositor,
-			QWaylandXdgSurface *xdgSurface,
-			QQuickWindow *window = nullptr) {
-		setParent(xdgSurface);
+	Output(Compositor *compositor, QObject *parent = nullptr)
+	: _xdg(this, &compositor->_private->xdgOutput) {
+		const auto xdgSurface = qobject_cast<QWaylandXdgSurface*>(parent);
+		const auto window = qobject_cast<QQuickWindow*>(parent);
+		setParent(parent);
 		setCompositor(compositor);
 		setWindow(window ? window : &_ownedWindow.emplace());
 		setScaleFactor(this->window()->devicePixelRatio());
 		setSizeFollowsWindow(true);
 		this->window()->setProperty("output", QVariant::fromValue(this));
-		QCoreApplication::processEvents();
-		_chrome.emplace(this, this->window(), xdgSurface, !window);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+		base::install_event_filter(this, this->window(), [=](
+				not_null<QEvent*> e) {
+			if (e->type() == QEvent::DevicePixelRatioChange) {
+				setScaleFactor(this->window()->devicePixelRatio());
+			}
+			return base::EventFilterResult::Continue;
+		});
+#endif // Qt >= 6.6.0
+		rpl::single(rpl::empty) | rpl::then(
+			rpl::merge(
+				base::qt_signal_producer(
+					this,
+					&QWaylandOutput::geometryChanged
+				),
+				base::qt_signal_producer(
+					this,
+					&QWaylandOutput::scaleFactorChanged
+				)
+			)
+		) | rpl::map([=] {
+			return std::make_tuple(geometry(), scaleFactor());
+		}) | rpl::start_with_next([=](QRect geometry, int scaleFactor) {
+			_xdg.setLogicalPosition(geometry.topLeft() / scaleFactor);
+			_xdg.setLogicalSize(geometry.size() / scaleFactor);
+		}, _lifetime);
+		setXdgSurface(xdgSurface);
 	}
 
 	QQuickWindow *window() const {
@@ -65,17 +102,34 @@ public:
 		return _chrome;
 	}
 
+	void setXdgSurface(QWaylandXdgSurface *xdgSurface) {
+		if (xdgSurface) {
+			_chrome.emplace(this, window(), xdgSurface, bool(_ownedWindow));
+		} else {
+			_chrome.reset();
+		}
+	}
+
 private:
+	QWaylandXdgOutputV1 _xdg;
 	std::optional<QQuickWindow> _ownedWindow;
 	base::unique_qptr<Chrome> _chrome;
+	rpl::lifetime _lifetime;
 };
 
-Chrome::Chrome(
+Compositor::Chrome::Chrome(
 		Output *output,
 		QQuickWindow *window,
 		QWaylandXdgSurface *xdgSurface,
 		bool windowFollowsSize)
 : QWaylandQuickShellSurfaceItem(window->contentItem()) {
+	base::qt_signal_producer(
+		xdgSurface,
+		&QObject::destroyed
+	) | rpl::start_with_next([=] {
+		delete this;
+	}, _lifetime);
+
 	rpl::single(rpl::empty) | rpl::then(
 		base::qt_signal_producer(
 			view(),
@@ -187,35 +241,19 @@ Chrome::Chrome(
 	}
 }
 
-} // namespace
-
-struct Compositor::Private {
-	Private(Compositor *parent)
-	: shell(parent) {
-	}
-
-	QPointer<QQuickWidget> widget;
-	base::unique_qptr<Output> output;
-	QWaylandXdgShell shell;
-	rpl::lifetime lifetime;
-};
-
 Compositor::Compositor(const QByteArray &socketName)
 : _private(std::make_unique<Private>(this)) {
 	connect(&_private->shell, &QWaylandXdgShell::toplevelCreated, [=](
 			QWaylandXdgToplevel *toplevel,
 			QWaylandXdgSurface *xdgSurface) {
-		if (_private->output || !_private->widget) {
+		if (!_private->output || _private->output->chrome()) {
 			const auto output = new Output(this, xdgSurface);
 
 			output->chrome()->surfaceCompleted() | rpl::start_with_next([=] {
 				output->window()->show();
 			}, _private->lifetime);
 		} else {
-			_private->output.emplace(
-				this,
-				xdgSurface,
-				_private->widget->quickWindow());
+			_private->output->setXdgSurface(xdgSurface);
 		}
 	});
 
@@ -257,6 +295,12 @@ Compositor::Compositor(const QByteArray &socketName)
 
 void Compositor::setWidget(QQuickWidget *widget) {
 	_private->widget = widget;
+	if (widget) {
+		_private->output.emplace(this, widget->quickWindow());
+	} else {
+		_private->output.reset();
+	}
 }
 
 } // namespace Webview
+#endif // DESKTOP_APP_WEBVIEW_WAYLAND_COMPOSITOR

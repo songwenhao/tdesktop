@@ -25,6 +25,12 @@
 
 namespace func = base::functors;
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+using native_event_filter_result = qintptr;
+#else // Qt >= 6.0.0
+using native_event_filter_result = long;
+#endif // Qt >= 6.0.0
+
 using gsl::not_null;
 using index_type = gsl::index;
 using size_type = gsl::index;
@@ -52,7 +58,7 @@ using TimeId = int32;
 
 #ifndef _DEBUG
 
-#ifdef _MSC_VER
+#if defined _MSC_VER && QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #define DESKTOP_APP_USE_NO_ALLOCATION_LITERAL
 #endif // _MSC_VER
 

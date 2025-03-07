@@ -582,7 +582,7 @@ public:
       // check sanity
       assert(flags & TYPE_CLASS);
       // method is const if it can operate on a const C struct
-      const_method = is_const(pinfo.ptype);
+      const_method = const_method || is_const(pinfo.ptype);
       def.c_call[param_no] = "gobj_()";
       // NOTE transfer != NOTHING might be a silly case (e.g. _unref)
       // or a useful one (such as some _merge cases)
@@ -1917,6 +1917,7 @@ process_element_function(GeneratorContext &_ctx, const std::string _ns,
 
   FunctionGenerator gen(
       _ctx, _ns, func, klass, klasstype, deps, allow_deprecated);
+  gen.const_method = (kind == EL_METHOD) && _ctx.options.const_method;
   return gen.process(&entry, nullptr, out, impl);
 }
 

@@ -21,19 +21,16 @@
 
 namespace Ui {
 namespace Platform {
-namespace internal {
 
-TitleControls::Layout TitleControlsLayout() {
-	return TitleControls::Layout{
+std::shared_ptr<TitleControlsLayout> TitleControlsLayout::Create() {
+	return std::shared_ptr<TitleControlsLayout>(new TitleControlsLayout({
 		.left = {
 			TitleControls::Control::Close,
 			TitleControls::Control::Minimize,
 			TitleControls::Control::Maximize,
 		}
-	};
+	}));
 }
-
-} // namespace internal
 
 TitleWidget::TitleWidget(not_null<RpWidget*> parent, int height)
 : RpWidget(parent)
@@ -125,13 +122,14 @@ void TitleWidget::paintEvent(QPaintEvent *e) {
 
 	p.setPen(active ? _st->fgActive : _st->fg);
 
+	const auto full = _string.maxWidth();
 	const auto top = (height() - _textStyle->font->height) / 2;
-	if ((width() - _controlsRight * 2) < _string.maxWidth()) {
+	if ((width() - _controlsRight * 2) < full) {
 		const auto left = _controlsRight;
 		_string.drawElided(p, left, top, width() - left);
 	} else {
-		const auto left = (width() - _string.maxWidth()) / 2;
-		_string.draw(p, left, top, width() - left);
+		const auto left = (width() - full) / 2;
+		_string.draw(p, left, top, full);
 	}
 }
 

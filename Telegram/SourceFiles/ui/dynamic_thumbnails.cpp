@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
+#include "data/data_session.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_story.h"
 #include "main/main_session.h"
 #include "ui/empty_userpic.h"
@@ -27,6 +29,8 @@ namespace {
 class PeerUserpic final : public DynamicImage {
 public:
 	PeerUserpic(not_null<PeerData*> peer, bool forceRound);
+
+	std::shared_ptr<DynamicImage> clone() override;
 
 	QImage image(int size) override;
 	void subscribeToUpdates(Fn<void()> callback) override;
@@ -55,10 +59,9 @@ private:
 
 };
 
-class StoryThumbnail : public DynamicImage {
+class MediaThumbnail : public DynamicImage {
 public:
-	explicit StoryThumbnail(FullStoryId id);
-	virtual ~StoryThumbnail() = default;
+	explicit MediaThumbnail(Data::FileOrigin origin, bool forceRound);
 
 	QImage image(int size) override;
 	void subscribeToUpdates(Fn<void()> callback) override;
@@ -68,12 +71,17 @@ protected:
 		Image *image = nullptr;
 		bool blurred = false;
 	};
+
+	[[nodiscard]] Data::FileOrigin origin() const;
+	[[nodiscard]] bool forceRound() const;
+
 	[[nodiscard]] virtual Main::Session &session() = 0;
-	[[nodiscard]] virtual Thumb loaded(FullStoryId id) = 0;
+	[[nodiscard]] virtual Thumb loaded(Data::FileOrigin origin) = 0;
 	virtual void clear() = 0;
 
 private:
-	const FullStoryId _id;
+	const Data::FileOrigin _origin;
+	const bool _forceRound;
 	QImage _full;
 	rpl::lifetime _subscription;
 	QImage _prepared;
@@ -81,13 +89,18 @@ private:
 
 };
 
-class PhotoThumbnail final : public StoryThumbnail {
+class PhotoThumbnail final : public MediaThumbnail {
 public:
-	PhotoThumbnail(not_null<PhotoData*> photo, FullStoryId id);
+	PhotoThumbnail(
+		not_null<PhotoData*> photo,
+		Data::FileOrigin origin,
+		bool forceRound);
+
+	std::shared_ptr<DynamicImage> clone() override;
 
 private:
 	Main::Session &session() override;
-	Thumb loaded(FullStoryId id) override;
+	Thumb loaded(Data::FileOrigin origin) override;
 	void clear() override;
 
 	const not_null<PhotoData*> _photo;
@@ -95,13 +108,18 @@ private:
 
 };
 
-class VideoThumbnail final : public StoryThumbnail {
+class VideoThumbnail final : public MediaThumbnail {
 public:
-	VideoThumbnail(not_null<DocumentData*> video, FullStoryId id);
+	VideoThumbnail(
+		not_null<DocumentData*> video,
+		Data::FileOrigin origin,
+		bool forceRound);
+
+	std::shared_ptr<DynamicImage> clone() override;
 
 private:
 	Main::Session &session() override;
-	Thumb loaded(FullStoryId id) override;
+	Thumb loaded(Data::FileOrigin origin) override;
 	void clear() override;
 
 	const not_null<DocumentData*> _video;
@@ -111,6 +129,8 @@ private:
 
 class EmptyThumbnail final : public DynamicImage {
 public:
+	std::shared_ptr<DynamicImage> clone() override;
+
 	QImage image(int size) override;
 	void subscribeToUpdates(Fn<void()> callback) override;
 
@@ -121,6 +141,8 @@ private:
 
 class SavedMessagesUserpic final : public DynamicImage {
 public:
+	std::shared_ptr<DynamicImage> clone() override;
+
 	QImage image(int size) override;
 	void subscribeToUpdates(Fn<void()> callback) override;
 
@@ -130,9 +152,72 @@ private:
 
 };
 
+class RepliesUserpic final : public DynamicImage {
+public:
+	std::shared_ptr<DynamicImage> clone() override;
+
+	QImage image(int size) override;
+	void subscribeToUpdates(Fn<void()> callback) override;
+
+private:
+	QImage _frame;
+	int _paletteVersion = 0;
+
+};
+
+class HiddenAuthorUserpic final : public DynamicImage {
+public:
+	std::shared_ptr<DynamicImage> clone() override;
+
+	QImage image(int size) override;
+	void subscribeToUpdates(Fn<void()> callback) override;
+
+private:
+	QImage _frame;
+	int _paletteVersion = 0;
+
+};
+
+class IconThumbnail final : public DynamicImage {
+public:
+	explicit IconThumbnail(const style::icon &icon);
+
+	std::shared_ptr<DynamicImage> clone() override;
+
+	QImage image(int size) override;
+	void subscribeToUpdates(Fn<void()> callback) override;
+
+private:
+	const style::icon &_icon;
+	int _paletteVersion = 0;
+	QImage _frame;
+
+};
+
+class EmojiThumbnail final : public DynamicImage {
+public:
+	EmojiThumbnail(not_null<Data::Session*> owner, const QString &data);
+
+	std::shared_ptr<DynamicImage> clone() override;
+
+	QImage image(int size) override;
+	void subscribeToUpdates(Fn<void()> callback) override;
+
+private:
+	const not_null<Data::Session*> _owner;
+	const QString _data;
+	std::unique_ptr<Ui::Text::CustomEmoji> _emoji;
+	QImage _frame;
+
+};
+
 PeerUserpic::PeerUserpic(not_null<PeerData*> peer, bool forceRound)
 : _peer(peer)
 , _forceRound(forceRound) {
+}
+
+std::shared_ptr<DynamicImage> PeerUserpic::clone() {
+	return std::make_shared<PeerUserpic>(_peer, _forceRound);
 }
 
 QImage PeerUserpic::image(int size) {
@@ -168,7 +253,11 @@ QImage PeerUserpic::image(int size) {
 		} else {
 			const auto full = size * style::DevicePixelRatio();
 			const auto r = full / 2.;
-			const auto empty = _peer->generateUserpicImage(view, full, r);
+			const auto empty = PeerData::GenerateUserpicImage(
+				_peer,
+				view,
+				full,
+				r);
 			p.drawImage(QRect(0, 0, size, size), empty);
 		}
 	}
@@ -184,7 +273,9 @@ void PeerUserpic::subscribeToUpdates(Fn<void()> callback) {
 		_subscribed = nullptr;
 		return;
 	}
-	_subscribed = std::make_unique<Subscribed>(std::move(callback));
+	const auto old = std::exchange(
+		_subscribed,
+		std::make_unique<Subscribed>(std::move(callback)));
 
 	_peer->session().changes().peerUpdates(
 		_peer,
@@ -213,11 +304,12 @@ void PeerUserpic::processNewPhoto() {
 	}, _subscribed->downloadLifetime);
 }
 
-StoryThumbnail::StoryThumbnail(FullStoryId id)
-: _id(id) {
+MediaThumbnail::MediaThumbnail(Data::FileOrigin origin, bool forceRound)
+: _origin(origin)
+, _forceRound(forceRound) {
 }
 
-QImage StoryThumbnail::image(int size) {
+QImage MediaThumbnail::image(int size) {
 	const auto ratio = style::DevicePixelRatio();
 	if (_prepared.width() != size * ratio) {
 		if (_full.isNull()) {
@@ -233,13 +325,15 @@ QImage StoryThumbnail::image(int size) {
 				Qt::IgnoreAspectRatio,
 				Qt::SmoothTransformation);
 		}
-		_prepared = Images::Circle(std::move(_prepared));
+		if (_forceRound) {
+			_prepared = Images::Circle(std::move(_prepared));
+		}
 		_prepared.setDevicePixelRatio(ratio);
 	}
 	return _prepared;
 }
 
-void StoryThumbnail::subscribeToUpdates(Fn<void()> callback) {
+void MediaThumbnail::subscribeToUpdates(Fn<void()> callback) {
 	_subscription.destroy();
 	if (!callback) {
 		clear();
@@ -247,7 +341,7 @@ void StoryThumbnail::subscribeToUpdates(Fn<void()> callback) {
 	} else if (!_full.isNull() && !_blurred) {
 		return;
 	}
-	const auto thumbnail = loaded(_id);
+	const auto thumbnail = loaded(_origin);
 	if (const auto image = thumbnail.image) {
 		_full = image->original();
 	}
@@ -257,7 +351,7 @@ void StoryThumbnail::subscribeToUpdates(Fn<void()> callback) {
 	} else {
 		_subscription = session().downloaderTaskFinished(
 		) | rpl::filter([=] {
-			const auto thumbnail = loaded(_id);
+			const auto thumbnail = loaded(_origin);
 			if (!thumbnail.blurred) {
 				_full = thumbnail.image->original();
 				_prepared = QImage();
@@ -269,19 +363,34 @@ void StoryThumbnail::subscribeToUpdates(Fn<void()> callback) {
 	}
 }
 
-PhotoThumbnail::PhotoThumbnail(not_null<PhotoData*> photo, FullStoryId id)
-: StoryThumbnail(id)
+Data::FileOrigin MediaThumbnail::origin() const {
+	return _origin;
+}
+
+bool MediaThumbnail::forceRound() const {
+	return _forceRound;
+}
+
+PhotoThumbnail::PhotoThumbnail(
+	not_null<PhotoData*> photo,
+	Data::FileOrigin origin,
+	bool forceRound)
+: MediaThumbnail(origin, forceRound)
 , _photo(photo) {
+}
+
+std::shared_ptr<DynamicImage> PhotoThumbnail::clone() {
+	return std::make_shared<PhotoThumbnail>(_photo, origin(), forceRound());
 }
 
 Main::Session &PhotoThumbnail::session() {
 	return _photo->session();
 }
 
-StoryThumbnail::Thumb PhotoThumbnail::loaded(FullStoryId id) {
+MediaThumbnail::Thumb PhotoThumbnail::loaded(Data::FileOrigin origin) {
 	if (!_media) {
 		_media = _photo->createMediaView();
-		_media->wanted(Data::PhotoSize::Small, id);
+		_media->wanted(Data::PhotoSize::Small, origin);
 	}
 	if (const auto small = _media->image(Data::PhotoSize::Small)) {
 		return { .image = small };
@@ -295,19 +404,24 @@ void PhotoThumbnail::clear() {
 
 VideoThumbnail::VideoThumbnail(
 	not_null<DocumentData*> video,
-	FullStoryId id)
-: StoryThumbnail(id)
+	Data::FileOrigin origin,
+	bool forceRound)
+: MediaThumbnail(origin, forceRound)
 , _video(video) {
+}
+
+std::shared_ptr<DynamicImage> VideoThumbnail::clone() {
+	return std::make_shared<VideoThumbnail>(_video, origin(), forceRound());
 }
 
 Main::Session &VideoThumbnail::session() {
 	return _video->session();
 }
 
-StoryThumbnail::Thumb VideoThumbnail::loaded(FullStoryId id) {
+MediaThumbnail::Thumb VideoThumbnail::loaded(Data::FileOrigin origin) {
 	if (!_media) {
 		_media = _video->createMediaView();
-		_media->thumbnailWanted(id);
+		_media->thumbnailWanted(origin);
 	}
 	if (const auto small = _media->thumbnail()) {
 		return { .image = small };
@@ -317,6 +431,10 @@ StoryThumbnail::Thumb VideoThumbnail::loaded(FullStoryId id) {
 
 void VideoThumbnail::clear() {
 	_media = nullptr;
+}
+
+std::shared_ptr<DynamicImage> EmptyThumbnail::clone() {
+	return std::make_shared<EmptyThumbnail>();
 }
 
 QImage EmptyThumbnail::image(int size) {
@@ -332,6 +450,10 @@ QImage EmptyThumbnail::image(int size) {
 }
 
 void EmptyThumbnail::subscribeToUpdates(Fn<void()> callback) {
+}
+
+std::shared_ptr<DynamicImage> SavedMessagesUserpic::clone() {
+	return std::make_shared<SavedMessagesUserpic>();
 }
 
 QImage SavedMessagesUserpic::image(int size) {
@@ -356,6 +478,152 @@ QImage SavedMessagesUserpic::image(int size) {
 }
 
 void SavedMessagesUserpic::subscribeToUpdates(Fn<void()> callback) {
+	if (!callback) {
+		_frame = {};
+	}
+}
+
+std::shared_ptr<DynamicImage> RepliesUserpic::clone() {
+	return std::make_shared<RepliesUserpic>();
+}
+
+QImage RepliesUserpic::image(int size) {
+	const auto good = (_frame.width() == size * _frame.devicePixelRatio());
+	const auto paletteVersion = style::PaletteVersion();
+	if (!good || _paletteVersion != paletteVersion) {
+		_paletteVersion = paletteVersion;
+
+		const auto ratio = style::DevicePixelRatio();
+		if (!good) {
+			_frame = QImage(
+				QSize(size, size) * ratio,
+				QImage::Format_ARGB32_Premultiplied);
+			_frame.setDevicePixelRatio(ratio);
+		}
+		_frame.fill(Qt::transparent);
+
+		auto p = Painter(&_frame);
+		Ui::EmptyUserpic::PaintRepliesMessages(p, 0, 0, size, size);
+	}
+	return _frame;
+}
+
+void RepliesUserpic::subscribeToUpdates(Fn<void()> callback) {
+	if (!callback) {
+		_frame = {};
+	}
+}
+
+std::shared_ptr<DynamicImage> HiddenAuthorUserpic::clone() {
+	return std::make_shared<HiddenAuthorUserpic>();
+}
+
+QImage HiddenAuthorUserpic::image(int size) {
+	const auto good = (_frame.width() == size * _frame.devicePixelRatio());
+	const auto paletteVersion = style::PaletteVersion();
+	if (!good || _paletteVersion != paletteVersion) {
+		_paletteVersion = paletteVersion;
+
+		const auto ratio = style::DevicePixelRatio();
+		if (!good) {
+			_frame = QImage(
+				QSize(size, size) * ratio,
+				QImage::Format_ARGB32_Premultiplied);
+			_frame.setDevicePixelRatio(ratio);
+		}
+		_frame.fill(Qt::transparent);
+
+		auto p = Painter(&_frame);
+		Ui::EmptyUserpic::PaintHiddenAuthor(p, 0, 0, size, size);
+	}
+	return _frame;
+}
+
+void HiddenAuthorUserpic::subscribeToUpdates(Fn<void()> callback) {
+	if (!callback) {
+		_frame = {};
+	}
+}
+
+IconThumbnail::IconThumbnail(const style::icon &icon) : _icon(icon) {
+}
+
+std::shared_ptr<DynamicImage> IconThumbnail::clone() {
+	return std::make_shared<IconThumbnail>(_icon);
+}
+
+QImage IconThumbnail::image(int size) {
+	const auto good = (_frame.width() == size * _frame.devicePixelRatio());
+	const auto paletteVersion = style::PaletteVersion();
+	if (!good || _paletteVersion != paletteVersion) {
+		_paletteVersion = paletteVersion;
+
+		const auto ratio = style::DevicePixelRatio();
+		if (!good) {
+			_frame = QImage(
+				QSize(size, size) * ratio,
+				QImage::Format_ARGB32_Premultiplied);
+			_frame.setDevicePixelRatio(ratio);
+		}
+		_frame.fill(Qt::transparent);
+
+		auto p = Painter(&_frame);
+		_icon.paintInCenter(p, QRect(0, 0, size, size));
+	}
+	return _frame;
+}
+
+void IconThumbnail::subscribeToUpdates(Fn<void()> callback) {
+	if (!callback) {
+		_frame = {};
+	}
+}
+
+EmojiThumbnail::EmojiThumbnail(
+	not_null<Data::Session*> owner,
+	const QString &data)
+: _owner(owner)
+, _data(data) {
+}
+
+void EmojiThumbnail::subscribeToUpdates(Fn<void()> callback) {
+	if (!callback) {
+		_emoji = nullptr;
+		return;
+	}
+	_emoji = _owner->customEmojiManager().create(
+		_data,
+		std::move(callback),
+		Data::CustomEmojiSizeTag::Large);
+}
+
+std::shared_ptr<DynamicImage> EmojiThumbnail::clone() {
+	return std::make_shared<EmojiThumbnail>(_owner, _data);
+}
+
+QImage EmojiThumbnail::image(int size) {
+	Expects(_emoji != nullptr);
+
+	const auto ratio = style::DevicePixelRatio();
+	const auto good = (_frame.width() == size * _frame.devicePixelRatio());
+	if (!good) {
+		_frame = QImage(
+			QSize(size, size) * ratio,
+			QImage::Format_ARGB32_Premultiplied);
+		_frame.setDevicePixelRatio(ratio);
+	}
+	_frame.fill(Qt::transparent);
+
+	auto p = Painter(&_frame);
+	_emoji->paint(p, {
+		.textColor = st::windowBoldFg->c,
+		.now = crl::now(),
+		.position = QPoint(0, 0),
+		.paused = false,
+	});
+	p.end();
+
+	return _frame;
 }
 
 } // namespace
@@ -370,6 +638,14 @@ std::shared_ptr<DynamicImage> MakeSavedMessagesThumbnail() {
 	return std::make_shared<SavedMessagesUserpic>();
 }
 
+std::shared_ptr<DynamicImage> MakeRepliesThumbnail() {
+	return std::make_shared<RepliesUserpic>();
+}
+
+std::shared_ptr<DynamicImage> MakeHiddenAuthorThumbnail() {
+	return std::make_shared<HiddenAuthorUserpic>();
+}
+
 std::shared_ptr<DynamicImage> MakeStoryThumbnail(
 		not_null<Data::Story*> story) {
 	using Result = std::shared_ptr<DynamicImage>;
@@ -377,10 +653,32 @@ std::shared_ptr<DynamicImage> MakeStoryThumbnail(
 	return v::match(story->media().data, [](v::null_t) -> Result {
 		return std::make_shared<EmptyThumbnail>();
 	}, [&](not_null<PhotoData*> photo) -> Result {
-		return std::make_shared<PhotoThumbnail>(photo, id);
+		return std::make_shared<PhotoThumbnail>(photo, id, true);
 	}, [&](not_null<DocumentData*> video) -> Result {
-		return std::make_shared<VideoThumbnail>(video, id);
+		return std::make_shared<VideoThumbnail>(video, id, true);
 	});
+}
+
+std::shared_ptr<DynamicImage> MakeIconThumbnail(const style::icon &icon) {
+	return std::make_shared<IconThumbnail>(icon);
+}
+
+std::shared_ptr<DynamicImage> MakeEmojiThumbnail(
+		not_null<Data::Session*> owner,
+		const QString &data) {
+	return std::make_shared<EmojiThumbnail>(owner, data);
+}
+
+std::shared_ptr<DynamicImage> MakePhotoThumbnail(
+		not_null<PhotoData*> photo,
+		FullMsgId fullId) {
+	return std::make_shared<PhotoThumbnail>(photo, fullId, false);
+}
+
+std::shared_ptr<DynamicImage> MakeDocumentThumbnail(
+		not_null<DocumentData*> document,
+		FullMsgId fullId) {
+	return std::make_shared<VideoThumbnail>(document, fullId, false);
 }
 
 } // namespace Ui

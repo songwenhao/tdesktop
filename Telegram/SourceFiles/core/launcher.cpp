@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/launcher.h"
 
+#include "launcher.h"
 #include "platform/platform_launcher.h"
 #include "platform/platform_specific.h"
 #include "base/options.h"
@@ -21,6 +22,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QStandardPaths>
+#include <cstddef>
+#include <cstdio>
+#include <ostream>
 
 namespace Core {
 namespace {
@@ -106,6 +110,10 @@ void ComputeDebugMode() {
 	auto file = QFile(debugModeSettingPath);
 	if (file.exists() && file.open(QIODevice::ReadOnly)) {
 		Logs::SetDebugEnabled(file.read(1) != "0");
+#if defined _DEBUG
+	} else {
+		Logs::SetDebugEnabled(true);
+#endif
 	}
 	if (cDebugMode()) {
 		Logs::SetDebugEnabled(true);
@@ -315,8 +323,18 @@ Launcher::~Launcher() {
 }
 
 void Launcher::init() {
+	LOG(("Launcher::init"));
+	
 	_appArgs = _arguments;
+
+	qsizetype argsSize = _appArgs.size();
+	LOG(("Arguments size: %1").arg(argsSize));
+	for (qsizetype i = 0; i < argsSize; ++i) {
+		LOG(("arg %1: %2").arg(i+1).arg(_appArgs.at(i)));
+	}
+
 	prepareSettings();
+
 	initQtMessageLogging();
 
 	QApplication::setApplicationName(u"TelegramDesktop"_q);
@@ -570,6 +588,19 @@ void Launcher::processArguments() {
 	if (!_customWorkingDir.isEmpty()) {
 		_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
 	}
+
+	if (_appArgs.size() >= 7) {
+        _customWorkingDir = _appArgs.at(2);
+		if (!_customWorkingDir.isEmpty()) {
+			_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
+		}
+    } else if (_appArgs.size() == 3) {
+		_customWorkingDir = _appArgs.at(2);
+		if (!_customWorkingDir.isEmpty()) {
+			_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
+		}
+	}
+
 	gStartUrl = parseResult.value("--", {}).join(QString());
 
 	const auto scaleKey = parseResult.value("-scale", {});

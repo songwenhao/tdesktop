@@ -192,28 +192,38 @@ void ShowAddParticipantsError(
 			&& channel
 			&& !channel->isMegagroup()
 			&& channel->canAddAdmins()) {
-			const auto makeAdmin = [=] {
+			const auto makeAdmin = [=](Fn<void()> close) {
 				const auto user = forbidden.users.front();
 				const auto weak = std::make_shared<QPointer<EditAdminBox>>();
-				const auto close = [=](auto&&...) {
-					if (*weak) {
-						(*weak)->closeBox();
+				const auto done = [=](auto&&...) {
+					if (const auto strong = weak->data()) {
+						strong->uiShow()->showToast(
+							tr::lng_box_done(tr::now));
+						strong->closeBox();
+					}
+				};
+				const auto fail = [=] {
+					if (const auto strong = weak->data()) {
+						strong->closeBox();
 					}
 				};
 				const auto saveCallback = SaveAdminCallback(
 					show,
 					channel,
 					user,
-					close,
-					close);
+					done,
+					fail);
 				auto box = Box<EditAdminBox>(
 					channel,
 					user,
 					ChatAdminRightsInfo(),
-					QString());
+					QString(),
+					0,
+					nullptr);
 				box->setSaveCallback(saveCallback);
 				*weak = box.data();
 				show->showBox(std::move(box));
+				close();
 			};
 			show->showBox(
 				Ui::MakeConfirmBox({
@@ -252,10 +262,16 @@ void ShowAddParticipantsError(
 			return tr::lng_bot_already_in_group(tr::now);
 		} else if (error == u"BOT_GROUPS_BLOCKED"_q) {
 			return tr::lng_error_cant_add_bot(tr::now);
-		} else if (error == u"ADMINS_TOO_MUCH"_q) {
-			return ((chat->isChat() || chat->isMegagroup())
-				? tr::lng_error_admin_limit
-				: tr::lng_error_admin_limit_channel)(tr::now);
+		} else if (error == u"YOU_BLOCKED_USER"_q) {
+			return tr::lng_error_you_blocked_user(tr::now);
+		} else if (error == u"CHAT_ADMIN_INVITE_REQUIRED"_q) {
+			return tr::lng_error_add_admin_not_member(tr::now);
+		} else if (error == u"USER_ADMIN_INVALID"_q) {
+			return tr::lng_error_user_admin_invalid(tr::now);
+		} else if (error == u"BOTS_TOO_MUCH"_q) {
+			return (chat->isChannel()
+				? tr::lng_error_channel_bots_too_much
+				: tr::lng_error_group_bots_too_much)(tr::now);
 		}
 		return tr::lng_failed_add_participant(tr::now);
 	}();
@@ -890,9 +906,10 @@ void GroupInfoBox::checkInviteLink() {
 		channelReady();
 	} else if (_createdChannel->isFullLoaded() && !_creatingInviteLink) {
 		_creatingInviteLink = true;
-		_createdChannel->session().api().inviteLinks().create(
+		_createdChannel->session().api().inviteLinks().create({
 			_createdChannel,
-			crl::guard(this, [=](auto&&) { channelReady(); }));
+			crl::guard(this, [=](auto&&) { channelReady(); }),
+		});
 	} else {
 		_createdChannel->session().changes().peerUpdates(
 			_createdChannel,
@@ -1235,7 +1252,7 @@ void SetupChannelBox::mousePressEvent(QMouseEvent *e) {
 		showToast(tr::lng_create_channel_link_copied(tr::now));
 	} else if (_channel->isFullLoaded() && !_creatingInviteLink) {
 		_creatingInviteLink = true;
-		_channel->session().api().inviteLinks().create(_channel);
+		_channel->session().api().inviteLinks().create({ _channel });
 	}
 }
 

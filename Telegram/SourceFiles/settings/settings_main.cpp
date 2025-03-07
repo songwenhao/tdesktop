@@ -7,35 +7,43 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_main.h"
 
+#include "api/api_credits.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "settings/settings_advanced.h"
 #include "settings/settings_business.h"
-#include "settings/settings_codes.h"
+#include "settings/settings_calls.h"
 #include "settings/settings_chat.h"
+#include "settings/settings_codes.h"
+#include "settings/settings_credits.h"
+#include "settings/settings_folders.h"
 #include "settings/settings_information.h"
 #include "settings/settings_notifications.h"
-#include "settings/settings_privacy_security.h"
-#include "settings/settings_advanced.h"
-#include "settings/settings_folders.h"
-#include "settings/settings_calls.h"
 #include "settings/settings_power_saving.h"
 #include "settings/settings_premium.h"
+#include "settings/settings_privacy_security.h"
 #include "settings/settings_scale_preview.h"
 #include "boxes/language_box.h"
 #include "boxes/username_box.h"
 #include "boxes/about_box.h"
+#include "boxes/star_gift_box.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/controls/userpic_button.h"
+#include "ui/effects/premium_graphics.h"
+#include "ui/effects/premium_top_bar.h" // Ui::Premium::ColorizedSvg.
 #include "ui/wrap/slide_wrap.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/continuous_sliders.h"
+#include "ui/widgets/popup_menu.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/new_badges.h"
+#include "ui/rect.h"
 #include "ui/vertical_list.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
+#include "data/components/credits.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/data_cloud_themes.h"
@@ -112,7 +120,8 @@ Cover::Cover(
 , _badge(
 	this,
 	st::infoPeerBadge,
-	user,
+	&user->session(),
+	Info::Profile::BadgeContentForPeer(user),
 	&_emojiStatusPanel,
 	[=] {
 		return controller->isGifPausedAtLeastFor(
@@ -137,6 +146,20 @@ Cover::Cover(
 
 	_phone->setSelectable(true);
 	_phone->setContextCopyText(tr::lng_profile_copy_phone(tr::now));
+	const auto hook = [=](Ui::FlatLabel::ContextMenuRequest request) {
+		if (request.selection.empty()) {
+			const auto c = [=] {
+				auto phone = rpl::variable<TextWithEntities>(
+					Info::Profile::PhoneValue(_user)).current().text;
+				phone.replace(' ', QString()).replace('-', QString());
+				TextUtilities::SetClipboardText({ phone });
+			};
+			request.menu->addAction(tr::lng_profile_copy_phone(tr::now), c);
+		} else {
+			_phone->fillContextMenu(request);
+		}
+	};
+	_phone->setContextMenuHook(hook);
 
 	initViewers();
 	setupChildGeometry();
@@ -251,6 +274,85 @@ void Cover::refreshUsernameGeometry(int newWidth) {
 	const auto usernameWidth = newWidth - usernameLeft - usernameRight;
 	_username->resizeToWidth(usernameWidth);
 	_username->moveToLeft(usernameLeft, usernameTop, newWidth);
+}
+
+[[nodiscard]] not_null<Ui::SettingsButton*> AddPremiumStar(
+		not_null<Ui::SettingsButton*> button,
+		bool credits,
+		Fn<bool()> isPaused) {
+	const auto stops = credits
+		? Ui::Premium::CreditsIconGradientStops()
+		: Ui::Premium::ButtonGradientStops();
+
+	const auto ministarsContainer = Ui::CreateChild<Ui::RpWidget>(button);
+	const auto &buttonSt = button->st();
+	const auto fullHeight = buttonSt.height
+		+ rect::m::sum::v(buttonSt.padding);
+	using MiniStars = Ui::Premium::ColoredMiniStars;
+	const auto ministars = button->lifetime().make_state<MiniStars>(
+		ministarsContainer,
+		false);
+	ministars->setColorOverride(stops);
+
+	const auto isPausedValue
+		= button->lifetime().make_state<rpl::variable<bool>>(isPaused());
+	isPausedValue->value() | rpl::start_with_next([=](bool value) {
+		ministars->setPaused(value);
+	}, ministarsContainer->lifetime());
+
+	ministarsContainer->paintRequest(
+	) | rpl::start_with_next([=] {
+		(*isPausedValue) = isPaused();
+		auto p = QPainter(ministarsContainer);
+		{
+			constexpr auto kScale = 0.35;
+			const auto r = ministarsContainer->rect();
+			p.translate(r.center());
+			p.scale(kScale, kScale);
+			p.translate(-r.center());
+		}
+		ministars->paint(p);
+	}, ministarsContainer->lifetime());
+
+	const auto badge = Ui::CreateChild<Ui::RpWidget>(button.get());
+
+	auto star = [&] {
+		const auto factor = style::DevicePixelRatio();
+		const auto size = Size(st::settingsButtonNoIcon.style.font->ascent);
+		auto image = QImage(
+			size * factor,
+			QImage::Format_ARGB32_Premultiplied);
+		image.setDevicePixelRatio(factor);
+		image.fill(Qt::transparent);
+		{
+			auto p = QPainter(&image);
+			auto star = QSvgRenderer(Ui::Premium::ColorizedSvg(stops));
+			star.render(&p, Rect(size));
+		}
+		return image;
+	}();
+	badge->resize(star.size() / style::DevicePixelRatio());
+	badge->paintRequest(
+	) | rpl::start_with_next([=] {
+		auto p = QPainter(badge);
+		p.drawImage(0, 0, star);
+	}, badge->lifetime());
+
+	button->sizeValue(
+	) | rpl::start_with_next([=](const QSize &s) {
+		badge->moveToLeft(
+			button->st().iconLeft
+				+ (st::menuIconShop.width() - badge->width()) / 2,
+			(s.height() - badge->height()) / 2);
+		ministarsContainer->moveToLeft(
+			badge->x() - (fullHeight - badge->height()) / 2,
+			0);
+	}, badge->lifetime());
+
+	ministarsContainer->resize(fullHeight, fullHeight);
+	ministars->setCenter(ministarsContainer->rect());
+
+	return button;
 }
 
 } // namespace
@@ -405,15 +507,41 @@ void SetupPremium(
 	Ui::AddDivider(container);
 	Ui::AddSkip(container);
 
-	AddButtonWithIcon(
-		container,
-		tr::lng_premium_summary_title(),
-		st::settingsButton,
-		{ .icon = &st::menuIconPremium }
+	const auto isPaused = Window::PausedIn(
+		controller,
+		Window::GifPauseReason::Any);
+
+	AddPremiumStar(
+		AddButtonWithIcon(
+			container,
+			tr::lng_premium_summary_title(),
+			st::settingsButton),
+		false,
+		isPaused
 	)->addClickHandler([=] {
 		controller->setPremiumRef("settings");
 		showOther(PremiumId());
 	});
+	{
+		controller->session().credits().load();
+		AddPremiumStar(
+			AddButtonWithLabel(
+				container,
+				tr::lng_settings_credits(),
+				controller->session().credits().balanceValue(
+				) | rpl::map([=](StarsAmount c) {
+					return c
+						? Lang::FormatStarsAmountToShort(c).string
+						: QString();
+				}),
+				st::settingsButton),
+			true,
+			isPaused
+		)->addClickHandler([=] {
+			controller->setPremiumRef("settings");
+			showOther(CreditsId());
+		});
+	}
 	const auto button = AddButtonWithIcon(
 		container,
 		tr::lng_business_title(),
@@ -432,7 +560,7 @@ void SetupPremium(
 			{ .icon = &st::menuIconGiftPremium }
 		);
 		button->addClickHandler([=] {
-			controller->showGiftPremiumsBox(u"gift"_q);
+			Ui::ChooseStarGiftRecipient(controller);
 		});
 	}
 	Ui::AddSkip(container);
@@ -494,7 +622,8 @@ void SetupInterfaceScale(
 		st::settingsScale,
 		st::settingsScaleLabel,
 		st::normalFont->spacew * 2,
-		st::settingsScaleLabel.style.font->width("300%"));
+		st::settingsScaleLabel.style.font->width("300%"),
+		true);
 	container->add(
 		std::move(sliderWithLabel.widget),
 		icon ? st::settingsScalePadding : st::settingsBigScalePadding);
@@ -686,7 +815,7 @@ void Main::fillTopBarMenu(const Ui::Menu::MenuCallback &addAction) {
 		addAction(
 			tr::lng_settings_information(tr::now),
 			[=] { showOther(Information::Id()); },
-			&st::menuIconInfo);
+			&st::menuIconEdit);
 	}
 	const auto window = &_controller->window();
 	addAction({

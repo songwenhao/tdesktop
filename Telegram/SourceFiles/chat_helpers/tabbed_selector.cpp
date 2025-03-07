@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/gifs_list_widget.h"
 #include "menu/menu_send.h"
 #include "ui/controls/tabbed_search.h"
+#include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/shadow.h"
@@ -22,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "ui/cached_round_corners.h"
 #include "ui/painter.h"
+#include "ui/ui_utility.h"
 #include "window/window_session_controller.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -509,14 +511,15 @@ TabbedSelector::TabbedSelector(
 			_st.categoriesBg);
 	}, lifetime());
 
-	if (hasEmojiTab()) {
+	if (hasEmojiTab() && _mode == Mode::Full) {
 		session().data().stickers().emojiSetInstalled(
 		) | rpl::start_with_next([=](uint64 setId) {
 			_tabsSlider->setActiveSection(indexByType(SelectorTab::Emoji));
 			emoji()->showSet(setId);
 			_showRequests.fire({});
 		}, lifetime());
-
+	}
+	if (hasEmojiTab()) {
 		emoji()->refreshEmoji();
 	}
 	//setAttribute(Qt::WA_AcceptTouchEvents);
@@ -1014,7 +1017,7 @@ void TabbedSelector::setCurrentPeer(PeerData *peer) {
 }
 
 void TabbedSelector::provideRecentEmoji(
-		const std::vector<DocumentId> &customRecentList) {
+		const std::vector<EmojiStatusId> &customRecentList) {
 	for (const auto &tab : _tabs) {
 		if (tab.type() == SelectorTab::Emoji) {
 			const auto emoji = static_cast<EmojiListWidget*>(tab.widget());
@@ -1040,23 +1043,38 @@ void TabbedSelector::checkRestrictedPeer() {
 				? Data::RestrictionError(
 					_currentPeer,
 					ChatRestriction::SendOther)
-				: std::nullopt)
-			: std::nullopt;
-		if (error) {
-			if (!_restrictedLabel) {
-				_restrictedLabel.create(
-					this,
-					*error,
-					st::stickersRestrictedLabel);
-				_restrictedLabel->show();
-				updateRestrictedLabelGeometry();
-				currentTab()->footer()->hide();
-				_scroll->hide();
-				_bottomShadow->hide();
-				update();
-			}
+				: Data::SendError())
+			: Data::SendError();
+		const auto changed = (_restrictedLabelKey != error.text);
+		if (!changed) {
 			return;
 		}
+		_restrictedLabelKey = error.text;
+		if (error) {
+			const auto show = _show;
+			const auto peer = _currentPeer;
+			_restrictedLabel.create(
+				this,
+				rpl::single(error.boostsToLift
+					? Ui::Text::Link(error.text)
+					: TextWithEntities{ error.text }),
+				st::stickersRestrictedLabel);
+			const auto lifting = error.boostsToLift;
+			_restrictedLabel->setClickHandlerFilter([=](auto...) {
+				const auto window = show->resolveWindow();
+				window->resolveBoostState(peer->asChannel(), lifting);
+				return false;
+			});
+			_restrictedLabel->show();
+			updateRestrictedLabelGeometry();
+			currentTab()->footer()->hide();
+			_scroll->hide();
+			_bottomShadow->hide();
+			update();
+			return;
+		}
+	} else {
+		_restrictedLabelKey = QString();
 	}
 	if (_restrictedLabel) {
 		_restrictedLabel.destroy();
@@ -1297,8 +1315,8 @@ void TabbedSelector::scrollToY(int y) {
 	}
 }
 
-void TabbedSelector::showMenuWithType(SendMenu::Type type) {
-	_menu = currentTab()->widget()->fillContextMenu(type);
+void TabbedSelector::showMenuWithDetails(SendMenu::Details details) {
+	_menu = currentTab()->widget()->fillContextMenu(details);
 	if (_menu && !_menu->empty()) {
 		_menu->popup(QCursor::pos());
 	}
@@ -1460,9 +1478,7 @@ int TabbedSelector::Inner::resizeGetHeight(int newWidth) {
 }
 
 int TabbedSelector::Inner::minimalHeight() const {
-	return (_minimalHeight > 0)
-		? _minimalHeight
-		: defaultMinimalHeight();
+	return _minimalHeight.value_or(defaultMinimalHeight());
 }
 
 int TabbedSelector::Inner::defaultMinimalHeight() const {

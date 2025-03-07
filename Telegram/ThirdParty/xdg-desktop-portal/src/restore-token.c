@@ -106,16 +106,22 @@ xdp_session_persistence_set_persistent_permissions (Session *session,
                                                     GVariant *restore_data)
 {
   g_autoptr(GError) error = NULL;
+  GVariantBuilder permissions_builder;
+  g_auto(GStrv) permission = NULL;
 
-  set_permission_sync (session->app_id, table, restore_token, PERMISSION_YES);
+  permission = permissions_from_tristate (PERMISSION_YES);
 
-  if (!xdp_dbus_impl_permission_store_call_set_value_sync (get_permission_store (),
-                                                           table,
-                                                           TRUE,
-                                                           restore_token,
-                                                           g_variant_new_variant (restore_data),
-                                                           NULL,
-                                                           &error))
+  g_variant_builder_init (&permissions_builder, G_VARIANT_TYPE ("a{sas}"));
+  g_variant_builder_add (&permissions_builder, "{s^a&s}", session->app_id, permission);
+
+  if (!xdp_dbus_impl_permission_store_call_set_sync (get_permission_store (),
+                                                     table,
+                                                     TRUE,
+                                                     restore_token,
+                                                     g_variant_builder_end (&permissions_builder),
+                                                     g_variant_new_variant (restore_data),
+                                                     NULL,
+                                                     &error))
     {
       g_dbus_error_strip_remote_error (error);
       g_warning ("Error setting permission store value: %s", error->message);
@@ -186,7 +192,7 @@ xdp_session_persistence_replace_restore_token_with_data (Session *session,
 
   g_variant_builder_init (&options_builder, G_VARIANT_TYPE_VARDICT);
 
-  while (g_variant_iter_next (&options_iter, "{sv}", &key, &value))
+  while (g_variant_iter_next (&options_iter, "{&sv}", &key, &value))
     {
       if (g_strcmp0 (key, "restore_token") == 0)
         {
@@ -236,11 +242,10 @@ xdp_session_persistence_replace_restore_token_with_data (Session *session,
       else
         {
           g_variant_builder_add (&options_builder, "{sv}",
-                                 key, g_variant_ref (value));
+                                 key, value);
         }
 
-      g_free (key);
-      g_variant_unref (value);
+      g_clear_pointer (&value, g_variant_unref);
     }
 
   *in_out_options = g_variant_builder_end (&options_builder);
@@ -330,7 +335,7 @@ xdp_session_persistence_replace_restore_data_with_token (Session *session,
         {
           if (g_variant_check_format_string (value, RESTORE_DATA_TYPE, FALSE))
             {
-              *in_out_restore_data = g_variant_ref_sink (value);
+              *in_out_restore_data = g_variant_ref (value);
               found_restore_data = TRUE;
             }
           else
@@ -349,6 +354,7 @@ xdp_session_persistence_replace_restore_data_with_token (Session *session,
         {
           g_variant_builder_add (&results_builder, "{sv}", key, value);
         }
+      g_clear_pointer (&value, g_variant_unref);
     }
 
   if (found_restore_data)

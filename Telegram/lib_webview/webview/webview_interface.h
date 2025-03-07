@@ -13,6 +13,9 @@
 #include <optional>
 #include <functional>
 
+#include <rpl/never.h>
+#include <rpl/producer.h>
+
 #include <QtGui/QColor>
 
 // Inspired by https://github.com/webview/webview.
@@ -23,17 +26,35 @@ namespace Webview {
 
 class DataStream;
 
+struct NavigationHistoryState {
+	std::string url;
+	std::string title;
+	bool canGoBack : 1 = false;
+	bool canGoForward : 1 = false;
+
+	friend inline constexpr bool operator==(
+		NavigationHistoryState,
+		NavigationHistoryState) = default;
+};
+
+class ZoomController {
+public:
+	ZoomController() = default;
+
+	[[nodiscard]] virtual rpl::producer<int> zoomValue() {
+		return rpl::never<int>();
+	}
+	virtual void setZoom(int) {
+	}
+};
+
 class Interface {
 public:
 	virtual ~Interface() = default;
 
-	virtual bool finishEmbedding() = 0;
-
 	virtual void navigate(std::string url) = 0;
 	virtual void navigateToData(std::string id) = 0;
 	virtual void reload() = 0;
-
-	virtual void resizeToWindow() = 0;
 
 	virtual void init(std::string js) = 0;
 	virtual void eval(std::string js) = 0;
@@ -42,8 +63,15 @@ public:
 
 	virtual void setOpaqueBg(QColor opaqueBg) = 0;
 
-	virtual QWidget *widget() = 0;
-	virtual void *winId() = 0;
+	[[nodiscard]] virtual QWidget *widget() = 0;
+
+	virtual void refreshNavigationHistoryState() = 0;
+	[[nodiscard]] virtual auto navigationHistoryState()
+		-> rpl::producer<NavigationHistoryState> = 0;
+
+	[[nodiscard]] virtual ZoomController *zoomController() {
+		return nullptr;
+	}
 
 };
 
@@ -87,13 +115,13 @@ enum class DataResult {
 
 struct Config {
 	QWidget *parent = nullptr;
-	void *window = nullptr;
 	QColor opaqueBg;
 	std::function<void(std::string)> messageHandler;
 	std::function<bool(std::string,bool)> navigationStartHandler;
 	std::function<void(bool)> navigationDoneHandler;
 	std::function<DialogResult(DialogArgs)> dialogHandler;
 	std::function<DataResult(DataRequest)> dataRequestHandler;
+	std::string dataProtocolOverride;
 	std::string userDataPath;
 	std::string userDataToken;
 	bool debug = false;
@@ -104,9 +132,14 @@ struct Available {
 		None,
 		NoWebview2,
 		NoWebKitGTK,
+		NoOpenGL,
+		NonX11,
 		OldWindows,
 	};
 	Error error = Error::None;
+	bool customSchemeRequests = false;
+	bool customRangeRequests = false;
+	bool customReferer = false;
 	std::string details;
 };
 
@@ -117,7 +150,6 @@ void ParseRangeHeaderFor(DataRequest &request, std::string_view header);
 	return Availability().error == Available::Error::None;
 }
 [[nodiscard]] bool SupportsEmbedAfterCreate();
-[[nodiscard]] bool NavigateToDataSupported();
 [[nodiscard]] bool SeparateStorageIdSupported();
 
 // HWND on Windows, nullptr on macOS, GtkWindow on Linux.

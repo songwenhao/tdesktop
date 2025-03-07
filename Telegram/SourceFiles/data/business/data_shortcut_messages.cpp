@@ -57,6 +57,7 @@ constexpr auto kRequestTimeLimit = 60 * crl::time(1000);
 			data.vreply_to() ? *data.vreply_to() : MTPMessageReplyHeader(),
 			data.vdate(),
 			data.vaction(),
+			data.vreactions() ? *data.vreactions() : MTPMessageReactions(),
 			MTP_int(data.vttl_period().value_or_empty()));
 	}, [&](const MTPDmessage &data) {
 		return MTP_message(
@@ -87,7 +88,10 @@ constexpr auto kRequestTimeLimit = 60 * crl::time(1000);
 			MTPMessageReactions(),
 			MTPVector<MTPRestrictionReason>(),
 			MTP_int(data.vttl_period().value_or_empty()),
-			MTP_int(shortcutId));
+			MTP_int(shortcutId),
+			MTP_long(data.veffect().value_or_empty()),
+			(data.vfactcheck() ? *data.vfactcheck() : MTPFactCheck()),
+			MTP_int(data.vreport_delivery_until_date().value_or_empty()));
 	});
 }
 
@@ -447,9 +451,6 @@ void ShortcutMessages::preloadShortcuts() {
 		result.match([&](const MTPDmessages_quickReplies &data) {
 			owner->processUsers(data.vusers());
 			owner->processChats(data.vchats());
-			owner->processMessages(
-				data.vmessages(),
-				NewMessageType::Existing);
 			updateShortcuts(data.vquick_replies().v);
 		}, [&](const MTPDmessages_quickRepliesNotModified &) {
 			if (!_shortcutsLoaded) {

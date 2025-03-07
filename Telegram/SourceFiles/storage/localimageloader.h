@@ -31,6 +31,7 @@ extern const char kOptionSendLargePhotos[];
 enum class SendMediaType {
 	Photo,
 	Audio,
+	Round,
 	File,
 	ThemeFile,
 	Secure,
@@ -127,6 +128,7 @@ struct SendingAlbum {
 	uint64 groupId = 0;
 	std::vector<Item> items;
 	Api::SendOptions options;
+	bool sent = false;
 
 };
 
@@ -194,6 +196,8 @@ struct FilePrepareResult {
 
 	std::vector<MTPInputDocument> attachedStickers;
 
+	std::shared_ptr<FilePrepareResult> videoCover;
+
 	void setFileData(const QByteArray &filedata);
 	void setThumbData(const QByteArray &thumbdata);
 
@@ -220,16 +224,19 @@ public:
 		const QString &filepath,
 		const QByteArray &content,
 		std::unique_ptr<Ui::PreparedFileInformation> information,
+		std::unique_ptr<FileLoadTask> videoCover,
 		SendMediaType type,
 		const FileLoadTo &to,
 		const TextWithTags &caption,
 		bool spoiler,
-		std::shared_ptr<SendingAlbum> album = nullptr);
+		std::shared_ptr<SendingAlbum> album = nullptr,
+		uint64 idOverride = 0);
 	FileLoadTask(
 		not_null<Main::Session*> session,
 		const QByteArray &voice,
 		crl::time duration,
 		const VoiceWaveform &waveform,
+		bool video,
 		const FileLoadTo &to,
 		const TextWithTags &caption);
 	~FileLoadTask();
@@ -248,7 +255,8 @@ public:
 	}
 	void finish() override;
 
-	FilePrepareResult *peekResult() const;
+	[[nodiscard]] auto peekResult() const
+		-> const std::shared_ptr<FilePrepareResult> &;
 
 private:
 	static bool CheckForSong(
@@ -277,6 +285,7 @@ private:
 	const std::shared_ptr<SendingAlbum> _album;
 	QString _filepath;
 	QByteArray _content;
+	std::unique_ptr<FileLoadTask> _videoCover;
 	std::unique_ptr<Ui::PreparedFileInformation> _information;
 	crl::time _duration = 0;
 	VoiceWaveform _waveform;

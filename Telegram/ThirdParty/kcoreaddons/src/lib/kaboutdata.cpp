@@ -269,7 +269,11 @@ QString KAboutLicense::text() const
     }
 
     if (knownLicense) {
+#ifndef Q_OS_ANDROID
         pathToFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kf" QT_STRINGIFY(QT_VERSION_MAJOR) "/licenses/") + pathToFile);
+#else
+        pathToFile = QStringLiteral("assets:/share/kf5/licenses/") + pathToFile;
+#endif
         result += QCoreApplication::translate("KAboutLicense", "This program is distributed under the terms of the %1.").arg(name(KAboutLicense::ShortName));
         if (!pathToFile.isEmpty()) {
             result += lineFeed;
@@ -394,6 +398,7 @@ KAboutLicense KAboutLicense::byKeyword(const QString &rawKeyword)
     // Normalize keyword.
     QString keyword = rawKeyword;
     keyword = keyword.toLower();
+    keyword.replace(QLatin1String("-or-later"), QLatin1String("+"));
     keyword.remove(QLatin1Char(' '));
     keyword.remove(QLatin1Char('.'));
     keyword.remove(QLatin1Char('-'));
@@ -1102,6 +1107,8 @@ KAboutData KAboutData::applicationData()
     if (!aboutData) {
         // init from current Q*Application data
         aboutData = new KAboutData(QCoreApplication::applicationName(), QString(), QString());
+        // Unset the default (KDE) bug address, this is likely a third-party app. https://bugs.kde.org/show_bug.cgi?id=473517
+        aboutData->setBugAddress(QByteArray());
         // For applicationDisplayName & desktopFileName, which are only properties of QGuiApplication,
         // we have to try to get them via the property system, as the static getter methods are
         // part of QtGui only. Disadvantage: requires an app instance.

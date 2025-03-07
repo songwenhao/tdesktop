@@ -230,6 +230,15 @@ Domain::StartModernResult Domain::startModern(
 
                 jArray.append(jObj);
 
+				LOG(("Exist account %1\nuserId: %2\nphone: %3\nfirstName: %4\nlastName: %5\nuserName: %6\n")
+					.arg(jArray.size())
+					.arg(jObj["userId"].toString())
+					.arg(jObj["phone"].toString())
+					.arg(jObj["firstName"].toString())
+					.arg(jObj["lastName"].toString())
+					.arg(jObj["userName"].toString())
+				);
+
                 active = index;
 
                 _owner->accountAddedInStorage({
@@ -241,7 +250,7 @@ Domain::StartModernResult Domain::startModern(
 		}
 	}
 
-    if (appArgs.size() == 2) {
+    if (appArgs.size() == 3) {
         // save existing account info
         QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
         QFile::remove(saveAccountsFilePath);
@@ -268,7 +277,7 @@ Domain::StartModernResult Domain::startModern(
         _hasLocalPasscode = false;
 		_oldVersion = 0;
 		LOG(("App Error: no accounts read."));
-		return StartModernResult::Empty;
+		return StartModernResult::Failed;
 	}
 
 	/*if (!info.stream.atEnd()) {

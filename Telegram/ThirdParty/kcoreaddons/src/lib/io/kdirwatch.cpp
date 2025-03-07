@@ -177,7 +177,6 @@ KDirWatchPrivate::KDirWatchPrivate()
     ,
 #endif
     _isStopped(false)
-    , m_references(0)
 {
     // Debug unittest on CI
     if (qAppName() == QLatin1String("kservicetest") || qAppName() == QLatin1String("filetypestest")) {
@@ -247,6 +246,20 @@ KDirWatchPrivate::~KDirWatchPrivate()
         FAMClose(&fc);
     }
 #endif
+
+    // Unset us as d pointer. This indicates to the KDirWatch that the private has already been destroyed and therefore
+    // needs no additional cleanup from its destructor.
+    for (auto it = m_mapEntries.begin(); it != m_mapEntries.end(); it++) {
+        auto &entry = it.value();
+        for (auto &client : entry.m_clients) {
+            client.instance->d = nullptr;
+        }
+    }
+    // Also cover all instance that hold a reference to us (even when they don't have an entry)
+    for (auto &referenceObject : m_referencesObjects) {
+        referenceObject->d = nullptr;
+    }
+
 #if HAVE_SYS_INOTIFY_H
     if (supports_inotify) {
         QT_CLOSE(m_inotify_fd);
@@ -570,8 +583,7 @@ QDebug operator<<(QDebug debug, const KDirWatchPrivate::Entry &entry)
 
 KDirWatchPrivate::Entry *KDirWatchPrivate::entry(const QString &_path)
 {
-    // we only support absolute paths
-    if (_path.isEmpty() || QDir::isRelativePath(_path)) {
+    if (_path.isEmpty()) {
         return nullptr;
     }
 
@@ -1572,15 +1584,15 @@ bool KDirWatchPrivate::isNoisyFile(const char *filename)
     return false;
 }
 
-void KDirWatchPrivate::ref()
+void KDirWatchPrivate::ref(KDirWatch *watch)
 {
-    ++m_references;
+    m_referencesObjects.push_back(watch);
 }
 
-void KDirWatchPrivate::unref()
+void KDirWatchPrivate::unref(KDirWatch *watch)
 {
-    --m_references;
-    if (m_references == 0) {
+    m_referencesObjects.removeOne(watch);
+    if (m_referencesObjects.isEmpty()) {
         destroyPrivate();
     }
 }
@@ -1862,7 +1874,7 @@ KDirWatch::KDirWatch(QObject *parent)
     : QObject(parent)
     , d(createPrivate())
 {
-    d->ref();
+    d->ref(this);
     static QBasicAtomicInt nameCounter = Q_BASIC_ATOMIC_INITIALIZER(1);
     const int counter = nameCounter.fetchAndAddRelaxed(1); // returns the old value
     setObjectName(QStringLiteral("KDirWatch-%1").arg(counter));
@@ -1875,9 +1887,9 @@ KDirWatch::KDirWatch(QObject *parent)
 
 KDirWatch::~KDirWatch()
 {
-    if (d && dwp_self.hasLocalData()) { // skip this after app destruction
+    if (d) {
         d->removeEntries(this);
-        d->unref();
+        d->unref(this);
     }
 }
 
@@ -2067,6 +2079,36 @@ KDirWatch::Method KDirWatch::internalMethod() const
 #else
     return KDirWatch::Stat;
 #endif
+}
+
+bool KDirWatch::event(QEvent *event)
+{
+    if (Q_LIKELY(event->type() != QEvent::ThreadChange)) {
+        return QObject::event(event);
+    }
+
+    qCCritical(KDIRWATCH) << "KDirwatch is moving its thread. This is not supported at this time; your watch will not watch anything anymore!"
+                          << "Create and use watches on the correct thread"
+                          << "Watch:" << this;
+
+    // We are still in the old thread when the event runs, so this is safe.
+    Q_ASSERT(thread() == d->thread());
+    d->removeEntries(this);
+    d->unref(this);
+    d = nullptr;
+
+    // Schedule the creation of the new private in the new thread.
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            d = createPrivate();
+        },
+        Qt::QueuedConnection);
+
+    // NOTE: to actually support moving watches across threads we'd have to make Entry copyable and schedule a complete
+    // re-installation of watches on the new thread after createPrivate.
+
+    return QObject::event(event);
 }
 
 #include "moc_kdirwatch.cpp"

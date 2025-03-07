@@ -81,7 +81,7 @@ private:
 	bool nativeEventFilter(
 		const QByteArray &eventType,
 		void *message,
-		long *result) override;
+		native_event_filter_result *result) override;
 
 	bool mainWindowEvent(
 		HWND hWnd,
@@ -172,7 +172,7 @@ EventFilter::EventFilter(not_null<MainWindow*> window) : _window(window) {
 bool EventFilter::nativeEventFilter(
 		const QByteArray &eventType,
 		void *message,
-		long *result) {
+		native_event_filter_result *result) {
 	return Core::Sandbox::Instance().customEnterFromEventLoop([&] {
 		const auto msg = static_cast<MSG*>(message);
 		if (msg->hwnd == _window->psHwnd()
@@ -480,6 +480,21 @@ bool MainWindow::initGeometryFromSystem() {
 	return true;
 }
 
+bool MainWindow::nativeEvent(
+		const QByteArray &eventType,
+		void *message,
+		native_event_filter_result *result) {
+	if (message) {
+		const auto msg = static_cast<MSG*>(message);
+		if (msg->message == WM_IME_STARTCOMPOSITION) {
+			Core::Sandbox::Instance().customEnterFromEventLoop([&] {
+				imeCompositionStartReceived();
+			});
+		}
+	}
+	return false;
+}
+
 void MainWindow::updateWindowIcon() {
 	updateTaskbarAndIconCounters();
 }
@@ -498,7 +513,6 @@ void MainWindow::updateTaskbarAndIconCounters() {
     // no need to update
 	return;
 #endif
-
 	const auto counter = Core::App().unreadBadge();
 	const auto muted = Core::App().unreadBadgeMuted();
 	const auto controller = sessionController();

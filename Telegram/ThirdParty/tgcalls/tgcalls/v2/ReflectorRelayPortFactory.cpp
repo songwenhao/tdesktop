@@ -6,8 +6,10 @@
 
 namespace tgcalls {
 
-ReflectorRelayPortFactory::ReflectorRelayPortFactory(std::vector<RtcServer> servers) :
-_servers(servers) {
+ReflectorRelayPortFactory::ReflectorRelayPortFactory(std::vector<RtcServer> servers, bool standaloneReflectorMode, uint32_t standaloneReflectorRoleId) :
+_servers(servers),
+_standaloneReflectorMode(standaloneReflectorMode),
+_standaloneReflectorRoleId(standaloneReflectorRoleId) {
 }
 
 ReflectorRelayPortFactory::~ReflectorRelayPortFactory() {
@@ -28,7 +30,7 @@ std::unique_ptr<cricket::Port> ReflectorRelayPortFactory::Create(const cricket::
             return nullptr;
         }
 
-        auto port = ReflectorPort::Create(args, udp_socket, id);
+        auto port = ReflectorPort::Create(args, udp_socket, id, args.relative_priority, _standaloneReflectorMode, _standaloneReflectorRoleId);
         if (!port) {
             return nullptr;
         }
@@ -59,7 +61,7 @@ std::unique_ptr<cricket::Port> ReflectorRelayPortFactory::Create(const cricket::
             return nullptr;
         }
 
-        auto port = ReflectorPort::Create(args, min_port, max_port, id);
+        auto port = ReflectorPort::Create(args, min_port, max_port, id, args.relative_priority, _standaloneReflectorMode, _standaloneReflectorRoleId);
         if (!port) {
             return nullptr;
         }

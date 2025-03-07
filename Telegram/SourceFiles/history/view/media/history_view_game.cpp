@@ -69,7 +69,10 @@ QSize Game::countOptimalSize() {
 
 	// init attach
 	if (!_attach) {
-		_attach = CreateAttach(_parent, _data->document, _data->photo);
+		_attach = CreateAttach(
+			_parent,
+			_data->document,
+			_data->document ? nullptr : _data->photo);
 	}
 
 	// init strings
@@ -280,6 +283,7 @@ void Game::draw(Painter &p, const PaintContext &context) const {
 			.selection = toDescriptionSelection(context.selection),
 			.elisionHeight = _descriptionLines * lineHeight,
 			.elisionRemoveFromEnd = endskip,
+			.useFullWidth = true,
 		});
 		tshift += _descriptionLines * lineHeight;
 	}

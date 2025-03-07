@@ -32,7 +32,8 @@ using result = expected<T, repository::GLib::Error>;
 
 namespace detail
 {
-#ifdef expected_lite_VERSION
+// only use nonstd if it does not delegate to std (in incomplete way)
+#if defined(expected_lite_VERSION) && !nsel_USES_STD_EXPECTED
 inline nonstd::unexpected_type<repository::GLib::Error>
 make_unexpected(GError *error)
 {

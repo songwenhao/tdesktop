@@ -12,7 +12,8 @@ C headers and libraries that are being wrapped).
 
 ## Installation
 
-Building the code generator is based on [CMake](https://cmake.org) and requires
+The code generator can be built using [CMake](https://cmake.org) or
+[meson](https://mesonbuild.com/) and requires
 Boost and either [fmtlib](http://fmtlib.net/) or a C++20 std library with format
 support (e.g. gcc 13+).  While it obviously depends on distribution,
 these may be typically be obtained by installing following packages;
@@ -30,8 +31,16 @@ With all that in place, the usual steps apply, so e.g.
     mkdir build
     cd build
     cmake ..
-    make
-    make install
+    cmake --build .
+    cmake --install .
+
+or alternatively
+
+    mkdir build
+    cd build
+    meson setup . ..
+    meson compile
+    meson install
 
 The installed components consist of:
 
@@ -42,6 +51,10 @@ The installed components consist of:
 The latter is needed when using the generated code, the former only
 at generation time.
 
+In case of CMake build, it is also possible to build some examples whose
+sources are also installed along with some documentation.
+As such, the meson system only builds and install the (most) relevant parts,
+as may be useful when used as a subproject.
 
 ## Release numbering and API stability
 

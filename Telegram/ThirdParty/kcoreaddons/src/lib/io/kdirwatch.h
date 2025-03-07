@@ -247,6 +247,11 @@ public:
      */
     static bool exists();
 
+    /**
+     * @brief Trivial override. See QObject::event.
+     */
+    bool event(QEvent *event) override;
+
 public Q_SLOTS:
 
     /**
@@ -301,6 +306,8 @@ Q_SIGNALS:
 
 private:
     KDirWatchPrivate *d;
+    friend class KDirWatchPrivate;
+    friend class KDirWatch_UnitTest;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(KDirWatch::WatchModes)

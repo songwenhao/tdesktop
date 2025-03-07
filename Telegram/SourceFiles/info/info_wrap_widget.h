@@ -49,6 +49,7 @@ enum class Wrap {
 	Layer,
 	Narrow,
 	Side,
+	Search,
 };
 
 struct SelectedItem {
@@ -161,6 +162,7 @@ private:
 	void injectActiveProfileMemento(
 		std::shared_ptr<ContentMemento> memento);
 	void checkBeforeClose(Fn<void()> close);
+	void checkBeforeCloseByEscape(Fn<void()> close);
 	void restoreHistoryStack(
 		std::vector<std::shared_ptr<ContentMemento>> stack);
 	bool hasStackHistory() const {
@@ -205,6 +207,8 @@ private:
 	void addTopBarMenuButton();
 	void addProfileCallsButton();
 	void showTopBarMenu(bool check);
+
+	const bool _isSeparatedWindow = false;
 
 	rpl::variable<Wrap> _wrap;
 	std::unique_ptr<Controller> _controller;

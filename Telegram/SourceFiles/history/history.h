@@ -32,29 +32,7 @@ class Folder;
 class ChatFilter;
 struct SponsoredFrom;
 class SponsoredMessages;
-
-enum class ForwardOptions {
-	PreserveInfo,
-	NoSenderNames,
-	NoNamesAndCaptions,
-};
-
-struct ForwardDraft {
-	MessageIdsList ids;
-	ForwardOptions options = ForwardOptions::PreserveInfo;
-
-	friend inline auto operator<=>(
-		const ForwardDraft&,
-		const ForwardDraft&) = default;
-};
-
-using ForwardDrafts = base::flat_map<MsgId, ForwardDraft>;
-
-struct ResolvedForwardDraft {
-	HistoryItemsList items;
-	ForwardOptions options = ForwardOptions::PreserveInfo;
-};
-
+class HistoryMessages;
 } // namespace Data
 
 namespace Dialogs {
@@ -79,7 +57,7 @@ public:
 	History(not_null<Data::Session*> owner, PeerId peerId);
 	~History();
 
-	not_null<History*> owningHistory() override {
+	[[nodiscard]] not_null<History*> owningHistory() override {
 		return this;
 	}
 	[[nodiscard]] Data::Thread *threadFor(MsgId topicRootId);
@@ -93,23 +71,27 @@ public:
 	void forumChanged(Data::Forum *old);
 	[[nodiscard]] bool isForum() const;
 
-	not_null<History*> migrateToOrMe() const;
-	History *migrateFrom() const;
-	MsgRange rangeForDifferenceRequest() const;
+	[[nodiscard]] not_null<History*> migrateToOrMe() const;
+	[[nodiscard]] History *migrateFrom() const;
+	[[nodiscard]] MsgRange rangeForDifferenceRequest() const;
 
-	HistoryItem *joinedMessageInstance() const;
+	[[nodiscard]] Data::HistoryMessages &messages();
+	[[nodiscard]] const Data::HistoryMessages &messages() const;
+	[[nodiscard]] Data::HistoryMessages *maybeMessages();
+
+	[[nodiscard]] HistoryItem *joinedMessageInstance() const;
 	void checkLocalMessages();
 	void removeJoinedMessage();
 
 	void reactionsEnabledChanged(bool enabled);
 
-	bool isEmpty() const;
-	bool isDisplayedEmpty() const;
-	Element *findFirstNonEmpty() const;
-	Element *findFirstDisplayed() const;
-	Element *findLastNonEmpty() const;
-	Element *findLastDisplayed() const;
-	bool hasOrphanMediaGroupPart() const;
+	[[nodiscard]] bool isEmpty() const;
+	[[nodiscard]] bool isDisplayedEmpty() const;
+	[[nodiscard]] Element *findFirstNonEmpty() const;
+	[[nodiscard]] Element *findFirstDisplayed() const;
+	[[nodiscard]] Element *findLastNonEmpty() const;
+	[[nodiscard]] Element *findLastDisplayed() const;
+	[[nodiscard]] bool hasOrphanMediaGroupPart() const;
 	[[nodiscard]] std::vector<MsgId> collectMessagesFromParticipantToDelete(
 		not_null<PeerData*> participant) const;
 
@@ -174,6 +156,7 @@ public:
 	not_null<HistoryItem*> addNewLocalMessage(
 		HistoryItemCommonFields &&fields,
 		not_null<GameData*> game);
+	not_null<HistoryItem*> addNewLocalMessage(not_null<HistoryItem*> item);
 
 	not_null<HistoryItem*> addSponsoredMessage(
 		MsgId id,
@@ -212,6 +195,7 @@ public:
 	void outboxRead(MsgId upTo);
 	void outboxRead(not_null<const HistoryItem*> wasRead);
 	[[nodiscard]] MsgId loadAroundId() const;
+	[[nodiscard]] bool inboxReadTillKnown() const;
 	[[nodiscard]] MsgId inboxReadTillId() const;
 	[[nodiscard]] MsgId outboxReadTillId() const;
 
@@ -590,7 +574,9 @@ private:
 	std::optional<HistoryItem*> _lastMessage;
 	std::optional<HistoryItem*> _lastServerMessage;
 	base::flat_set<not_null<HistoryItem*>> _clientSideMessages;
-	std::unordered_set<std::unique_ptr<HistoryItem>> _messages;
+	std::unordered_set<std::unique_ptr<HistoryItem>> _items;
+
+	std::unique_ptr<Data::HistoryMessages> _messages;
 
 	// This almost always is equal to _lastMessage. The only difference is
 	// for a group that migrated to a supergroup. Then _lastMessage can

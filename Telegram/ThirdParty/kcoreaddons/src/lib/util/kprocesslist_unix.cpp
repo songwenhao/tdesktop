@@ -40,6 +40,23 @@ bool isUnixProcessId(const QString &procname)
     });
 }
 
+// Determine UNIX processes info by running ps(1)
+bool getUnixProcessInfo(qint64 procId, KProcessInfo &processInfo)
+{
+    KProcessList::KProcessInfoList plist = processInfoList();
+    auto foundInfo = std::find_if(plist.begin(),
+                                  plist.end(),
+                                  [&procId](const KProcessList::KProcessInfo &info) {
+        return procId == info.pid();
+    });
+    if (foundInfo != plist.end()) {
+        const auto &info = *foundInfo;
+        processInfo = KProcessInfo(info.pid(), info.command(), info.name(), info.user());
+        return true;
+    }
+    return false;
+}
+
 // Determine UNIX processes by running ps
 KProcessInfoList unixProcessListPS()
 {
@@ -147,16 +164,22 @@ bool getProcessInfo(const QString &procId, KProcessInfo &processInfo)
     return true;
 }
 
+bool isProcExists()
+{
+    static const bool procExists = QDir(QStringLiteral("/proc/")).exists();
+    return procExists;
+}
+
 } // unnamed namespace
 
 // Determine UNIX processes by reading "/proc". Default to ps if
 // it does not exist
 KProcessInfoList KProcessList::processInfoList()
 {
-    const QDir procDir(QStringLiteral("/proc/"));
-    if (!procDir.exists()) {
+    if (!isProcExists()) {
         return unixProcessListPS();
     }
+    const QDir procDir(QStringLiteral("/proc/"));
     const QStringList procIds = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     KProcessInfoList rc;
     rc.reserve(procIds.size());
@@ -169,14 +192,14 @@ KProcessInfoList KProcessList::processInfoList()
     return rc;
 }
 
-// Determine UNIX process by reading "/proc".
-//
-// TODO: Use ps if "/proc" does not exist or is bogus; use code
-//       from unixProcessListPS() but add a `-p pid` argument.
-//
+// Determine UNIX process by reading "/proc" or ps(1)
 KProcessInfo KProcessList::processInfo(qint64 pid)
 {
     KProcessInfo processInfo;
-    getProcessInfo(QString::number(pid), processInfo);
+    if (isProcExists()) {
+        getProcessInfo(QString::number(pid), processInfo);
+    } else {
+        getUnixProcessInfo(pid, processInfo);
+    }
     return processInfo;
 }

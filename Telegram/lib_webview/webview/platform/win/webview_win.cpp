@@ -11,16 +11,36 @@
 #include "webview/platform/win/webview_windows_edge_chromium.h"
 #include "webview/platform/win/webview_windows_edge_html.h"
 
+#include <QtGui/QWindow>
+
 namespace Webview {
+namespace {
+
+[[nodiscard]] bool SystemTooOld() {
+	return !Platform::IsWindows8Point1OrGreater();
+}
+
+} // namespace
+
+base::unique_qptr<QWindow> MakeFramelessWindow() {
+	auto result = base::make_unique_q<QWindow>();
+	result->setFlag(Qt::FramelessWindowHint);
+	return result;
+}
 
 Available Availability() {
-	if (!Platform::IsWindows8Point1OrGreater()) {
+	if (SystemTooOld()) {
 		return Available{
 			.error = Available::Error::OldWindows,
 			.details = "Please update your system to Windows 8.1 or later.",
 		};
-	}
-	if (EdgeChromium::Supported() || EdgeHtml::Supported()) {
+	} else if (EdgeChromium::Supported()) {
+		return Available{
+			.customSchemeRequests = true,
+			.customRangeRequests = true,
+			.customReferer = true,
+		};
+	} else if (EdgeHtml::Supported()) {
 		return Available{};
 	}
 	return Available{
@@ -30,22 +50,19 @@ Available Availability() {
 }
 
 bool SupportsEmbedAfterCreate() {
-	return !EdgeChromium::Supported() && EdgeHtml::Supported();
-}
-
-bool NavigateToDataSupported() {
-	return EdgeChromium::Supported();
+	return !SystemTooOld()
+		&& !EdgeChromium::Supported()
+		&& EdgeHtml::Supported();
 }
 
 bool SeparateStorageIdSupported() {
-	return EdgeChromium::Supported();
+	return !SystemTooOld() && EdgeChromium::Supported();
 }
 
 std::unique_ptr<Interface> CreateInstance(Config config) {
-	if (!Platform::IsWindows8Point1OrGreater()) {
+	if (SystemTooOld()) {
 		return nullptr;
-	}
-	if (auto result = EdgeChromium::CreateInstance(config)) {
+	} else if (auto result = EdgeChromium::CreateInstance(config)) {
 		return result;
 	}
 	return EdgeHtml::CreateInstance(config);

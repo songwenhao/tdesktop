@@ -33,6 +33,8 @@ class VoiceProcessingAudioUnitObserver {
                                     UInt32 bus_number,
                                     UInt32 num_frames,
                                     AudioBufferList* io_data) = 0;
+    
+  virtual void OnMutedSpeechStatusChanged(bool isDetectingSpeech) {}
 
  protected:
   ~VoiceProcessingAudioUnitObserver() {}
@@ -85,6 +87,8 @@ class VoiceProcessingAudioUnit {
 
   // Uninitializes the underlying audio unit.
   bool Uninitialize();
+    
+  void setIsMicrophoneMuted(bool isMuted);
 
   // Calls render on the underlying audio unit.
   OSStatus Render(AudioUnitRenderActionFlags* flags,
@@ -133,6 +137,7 @@ class VoiceProcessingAudioUnit {
   const bool bypass_voice_processing_;
   const bool disable_recording_;
   const int numChannels_;
+  bool isMicrophoneMuted_ = false;
   VoiceProcessingAudioUnitObserver* observer_;
   AudioUnit vpio_unit_;
   VoiceProcessingAudioUnit::State state_;

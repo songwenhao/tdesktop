@@ -61,6 +61,7 @@ enum class Context : char {
 	TTLViewer,
 	ShortcutMessages,
 	ScheduledTopic,
+	ChatPreview,
 };
 
 enum class OnlyEmojiAndSpaces : char {
@@ -69,12 +70,18 @@ enum class OnlyEmojiAndSpaces : char {
 	No,
 };
 
+struct SelectionModeResult {
+	bool inSelectionMode = false;
+	float64 progress = 0.0;
+};
+
 class Element;
 class ElementDelegate {
 public:
 	virtual Context elementContext() = 0;
 	virtual bool elementUnderCursor(not_null<const Element*> view) = 0;
-	virtual bool elementInSelectionMode() = 0;
+	virtual SelectionModeResult elementInSelectionMode(
+		const Element *view) = 0;
 	virtual bool elementIntersectsRange(
 		not_null<const Element*> view,
 		int from,
@@ -112,7 +119,11 @@ public:
 		not_null<const Element*> view,
 		Element *replacing) = 0;
 	virtual void elementCancelPremium(not_null<const Element*> view) = 0;
+	virtual void elementStartEffect(
+		not_null<const Element*> view,
+		Element *replacing) = 0;
 	virtual QString elementAuthorRank(not_null<const Element*> view) = 0;
+	virtual bool elementHideTopicButton(not_null<const Element*> view) = 0;
 
 	virtual ~ElementDelegate() {
 	}
@@ -126,7 +137,7 @@ public:
 class DefaultElementDelegate : public ElementDelegate {
 public:
 	bool elementUnderCursor(not_null<const Element*> view) override;
-	bool elementInSelectionMode() override;
+	SelectionModeResult elementInSelectionMode(const Element *view) override;
 	bool elementIntersectsRange(
 		not_null<const Element*> view,
 		int from,
@@ -162,7 +173,11 @@ public:
 		not_null<const Element*> view,
 		Element *replacing) override;
 	void elementCancelPremium(not_null<const Element*> view) override;
+	void elementStartEffect(
+		not_null<const Element*> view,
+		Element *replacing) override;
 	QString elementAuthorRank(not_null<const Element*> view) override;
+	bool elementHideTopicButton(not_null<const Element*> view) override;
 
 };
 
@@ -269,6 +284,10 @@ struct FakeBotAboutTop : public RuntimeComponent<FakeBotAboutTop, Element> {
 	int height = 0;
 };
 
+struct PurchasedTag : public RuntimeComponent<PurchasedTag, Element> {
+	Ui::Text::String text;
+};
+
 struct TopicButton {
 	std::unique_ptr<Ui::RippleAnimation> ripple;
 	ClickHandlerPtr link;
@@ -281,6 +300,7 @@ struct SelectedQuote {
 	HistoryItem *item = nullptr;
 	TextWithEntities text;
 	int offset = 0;
+	bool overflown = false;
 
 	explicit operator bool() const {
 		return item && !text.empty();
@@ -317,6 +337,8 @@ public:
 		not_null<HistoryItem*> data,
 		Element *replacing,
 		Flag serviceFlag);
+
+	[[nodiscard]] virtual bool embedReactionsInBubble() const;
 
 	[[nodiscard]] not_null<ElementDelegate*> delegate() const;
 	[[nodiscard]] not_null<HistoryItem*> data() const;
@@ -366,6 +388,7 @@ public:
 			&& _text.isOnlyCustomEmoji();
 	}
 
+	[[nodiscard]] HistoryItem *textItem() const;
 	[[nodiscard]] Ui::Text::IsolatedEmoji isolatedEmoji() const;
 	[[nodiscard]] Ui::Text::OnlyCustomEmoji onlyCustomEmoji() const;
 
@@ -469,6 +492,7 @@ public:
 		std::optional<QPoint> pressPoint) const;
 	[[nodiscard]] virtual TimeId displayedEditDate() const;
 	[[nodiscard]] virtual bool hasVisibleText() const;
+	[[nodiscard]] int textualMaxWidth() const;
 	virtual void applyGroupAdminChanges(
 		const base::flat_set<UserId> &changes) {
 	}
@@ -489,6 +513,7 @@ public:
 
 	virtual void itemDataChanged();
 	void itemTextUpdated();
+	void blockquoteExpandChanged();
 
 	[[nodiscard]] virtual bool hasHeavyPart() const;
 	virtual void unloadHeavyPart();
@@ -516,6 +541,7 @@ public:
 	void previousInBlocksChanged();
 	void nextInBlocksRemoved();
 
+	[[nodiscard]] virtual QRect effectIconGeometry() const;
 	[[nodiscard]] virtual QRect innerGeometry() const = 0;
 
 	void customEmojiRepaint();
@@ -537,14 +563,25 @@ public:
 
 	[[nodiscard]] bool markSponsoredViewed(int shownFromTop) const;
 
-	virtual void animateReaction(Ui::ReactionFlyAnimationArgs &&args);
+	virtual void animateReaction(Ui::ReactionFlyAnimationArgs &&args) = 0;
 	void animateUnreadReactions();
-	[[nodiscard]] virtual auto takeReactionAnimations()
+	[[nodiscard]] auto takeReactionAnimations()
 	-> base::flat_map<
 		Data::ReactionId,
 		std::unique_ptr<Ui::ReactionFlyAnimation>>;
 
+	virtual void animateEffect(Ui::ReactionFlyAnimationArgs &&args);
+	void animateUnreadEffect();
+	[[nodiscard]] virtual auto takeEffectAnimation()
+	-> std::unique_ptr<Ui::ReactionFlyAnimation>;
+
 	void overrideMedia(std::unique_ptr<Media> media);
+
+	[[nodiscard]] not_null<PurchasedTag*> enforcePurchasedTag();
+
+	[[nodiscard]] static int AdditionalSpaceForSelectionCheckbox(
+		not_null<const Element*> view,
+		QRect countedGeometry = QRect());
 
 	virtual bool consumeHorizontalScroll(QPoint position, int delta) {
 		return false;
@@ -582,6 +619,12 @@ protected:
 	void clearSpecialOnlyEmoji();
 	void checkSpecialOnlyEmoji();
 
+	void setupReactions(Element *replacing);
+	void refreshReactions();
+	bool updateReactions();
+
+	std::unique_ptr<Reactions::InlineList> _reactions;
+
 private:
 	// This should be called only from previousInBlocksChanged()
 	// to add required bits to the Composer mask
@@ -606,6 +649,7 @@ private:
 	void setTextWithLinks(
 		const TextWithEntities &text,
 		const std::vector<ClickHandlerPtr> &links = {});
+	void setReactions(std::unique_ptr<Reactions::InlineList> list);
 
 	struct TextWithLinks {
 		TextWithEntities text;
@@ -620,6 +664,7 @@ private:
 	mutable ClickHandlerPtr _fromLink;
 	const QDateTime _dateTime;
 
+	HistoryItem *_textItem = nullptr;
 	mutable Ui::Text::String _text;
 	mutable int _textWidth = -1;
 	mutable int _textHeight = 0;
@@ -631,5 +676,13 @@ private:
 	Context _context = Context();
 
 };
+
+[[nodiscard]] int FindViewY(
+	not_null<Element*> view,
+	uint16 symbol,
+	int yfrom = 0);
+
+[[nodiscard]] Window::SessionController *ExtractController(
+	const ClickContext &context);
 
 } // namespace HistoryView

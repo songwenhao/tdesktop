@@ -8,6 +8,9 @@
 
 #include "ui/platform/mac/ui_window_title_mac.h"
 #include "ui/widgets/rp_window.h"
+#include "ui/qt_object_factory.h"
+#include "ui/qt_weak_factory.h"
+#include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/palette.h"
@@ -19,46 +22,49 @@
 #include <QOpenGLWidget>
 #include <Cocoa/Cocoa.h>
 
+using FullScreenEvent = Ui::Platform::FullScreenEvent;
+
 @interface WindowObserver : NSObject {
 }
 
-- (id) initWithToggle:(Fn<void(bool)>)toggleCustomTitleVisibility enforce:(Fn<void()>)enforceCorrectStyle;
+- (id) initWithHandler:(Fn<void(FullScreenEvent)>)handler;
 - (void) windowWillEnterFullScreen:(NSNotification *)aNotification;
 - (void) windowWillExitFullScreen:(NSNotification *)aNotification;
+- (void) windowDidEnterFullScreen:(NSNotification *)aNotification;
 - (void) windowDidExitFullScreen:(NSNotification *)aNotification;
 
 @end // @interface WindowObserver
 
 @implementation WindowObserver {
-	Fn<void(bool)> _toggleCustomTitleVisibility;
-	Fn<void()> _enforceCorrectStyle;
+	Fn<void(FullScreenEvent)> _handler;
 }
 
-- (id) initWithToggle:(Fn<void(bool)>)toggleCustomTitleVisibility enforce:(Fn<void()>)enforceCorrectStyle {
+- (id) initWithHandler:(Fn<void(FullScreenEvent)>)handler {
 	if (self = [super init]) {
-		_toggleCustomTitleVisibility = toggleCustomTitleVisibility;
-		_enforceCorrectStyle = enforceCorrectStyle;
+		_handler = std::move(handler);
 	}
 	return self;
 }
 
 - (void) windowWillEnterFullScreen:(NSNotification *)aNotification {
-	_toggleCustomTitleVisibility(false);
+	_handler(FullScreenEvent::WillEnter);
 }
 
 - (void) windowWillExitFullScreen:(NSNotification *)aNotification {
-	_enforceCorrectStyle();
-	_toggleCustomTitleVisibility(true);
+	_handler(FullScreenEvent::WillExit);
+}
+
+- (void) windowDidEnterFullScreen:(NSNotification *)aNotification {
+	_handler(FullScreenEvent::DidEnter);
 }
 
 - (void) windowDidExitFullScreen:(NSNotification *)aNotification {
-	_enforceCorrectStyle();
+	_handler(FullScreenEvent::DidExit);
 }
 
-@end // @implementation MainWindowObserver
+@end // @implementation WindowObserver
 
-namespace Ui {
-namespace Platform {
+namespace Ui::Platform {
 namespace {
 
 class LayerCreationChecker : public QObject {
@@ -99,7 +105,7 @@ public:
 	bool nativeEventFilter(
 			const QByteArray &eventType,
 			void *message,
-			base::NativeEventResult *result) {
+			native_event_filter_result *result) {
 		if (NSEvent *e = static_cast<NSEvent*>(message)) {
 			if ([e type] == NSEventTypeLeftMouseDown) {
 				_dragStarted = _checkStartDrag();
@@ -143,8 +149,7 @@ private:
 	void revalidateWeakPointers() const;
 	void initCustomTitle();
 
-	[[nodiscard]] Fn<void(bool)> toggleCustomTitleCallback();
-	[[nodiscard]] Fn<void()> enforceStyleCallback();
+	[[nodiscard]] Fn<void(FullScreenEvent)> handleFullScreenEventCallback();
 	void enforceStyle();
 
 	const not_null<WindowHelper*> _owner;
@@ -254,15 +259,25 @@ void WindowHelper::Private::close() {
 	}
 }
 
-Fn<void(bool)> WindowHelper::Private::toggleCustomTitleCallback() {
-	return crl::guard(_owner->window(), [=](bool visible) {
-		_owner->_titleVisible = visible;
-		_owner->updateCustomTitleVisibility(true);
+Fn<void(FullScreenEvent)> WindowHelper::Private::handleFullScreenEventCallback() {
+	return crl::guard(_owner->window(), [=](FullScreenEvent event) {
+		switch (event) {
+		case FullScreenEvent::WillEnter:
+			_owner->_titleVisible = false;
+			_owner->updateCustomTitleVisibility(true);
+			break;
+		case FullScreenEvent::WillExit:
+			enforceStyle();
+			_owner->_titleVisible = true;
+			_owner->updateCustomTitleVisibility(true);
+			break;
+		case FullScreenEvent::DidEnter:
+			break;
+		case FullScreenEvent::DidExit:
+			enforceStyle();
+			break;
+		}
 	});
-}
-
-Fn<void()> WindowHelper::Private::enforceStyleCallback() {
-	return crl::guard(_owner->window(), [=] { enforceStyle(); });
 }
 
 void WindowHelper::Private::enforceStyle() {
@@ -306,7 +321,7 @@ void WindowHelper::Private::initCustomTitle() {
 	if (_observer) {
 		[_observer release];
 	}
-	_observer = [[WindowObserver alloc] initWithToggle:toggleCustomTitleCallback() enforce:enforceStyleCallback()];
+	_observer = [[WindowObserver alloc] initWithHandler:handleFullScreenEventCallback()];
 	[[NSNotificationCenter defaultCenter] addObserver:_observer selector:@selector(windowWillEnterFullScreen:) name:NSWindowWillEnterFullScreenNotification object:_nativeWindow];
 	[[NSNotificationCenter defaultCenter] addObserver:_observer selector:@selector(windowWillExitFullScreen:) name:NSWindowWillExitFullScreenNotification object:_nativeWindow];
 	[[NSNotificationCenter defaultCenter] addObserver:_observer selector:@selector(windowDidExitFullScreen:) name:NSWindowDidExitFullScreenNotification object:_nativeWindow];
@@ -398,7 +413,7 @@ void WindowHelper::setStaysOnTop(bool enabled) {
 }
 
 void WindowHelper::setGeometry(QRect rect) {
-	window()->setGeometry(rect.marginsAdded(frameMargins()));
+	SetGeometryAndScreen(window(), rect.marginsAdded(frameMargins()));
 }
 
 void WindowHelper::setupBodyTitleAreaEvents() {
@@ -469,5 +484,53 @@ bool NativeWindowFrameSupported() {
 	return false;
 }
 
-} // namespace Platform
-} // namespace Ui
+rpl::producer<FullScreenEvent> FullScreenEvents(
+		not_null<RpWidget*> window) {
+	return [=](auto consumer) {
+		auto result = rpl::lifetime();
+
+		struct State {
+			~State() {
+				if (observer) {
+					[observer release];
+				}
+			}
+
+			WindowObserver *observer = nullptr;
+		};
+		const auto state = result.make_state<State>();
+
+		window->winIdValue() | rpl::start_with_next([=](WId winId) {
+			if (const auto was = base::take(state->observer)) {
+				[was release];
+			}
+			if (!winId) {
+				return;
+			}
+			const auto view = reinterpret_cast<NSView*>(winId);
+			const auto win = [view window];
+			Ensures(win != nullptr);
+
+			const auto handler = [=](FullScreenEvent event) {
+				consumer.put_next_copy(event);
+			};
+			state->observer = [[WindowObserver alloc] initWithHandler:handler];
+
+			const auto add = [&](NSNotificationName name, SEL selector) {
+				[[NSNotificationCenter defaultCenter]
+					addObserver:state->observer
+					selector:selector
+					name:name
+					object:win];
+			};
+			add(NSWindowWillEnterFullScreenNotification, @selector(windowWillEnterFullScreen:));
+			add(NSWindowWillExitFullScreenNotification, @selector(windowWillExitFullScreen:));
+			add(NSWindowDidEnterFullScreenNotification, @selector(windowDidEnterFullScreen:));
+			add(NSWindowDidExitFullScreenNotification, @selector(windowDidExitFullScreen:));
+		}, result);
+
+		return result;
+	};
+}
+
+} // namespace Ui::Platform

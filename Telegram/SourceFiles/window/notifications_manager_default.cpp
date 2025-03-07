@@ -496,22 +496,17 @@ Widget::Widget(
 	_a_opacity.start([this] { opacityAnimationCallback(); }, 0., 1., st::notifyFastAnim);
 }
 
-void Widget::destroyDelayed() {
-	hide();
-	if (_deleted) return;
-	_deleted = true;
-
-	// Ubuntu has a lag if a fully transparent widget is destroyed immediately.
-	base::call_delayed(1000, this, [this] {
-		manager()->removeWidget(this);
-	});
-}
-
 void Widget::opacityAnimationCallback() {
 	updateOpacity();
 	update();
 	if (!_a_opacity.animating() && _hiding) {
-		destroyDelayed();
+		if (underMouse()) {
+			// The notification is leaving from under the cursor, but in such case leave hook is not
+			// triggered automatically. But we still want the manager to start hiding notifications
+			// (see #28813).
+			manager()->startAllHiding();
+		}
+		manager()->removeWidget(this);  // Deletes `this`
 	}
 }
 
@@ -982,7 +977,7 @@ void Notification::updateNotifyDisplay() {
 		}
 
 		const auto topicWithChat = [&]() -> TextWithEntities {
-			const auto name = _history->peer->name();
+			const auto name = st::wrap_rtl(_history->peer->name());
 			return _topic
 				? _topic->titleWithIcon().append(u" ("_q + name + ')')
 				: TextWithEntities{ name };
@@ -1102,11 +1097,10 @@ void Notification::showReplyField() {
 	_replyArea->setFocus();
 	_replyArea->setMaxLength(MaxMessageSize);
 	_replyArea->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
-	InitMessageFieldHandlers(
-		&_item->history()->session(),
-		nullptr,
-		_replyArea.data(),
-		nullptr);
+	InitMessageFieldHandlers({
+		.session = &_item->history()->session(),
+		.field = _replyArea.data(),
+	});
 
 	// Catch mouse press event to activate the window.
 	QCoreApplication::instance()->installEventFilter(this);
@@ -1242,8 +1236,6 @@ HideAllButton::HideAllButton(
 
 	auto position = computePosition(st::notifyHideAllHeight);
 	updateGeometry(position.x(), position.y(), st::notifyWidth, st::notifyHideAllHeight);
-	hide();
-	createWinId();
 
 	style::PaletteChanged(
 	) | rpl::start_with_next([=] {

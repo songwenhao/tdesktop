@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 using "ui/basic.style";
 
+using "ui/layers/layers.style"; // boxRoundShadow
 using "ui/widgets/widgets.style";
 
 DialogRow {
@@ -21,12 +22,18 @@ DialogRow {
 	topicsSkipBig: pixels;
 	topicsHeight: pixels;
 	unreadMarkDiameter: pixels;
+	tagTop: pixels;
 }
 
 ThreeStateIcon {
 	icon: icon;
 	over: icon;
 	active: icon;
+}
+
+VerifiedBadge {
+	color: color;
+	height: pixels;
 }
 
 ForumTopicIcon {
@@ -44,6 +51,11 @@ DialogsMiniIcon {
 defaultForumTopicIcon: ForumTopicIcon {
 	size: 21px;
 	font: font(bold 11px);
+	textTop: 2px;
+}
+normalForumTopicIcon: ForumTopicIcon {
+	size: 19px;
+	font: font(bold 10px);
 	textTop: 2px;
 }
 largeForumTopicIcon: ForumTopicIcon {
@@ -83,6 +95,11 @@ defaultDialogRow: DialogRow {
 	textLeft: 68px;
 	textTop: 34px;
 }
+taggedDialogRow: DialogRow(defaultDialogRow) {
+	height: 72px;
+	textTop: 30px;
+	tagTop: 52px;
+}
 forumDialogRow: DialogRow(defaultDialogRow) {
 	height: 80px;
 	textTop: 32px;
@@ -90,6 +107,19 @@ forumDialogRow: DialogRow(defaultDialogRow) {
 	topicsSkipBig: 14px;
 	topicsHeight: 21px;
 }
+taggedForumDialogRow: DialogRow(forumDialogRow) {
+	height: 96px;
+	tagTop: 77px;
+}
+dialogRowFilterTagSkip: 4px;
+dialogRowFilterTagStyle: TextStyle(defaultTextStyle) {
+	font: font(10px);
+}
+dialogRowOpenBotTextStyle: semiboldTextStyle;
+dialogRowOpenBotHeight: 20px;
+dialogRowOpenBotRight: 10px;
+dialogRowOpenBotTop: 32px;
+dialogRowOpenBotRecentTop: 28px;
 
 forumDialogJumpArrow: icon{{ "dialogs/dialogs_topic_arrow", dialogsTextFg }};
 forumDialogJumpArrowOver: icon{{ "dialogs/dialogs_topic_arrow", dialogsTextFgOver }};
@@ -105,6 +135,9 @@ dialogsOnlineBadgeDuration: 150;
 
 dialogsCallBadgeSize: 16px;
 dialogsCallBadgeSkip: point(-3px, -3px);
+
+dialogsSubscriptionBadgeSize: 16px;
+dialogsSubscriptionBadgeSkip: point(-4px, -4px);
 
 dialogsTTLBadgeSize: 20px;
 dialogsTTLBadgeInnerMargins: margins(2px, 2px, 2px, 2px);
@@ -213,9 +246,7 @@ dialogsMenuToggle: IconButton {
 
 	rippleAreaPosition: point(0px, 0px);
 	rippleAreaSize: 40px;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: windowBgOver;
-	}
+	ripple: defaultRippleAnimationBgOver;
 }
 dialogsMenuToggleUnread: icon {
 	{ "dialogs/dialogs_menu_unread", dialogsMenuIconFg },
@@ -279,7 +310,7 @@ dialogsFilter: InputField(defaultInputField) {
 	borderRadius: 18px;
 	borderDenominator: 2;
 
-	font: normalFont;
+	style: defaultTextStyle;
 
 	heightMin: 35px;
 }
@@ -377,6 +408,17 @@ dialogsLockIcon: ThreeStateIcon {
 	active: icon {{ "emoji/premium_lock", dialogsUnreadBgMutedActive, point(4px, 0px) }};
 }
 
+dialogsVerifiedColors: VerifiedBadge {
+	height: 20px;
+	color: dialogsVerifiedIconBg;
+}
+dialogsVerifiedColorsOver: VerifiedBadge(dialogsVerifiedColors) {
+	color: dialogsVerifiedIconBgOver;
+}
+dialogsVerifiedColorsActive: VerifiedBadge(dialogsVerifiedColors) {
+	color: dialogsVerifiedIconBgActive;
+}
+
 dialogsVerifiedIcon: icon {
 	{ "dialogs/dialogs_verified_star", dialogsVerifiedIconBg },
 	{ "dialogs/dialogs_verified_check", dialogsVerifiedIconFg },
@@ -421,6 +463,11 @@ dialogsUpdateButton: FlatButton {
 }
 dialogsInstallUpdate: icon {{ "install_update", activeButtonFg }};
 dialogsInstallUpdateOver: icon {{ "install_update", activeButtonFgOver }};
+dialogsInstallUpdateIconSkip: 7px;
+dialogsInstallUpdateIconSize: 20px;
+dialogsInstallUpdateIconInnerMargin: 5px;
+dialogsInstallUpdateIconSide1: 5px;
+dialogsInstallUpdateIconSide2: 3px;
 
 dialogsLoadMoreButton: FlatButton(dialogsUpdateButton) {
 	color: lightButtonFg;
@@ -433,6 +480,8 @@ dialogsLoadMoreButton: FlatButton(dialogsUpdateButton) {
 
 	height: 36px;
 	textTop: 9px;
+	font: semiboldFont;
+	overFont: semiboldFont;
 }
 dialogsLoadMore: icon {{ "install_update-flip_vertical", lightButtonFg }};
 dialogsLoadMoreLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
@@ -441,10 +490,25 @@ dialogsLoadMoreLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) 
 	size: size(12px, 12px);
 }
 
-dialogsSearchInHeight: 52px;
-dialogsSearchInPhotoSize: 36px;
-dialogsSearchInPhotoPadding: 10px;
-dialogsSearchInSkip: 7px;
+dialogsSearchInHeight: 38px;
+dialogsSearchInPhotoSize: 26px;
+dialogsSearchInPhotoPadding: 12px;
+dialogsSearchInSkip: 10px;
+dialogsSearchInNameTop: 9px;
+dialogsSearchInDownTop: 15px;
+dialogsSearchInDown: icon {{ "intro_country_dropdown", windowBoldFg }};
+dialogsSearchInDownSkip: 4px;
+dialogsSearchInMenu: PopupMenu(defaultPopupMenu) {
+	shadow: boxRoundShadow;
+	animation: PanelAnimation(defaultPanelAnimation) {
+		shadow: boxRoundShadow;
+	}
+	scrollPadding: margins(0px, 0px, 0px, 0px);
+	radius: 8px;
+	menu: menuWithIcons;
+}
+dialogsSearchInCheck: icon {{ "player/player_check", mediaPlayerActiveFg }};
+dialogsSearchInCheckSkip: 8px;
 dialogsSearchFromStyle: defaultTextStyle;
 dialogsSearchFromPalette: TextPalette(defaultTextPalette) {
 	linkFg: dialogsNameFg;
@@ -471,6 +535,8 @@ dialogsMiniForward: DialogsMiniIcon {
 	skipText: 1px;
 	skipMedia: 2px;
 }
+
+dialogsMiniReplyIcon: icon {{ "mini_forward-flip_horizontal", attentionButtonFg, point(0px, 2px) }};
 
 dialogsMiniReplyStory: DialogsMiniIcon {
 	icon: ThreeStateIcon {
@@ -517,7 +583,7 @@ forumTopicRow: DialogRow(defaultDialogRow) {
 	photoSize: 20px;
 	nameLeft: 39px;
 	nameTop: 7px;
-	textLeft: 68px;
+	textLeft: 39px;
 	textTop: 29px;
 	unreadMarkDiameter: 8px;
 }
@@ -641,7 +707,11 @@ recentPeersSpecialName: PeerListItem(recentPeersItem) {
 	namePosition: point(64px, 19px);
 }
 
+dialogsTabsScroll: ScrollArea(defaultScrollArea) {
+	barHidden: true;
+}
 dialogsSearchTabs: SettingsSlider(defaultSettingsSlider) {
+	padding: 8px;
 	height: 33px;
 	barTop: 30px;
 	barSkip: 0px;
@@ -649,7 +719,7 @@ dialogsSearchTabs: SettingsSlider(defaultSettingsSlider) {
 	barRadius: 2px;
 	barFg: transparent;
 	barSnapToLabel: true;
-	strictSkip: 34px;
+	strictSkip: 18px;
 	labelTop: 7px;
 	labelStyle: semiboldTextStyle;
 	labelFg: windowSubTextFg;
@@ -660,6 +730,9 @@ dialogsSearchTabs: SettingsSlider(defaultSettingsSlider) {
 	ripple: defaultRippleAnimation;
 }
 
+chatsFiltersTabs: SettingsSlider(dialogsSearchTabs) {
+	rippleBottomSkip: 0px;
+}
 
 dialogsStoriesList: DialogsStoriesList {
 	small: dialogsStories;
@@ -689,17 +762,17 @@ dialogsStoriesTooltipHide: IconButton(defaultIconButton) {
 	ripple: emptyRippleAnimation;
 }
 
-searchedBarHeight: 32px;
+searchedBarHeight: 28px;
 searchedBarFont: normalFont;
-searchedBarPosition: point(17px, 7px);
+searchedBarPosition: point(14px, 5px);
 searchedBarLabel: FlatLabel(defaultFlatLabel) {
 	textFg: searchedBarFg;
-	margin: margins(17px, 7px, 17px, 7px);
+	margin: margins(14px, 5px, 14px, 5px);
 }
 searchedBarLink: LinkButton(defaultLinkButton) {
 	color: searchedBarFg;
 	overColor: searchedBarFg;
-	padding: margins(17px, 7px, 17px, 7px);
+	padding: margins(14px, 5px, 14px, 5px);
 }
 
 dialogsSearchTagSkip: point(8px, 4px);
@@ -712,3 +785,11 @@ dialogsSearchTagPromoLeft: 6px;
 dialogsSearchTagPromoRight: 1px;
 dialogsSearchTagPromoSkip: 6px;
 
+dialogsPopularAppsPadding: margins(10px, 8px, 10px, 12px);
+dialogsPopularAppsAbout: FlatLabel(boxDividerLabel) {
+	minWidth: 128px;
+}
+
+foldersMenu: Menu(menuWithIcons) {
+	itemPadding: margins(54px, 8px, 44px, 8px);
+}

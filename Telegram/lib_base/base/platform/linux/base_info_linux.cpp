@@ -237,7 +237,7 @@ QString GetWindowManager() {
 	}
 
 	const auto root = base::Platform::XCB::GetRootWindow(connection);
-	if (!root.has_value()) {
+	if (!root) {
 		return {};
 	}
 
@@ -251,21 +251,18 @@ QString GetWindowManager() {
 
 	const auto supportingWindow = base::Platform::XCB::GetSupportingWMCheck(
 		connection,
-		*root);
+		root);
 
-	if (!nameAtom.has_value()
-		|| !utf8Atom.has_value()
-		|| !supportingWindow.has_value()
-		|| *supportingWindow == XCB_WINDOW_NONE) {
+	if (!nameAtom || !utf8Atom || !supportingWindow) {
 		return {};
 	}
 
 	const auto cookie = xcb_get_property(
 		connection,
 		false,
-		*supportingWindow,
-		*nameAtom,
-		*utf8Atom,
+		supportingWindow,
+		nameAtom,
+		utf8Atom,
 		0,
 		1024);
 
@@ -279,7 +276,7 @@ QString GetWindowManager() {
 		return {};
 	}
 
-	return (reply->format == 8 && reply->type == *utf8Atom)
+	return (reply->format == 8 && reply->type == utf8Atom)
 		? QString::fromUtf8(
 			reinterpret_cast<const char*>(
 				xcb_get_property_value(reply.get())),
@@ -291,7 +288,7 @@ QString GetWindowManager() {
 }
 
 bool IsX11() {
-	if (!QGuiApplication::instance()) {
+	if (!qApp) {
 		static const auto result = []() -> bool {
 #ifndef DESKTOP_APP_DISABLE_X11_INTEGRATION
 			const base::Platform::XCB::Connection connection;
@@ -302,12 +299,22 @@ bool IsX11() {
 		}();
 		return result;
 	}
-	static const auto result = (QGuiApplication::platformName() == "xcb");
+	static const bool result =
+#if QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
+#if defined QT_FEATURE_xcb && QT_CONFIG(xcb)
+		qApp->nativeInterface<QNativeInterface::QX11Application>()
+#else // xcb
+		false
+#endif // !xcb
+#else // Qt >= 6.2.0
+		QGuiApplication::platformName() == "xcb"
+#endif // Qt < 6.2.0
+		;
 	return result;
 }
 
 bool IsWayland() {
-	if (!QGuiApplication::instance()) {
+	if (!qApp) {
 		static const auto result = []() -> bool {
 			struct wl_display *(*wl_display_connect)(const char *name);
 			void (*wl_display_disconnect)(struct wl_display *display);
@@ -317,15 +324,26 @@ bool IsWayland() {
 					&& LOAD_LIBRARY_SYMBOL(lib, wl_display_connect)
 					&& LOAD_LIBRARY_SYMBOL(lib, wl_display_disconnect)) {
 				const auto display = wl_display_connect(nullptr);
-				wl_display_disconnect(display);
+				if (display) {
+					wl_display_disconnect(display);
+				}
 				return display;
 			}
 			return qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
 		}();
 		return result;
 	}
-	static const auto result
-		= QGuiApplication::platformName().startsWith("wayland");
+	static const bool result =
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if defined QT_FEATURE_wayland && QT_CONFIG(wayland)
+		qApp->nativeInterface<QNativeInterface::QWaylandApplication>()
+#else // wayland
+		false
+#endif // !wayland
+#else // Qt >= 6.7.0
+		QGuiApplication::platformName().startsWith("wayland")
+#endif // Qt < 6.7.0
+		;
 	return result;
 }
 

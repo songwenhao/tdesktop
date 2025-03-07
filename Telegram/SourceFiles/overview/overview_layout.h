@@ -316,7 +316,9 @@ private:
 	void updateStatusText();
 
 	const not_null<DocumentData*> _data;
+	PhotoData *_videoCover = nullptr;
 	mutable std::shared_ptr<Data::DocumentMedia> _dataMedia;
+	mutable std::shared_ptr<Data::PhotoMedia> _videoCoverMedia;
 	StatusText _status;
 
 	QString _duration;
@@ -362,7 +364,9 @@ private:
 
 	const style::OverviewFileLayout &_st;
 
-	Ui::Text::String _name, _details;
+	Ui::Text::String _name;
+	Ui::Text::String _details;
+	Ui::Text::String _caption;
 	int _nameVersion = 0;
 
 	void updateName();

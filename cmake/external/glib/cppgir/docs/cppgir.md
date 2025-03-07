@@ -522,6 +522,13 @@ function calls done along with automagic refcount and resource management (much
 as any runtime binding would do, with no regard for const whatsoever in that
 case).
 
+In particular, methods are usually not marked `const` either, as there is
+similarly no (semantic) data to decide either way. As such, it is not
+recommended to use `const` wrapper types. However, they may arise due to generic
+templates or when captured in a lambda. In such cases, the helper (template)
+type `gi::cs_ptr` may be useful, or alternatively one might set the option to
+mark all code-generated methods as `const`.
+
 **Floating (into darkness).**
 [Gobject docs](https://docs.gtk.org/gobject/floating-refs.html) mention the
 following about floating references (i.e. transfer `floating`);
