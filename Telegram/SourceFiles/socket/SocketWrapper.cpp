@@ -442,63 +442,36 @@ public:
                 break;
             }
 
-            // fd_set fds;
-            // timeval timeout;
-            // int ret;
+            fd_set fds;
+            timeval timeout = {0, 0};
+            int ret;
 
-            // while (true) {
-            //     timeout.tv_sec = 3;
-            //     timeout.tv_usec = 0;
-            //     FD_ZERO(&fds);
-            //     FD_SET(clientSocket_, &fds);
-            //     ret = select(clientSocket_ + 1, &fds, NULL, NULL, &timeout);
-            //     if (ret == -1) {
-            //         //select error when ret = -1
-            //         break;
-            //     } else if (ret) {
-            //         if (FD_ISSET(clientSocket_, &fds)) {
-            //             readSize += read(clientSocket_, data + readSize, dataSize - readSize);
-            //             if (readSize >= dataSize) {
-            //                 break;
-            //             }
-            //         }
-            //     }
-            //     else if (ret == 0) {
-            //         //time out when ret = 0
-            //         continue;
-            //     }
-            // }
-
-            // if (readSize >= dataSize) {
-            //     ok = true;
-            // } else {
-            //     printLog("[%s] socket read failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
-            // }
-
-            int ret = 0;
             while (true) {
-                ret = recv(clientSocket_, data + readSize, dataSize - readSize, 0);
-                if (ret > 0) {
-                    // 收到了数据
-                    readSize += ret;
-                    if (readSize >= dataSize) {
-                        ok = true;
-                        break;
+                timeout.tv_sec = 3;
+                timeout.tv_usec = 0;
+                FD_ZERO(&fds);
+                FD_SET(clientSocket_, &fds);
+                ret = select(clientSocket_ + 1, &fds, nullptr, nullptr, &timeout);
+                if (ret == -1) {
+                    printLog("[%s] select read socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                    break;
+                } else if (ret) {
+                    if (FD_ISSET(clientSocket_, &fds)) {
+                        readSize += read(clientSocket_, data + readSize, dataSize - readSize);
+                        if (readSize >= dataSize) {
+                            break;
+                        }
                     }
                 } else if (ret == 0) {
-                    // 对端关闭了连接
-                    break;
-                } else if (ret == -1) {
-                    if (errno == EWOULDBLOCK) {
-                        // std::cout << "There is no data available now." << std::endl;
-                    } else if (errno == EINTR) {
-                        // 如果被信号中断了，则继续重试recv函数
-                        // std::cout << "recv data interrupted by signal." << std::endl;
-                    } else {
-                        // 真的出错了
-                        break;
-                    }
+                    //time out when ret = 0
+                    continue;
                 }
+            }
+
+            if (readSize >= dataSize) {
+                ok = true;
+            } else {
+                printLog("[%s] socket read failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
             }
 
         } while (false);
@@ -522,71 +495,36 @@ public:
         std::uint32_t writeSize = 0;
 
         do {
-            // fd_set fds;
-            // timeval timeout;
-            // int ret;
+            fd_set fds;
+            timeval timeout = {0, 0};
+            int ret;
 
-            // while (true) {
-            //     timeout.tv_sec = 3;
-            //     timeout.tv_usec = 0;
-            //     FD_ZERO(&fds);
-            //     FD_SET(clientSocket_, &fds);
-            //     ret = select(clientSocket_ + 1, &fds, NULL, NULL, &timeout);
-            //     if (ret == -1) {
-            //         //select error when ret = -1
-            //         break;
-            //     } else if (ret) {
-            //         if (FD_ISSET(clientSocket_, &fds)) {
-            //             writeSize += write(clientSocket_, data + writeSize, dataSize - writeSize);
-            //             if (writeSize >= dataSize) {
-            //                 break;
-            //             }
-            //         }
-            //     }
-            //     else if (ret == 0) {
-            //         //time out when ret = 0
-            //         continue;
-            //     }
-            // }
-
-            // if (writeSize >= dataSize) {
-            //     ok = true;
-            // } else {
-            //     printLog("[%s] socket write failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
-            // }
-
-            int ret = 0;
             while (true) {
-                ret = send(clientSocket_, data + writeSize, dataSize - writeSize, 0);
-                if (ret > 0) {
-                    // 收到了数据
-                    writeSize += ret;
-                    if (writeSize >= dataSize) {
-                        ok = true;
-                        break;
+                timeout.tv_sec = 3;
+                timeout.tv_usec = 0;
+                FD_ZERO(&fds);
+                FD_SET(clientSocket_, &fds);
+                ret = select(clientSocket_ + 1, nullptr, &fds, nullptr, &timeout);
+                if (ret == -1) {
+                    printLog("[%s] select write socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                    break;
+                } else if (ret) {
+                    if (FD_ISSET(clientSocket_, &fds)) {
+                        writeSize += write(clientSocket_, data + writeSize, dataSize - writeSize);
+                        if (writeSize >= dataSize) {
+                            break;
+                        }
                     }
                 } else if (ret == 0) {
-                    // 对端关闭了连接，我们也关闭
-                    //  std::cout << "send data error." << std::endl;
-                    // close(clientfd);
-                    break;
-                } else if (ret == -1) {
-                    // 非阻塞模式下send函数由于TCP窗口太小发不出去数据，错误码是EWOULDBLOCK
-                    if (errno == EWOULDBLOCK) {
-                        // std::cout << "send data error as TCP Window size is too
-                        // small." << std::endl;
-                        continue;
-                    } else if (errno == EINTR) {
-                        // 如果被信号中断，我们继续重试
-                        // std::cout << "sending data interrupted by signal." <<
-                        // std::endl;
-                        continue;
-                    } else {
-                        // 真的出错了
-                        // std::cout << "send data error." << std::endl;
-                        break;
-                    }
+                    //time out when ret = 0
+                    continue;
                 }
+            }
+
+            if (writeSize >= dataSize) {
+                ok = true;
+            } else {
+                printLog("[%s] socket write failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
             }
 
         } while (false);
