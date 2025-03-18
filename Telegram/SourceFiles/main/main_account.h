@@ -18,7 +18,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/data/export_data_types.h"
 #include "data/data_file_origin.h"
 #include "core/core_cloud_password.h"
-#include <QSemaphore>
 class QFile;
 
 namespace Export {
@@ -906,12 +905,12 @@ namespace Main {
         base::Timer _checkFileRequestTimer;
         const int _maxFileRequestTime = 60 * 1000;
         std::unique_ptr<std::mutex> _downloadFilesLock;
-        std::unique_ptr<QSemaphore> _newFileSignal;
         std::list<Main::Account::DownloadFileInfo> _downloadFiles;
         Main::Account::DownloadFileInfo* _curDownloadFile;
         std::uint64_t _prevDownloadFilePeerId;
         int _curDownloadFileOffset;
         int _curDownloadFilePreOffset;
+        bool _curFileDownloading;
 
         int _offset;
         int _offsetId;

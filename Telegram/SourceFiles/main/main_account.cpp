@@ -161,11 +161,11 @@ namespace Main {
         , _startCheckFileRequestTimer(false)
         , _stopCheckFileRequestTimer(false)
         , _downloadFilesLock(std::make_unique<std::mutex>())
-        , _newFileSignal(std::make_unique<QSemaphore>(5000))
         , _curDownloadFile(nullptr)
         , _prevDownloadFilePeerId(0)
         , _curDownloadFileOffset(0)
         , _curDownloadFilePreOffset(0)
+        , _curFileDownloading(false)
         , _offset(0)
         , _offsetId(0)
         , _downloadPeerProfilePhoto(false)
@@ -1028,14 +1028,12 @@ namespace Main {
     void Account::startDownloadFileThd() {
         std::thread thd([this]() {
             while (!_stop) {
-                resetFileRequestStatus();
-
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                if (_newFileSignal->tryAcquire()) {
-                    downloadAttachFile();
+                if (_curFileDownloading) {
+                    QThread::msleep(100);
+                    continue;
                 }
 
-                QThread::msleep(100);
+                downloadAttachFile();
             }
             });
 
@@ -2562,9 +2560,14 @@ namespace Main {
         bool downloadFilesEmpty = false;
 
         do {
-            if (_downloadFiles.empty()) {
-                downloadFilesEmpty = true;
-                break;
+            resetFileRequestStatus();
+
+            {
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                if (_downloadFiles.empty()) {
+                    downloadFilesEmpty = true;
+                    break;
+                }
             }
 
             if (_curDownloadFile) {
@@ -2581,19 +2584,28 @@ namespace Main {
 
                 _session->data().removeDocument(_curDownloadFile->docId);
 
-                _downloadFiles.pop_front();
-                _curDownloadFile = nullptr;
+                {
+                    std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                    _downloadFiles.pop_front();
+                    _curDownloadFile = nullptr;
 
-                if (_downloadFiles.empty()) {
-                    downloadFilesEmpty = true;
-                    break;
+                    if (_downloadFiles.empty()) {
+                        downloadFilesEmpty = true;
+                        break;
+                    }
                 }
             }
 
-            _curDownloadFile = &(_downloadFiles.front());
+            {
+                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
+                _curDownloadFile = &(_downloadFiles.front());
+            }
+
             if (!_curDownloadFile) {
                 break;
             }
+
+            _curFileDownloading = true;
 
             // 判断前一个会话附件是否已取完
             if (_curDownloadFile->peerId != _prevDownloadFilePeerId) {
@@ -2675,8 +2687,7 @@ namespace Main {
             if (documentData) {
                 DocumentSaveClickHandler::SaveFile(_curDownloadFile->msgId, _curDownloadFile->fileOrigin, documentData, _curDownloadFile->saveFilePath);
             } else {
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                _newFileSignal->release();
+                _curFileDownloading = false;
             }
         } else {
             constexpr int kFileChunkSize = 1024 * 1024;
@@ -2701,8 +2712,7 @@ namespace Main {
                         || error.type() == u"LOCATION_NOT_AVAILABLE"_q) {
                     }
 
-                    std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                    _newFileSignal->release();
+                    _curFileDownloading = false;
                 }
                 };
 
@@ -2771,18 +2781,16 @@ namespace Main {
         } while (false);
 
         if (!hasErr) {
-            if (_curDownloadFileOffset >= _curDownloadFile->fileSize) {
+			if (_curDownloadFileOffset >= _curDownloadFile->fileSize) {
                 uploadMsg(QString::fromStdWString(L"文件 [%1]下载完毕, 总大小[%2] ...")
                     .arg(_curDownloadFile->fileName).arg(_curDownloadFile->stringFileSize));
 
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                _newFileSignal->release();
+                _curFileDownloading = false;
             } else {
                 downloadAttachFileEx();
             }
         } else {
-            std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-            _newFileSignal->release();
+            _curFileDownloading = false;
         }
     }
 
@@ -2804,8 +2812,7 @@ namespace Main {
             auto handleFail = [=](const MTP::Error& error) {
                 _requestId = 0;
 
-                std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-                _newFileSignal->release();
+                _curFileDownloading = false;
 
                 return true;
                 };
@@ -2882,9 +2889,6 @@ namespace Main {
     ) {
         result.match([&](const MTPDmessages_messagesNotModified& data) {
             // error("Unexpected messagesNotModified received.");
-            std::lock_guard<std::mutex> locker(*_downloadFilesLock);
-            _newFileSignal->release();
-
             }, [&](const auto& data) {
                 auto context = Export::Data::ParseMediaContext();
                 context.selfPeerId = peerFromUser(_sessionUserId);

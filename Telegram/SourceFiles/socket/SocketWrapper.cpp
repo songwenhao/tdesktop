@@ -202,7 +202,7 @@ public:
             Command::Cmd cmd;
 
             while (true) {
-                if (CheckStop()) {
+                if (checkStop()) {
                     break;
                 }
 
@@ -390,14 +390,6 @@ public:
     void disConnectSocket() {
         setStop();
 
-        if (socketReadThd_) {
-            if (socketReadThd_->joinable()) {
-                socketReadThd_->join();
-            }
-            delete socketReadThd_;
-            socketReadThd_ = nullptr;
-        }
-
         if (serverSocket_ != -1) {
 #ifdef _MSC_VER
             closesocket(serverSocket_);
@@ -425,6 +417,14 @@ public:
 #endif
             socketConnectedEvent_ = nullptr;
         }
+
+        if (socketReadThd_) {
+            if (socketReadThd_->joinable()) {
+                socketReadThd_->join();
+            }
+            delete socketReadThd_;
+            socketReadThd_ = nullptr;
+        }
     }
 
     std::uint32_t socketRead(
@@ -435,7 +435,8 @@ public:
 
         bool ok = false;
 
-        std::uint32_t readSize = 0;
+        std::uint32_t totalReadSize = 0;
+        ssize_t readSize = 0;
 
         do {
             if (!data) {
@@ -446,7 +447,7 @@ public:
             timeval timeout = {0, 0};
             int ret;
 
-            while (true) {
+            while (!checkStop()) {
                 timeout.tv_sec = 3;
                 timeout.tv_usec = 0;
                 FD_ZERO(&fds);
@@ -456,11 +457,16 @@ public:
                     printLog("[%s] select read socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
                     break;
                 } else if (ret) {
-                    if (FD_ISSET(clientSocket_, &fds)) {
-                        readSize += read(clientSocket_, data + readSize, dataSize - readSize);
-                        if (readSize >= dataSize) {
-                            break;
-                        }
+                    /*if (FD_ISSET(clientSocket_, &fds)) {
+                    }*/
+                    readSize = read(clientSocket_, data + totalReadSize, dataSize - totalReadSize);
+                    if (readSize <= 0 && errno != EINTR) {
+                        break;
+                    }
+
+                    totalReadSize += readSize;
+                    if (totalReadSize >= dataSize) {
+                        break;
                     }
                 } else if (ret == 0) {
                     //time out when ret = 0
@@ -468,7 +474,7 @@ public:
                 }
             }
 
-            if (readSize >= dataSize) {
+            if (totalReadSize >= dataSize) {
                 ok = true;
             } else {
                 printLog("[%s] socket read failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
@@ -477,12 +483,12 @@ public:
         } while (false);
 
         if (!ok) {
-            readSize = 0;
+            totalReadSize = 0;
             setStop();
             printLog("[%s] socket read failed, stop!", funcName);
         }
 
-        return readSize;
+        return totalReadSize;
     }
 
     std::uint32_t socketWrite(
@@ -492,14 +498,15 @@ public:
         const char* funcName = __FUNCTION__;
 
         bool ok = false;
-        std::uint32_t writeSize = 0;
+        std::uint32_t totalWriteSize = 0;
+        ssize_t writeSize = 0;
 
         do {
             fd_set fds;
             timeval timeout = {0, 0};
             int ret;
 
-            while (true) {
+            while (!checkStop()) {
                 timeout.tv_sec = 3;
                 timeout.tv_usec = 0;
                 FD_ZERO(&fds);
@@ -510,8 +517,13 @@ public:
                     break;
                 } else if (ret) {
                     if (FD_ISSET(clientSocket_, &fds)) {
-                        writeSize += write(clientSocket_, data + writeSize, dataSize - writeSize);
-                        if (writeSize >= dataSize) {
+                        writeSize = write(clientSocket_, data + totalWriteSize, dataSize - totalWriteSize);
+                        if (writeSize <= 0 && errno != EINTR) {
+                            break;
+                        }
+
+                        totalWriteSize += writeSize;
+                        if (totalWriteSize >= dataSize) {
                             break;
                         }
                     }
@@ -521,7 +533,7 @@ public:
                 }
             }
 
-            if (writeSize >= dataSize) {
+            if (totalWriteSize >= dataSize) {
                 ok = true;
             } else {
                 printLog("[%s] socket write failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
@@ -530,12 +542,12 @@ public:
         } while (false);
 
         if (!ok) {
-            writeSize = 0;
+            totalWriteSize = 0;
             setStop();
             printLog("[%s] socket write failed, stop!", funcName);
         }
 
-        return writeSize;
+        return totalWriteSize;
     }
 
     bool recvCmd(
@@ -648,7 +660,7 @@ public:
         HANDLE signalEvent = nullptr;
 
         do {
-            if (CheckStop()) {
+            if (checkStop()) {
                 break;
             }
 
@@ -715,7 +727,7 @@ public:
                     std::int32_t waitTime = 0;
                     timespec ts;
 
-                    while (!CheckStop()) {
+                    while (!checkStop()) {
                         memset(&ts, 0, sizeof(timespec));
                         if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
                             ts.tv_sec += 1;
@@ -781,7 +793,7 @@ public:
         onStop_ = onStop;
     }
 
-    bool CheckStop() {
+    bool checkStop() {
         bool stop = false;
 
         do {
