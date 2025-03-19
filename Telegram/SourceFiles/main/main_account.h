@@ -910,7 +910,7 @@ namespace Main {
         std::uint64_t _prevDownloadFilePeerId;
         int _curDownloadFileOffset;
         int _curDownloadFilePreOffset;
-        bool _curFileDownloading;
+        std::atomic_bool _curFileDownloading;
 
         int _offset;
         int _offsetId;

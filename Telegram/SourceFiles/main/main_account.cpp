@@ -882,7 +882,10 @@ namespace Main {
                             checkNeedRestart();
 
                             if (_downloadAttach) {
-                                downloadAttachFile();
+                                if (!_curFileDownloading) {
+                				    _curFileDownloading = true;
+                                    downloadAttachFile();
+                                }
                             }
 
                             if (!_logined) {
@@ -1029,10 +1032,11 @@ namespace Main {
         std::thread thd([this]() {
             while (!_stop) {
                 if (_curFileDownloading) {
-                    QThread::msleep(100);
+                    QThread::msleep(1000);
                     continue;
                 }
 
+                _curFileDownloading = true;
                 downloadAttachFile();
             }
             });
@@ -2558,6 +2562,7 @@ namespace Main {
 
     void Account::downloadAttachFile() {
         bool downloadFilesEmpty = false;
+        bool startDownload = false;
 
         do {
             resetFileRequestStatus();
@@ -2605,7 +2610,7 @@ namespace Main {
                 break;
             }
 
-            _curFileDownloading = true;
+            startDownload = true;
 
             // 判断前一个会话附件是否已取完
             if (_curDownloadFile->peerId != _prevDownloadFilePeerId) {
@@ -2670,6 +2675,10 @@ namespace Main {
 
             sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success);
         }
+
+        if (!startDownload) {
+            _curFileDownloading = false;
+        }
     }
 
     void Account::downloadAttachFileEx() {
@@ -2686,8 +2695,6 @@ namespace Main {
             auto documentData = _session->data().document(_curDownloadFile->docId);
             if (documentData) {
                 DocumentSaveClickHandler::SaveFile(_curDownloadFile->msgId, _curDownloadFile->fileOrigin, documentData, _curDownloadFile->saveFilePath);
-            } else {
-                _curFileDownloading = false;
             }
         } else {
             constexpr int kFileChunkSize = 1024 * 1024;
@@ -2713,6 +2720,9 @@ namespace Main {
                     }
 
                     _curFileDownloading = false;
+                    LOG(("[Account::downloadAttachFileEx ]_curDownloadFile: %1 error: %2")
+            			.arg(_curDownloadFile->fileName)
+                        .arg(error.type()));
                 }
                 };
 
@@ -2791,6 +2801,8 @@ namespace Main {
             }
         } else {
             _curFileDownloading = false;
+            LOG(("[Account::FilePartDone] _curDownloadFile: %1 error")
+            				.arg(_curDownloadFile->fileName));
         }
     }
 
@@ -2811,9 +2823,6 @@ namespace Main {
 
             auto handleFail = [=](const MTP::Error& error) {
                 _requestId = 0;
-
-                _curFileDownloading = false;
-
                 return true;
                 };
 
