@@ -468,7 +468,7 @@ win:
     SET CHERE_INVOKING=enabled_from_arguments
     SET MSYS2_PATH_TYPE=inherit
 
-    wget https://github.com/msys2/msys2-installer/releases/download/2024-05-07/msys2-base-x86_64-20240507.sfx.exe -O ./msys64.exe
+    powershell -Command "iwr -OutFile ./msys64.exe https://github.com/msys2/msys2-installer/releases/download/2024-05-07/msys2-base-x86_64-20240507.sfx.exe"
     msys64.exe
     del msys64.exe
 
@@ -490,12 +490,12 @@ win:
 stage('NuGet', """
 win:
     mkdir NuGet
-    wget https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -O ./NuGet/nuget.exe
+    powershell -Command "iwr -OutFile ./NuGet/nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
 """, 'ThirdParty')
 
 stage('jom', """
 win:
-    wget https://master.qt.io/official_releases/jom/jom_1_1_3.zip -O ./jom.zip
+    powershell -Command "iwr -OutFile ./jom.zip https://master.qt.io/official_releases/jom/jom_1_1_3.zip"
     powershell -Command "Expand-Archive ./jom.zip"
     del jom.zip
 """, 'ThirdParty')
