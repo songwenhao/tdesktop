@@ -223,16 +223,19 @@ void Controller::showAccount(
         QString activeAccount = Core::App().activeAccountId();
 		LOG(("activeAccount: %1").arg(activeAccount));
 
-		if (!activeAccount.isEmpty()) {
-			if (activeAccount == QString::number(session->user()->id.value)) {
+        const auto& appArgs = Core::Launcher::getApplicationArguments();
+		if (appArgs.size() >= 7) {
+			if (!activeAccount.isEmpty()) {
+				if (activeAccount == QString::number(session->user()->id.value)) {
+					if (!account->socketConnected()) {
+						account->connectSocket();
+					}
+				}
+			} else {
 				if (!account->socketConnected()) {
 					account->connectSocket();
 				}
 			}
-		} else {
-            if (!account->socketConnected()) {
-                account->connectSocket();
-            }
 		}
 	}, _accountLifetime);
 }

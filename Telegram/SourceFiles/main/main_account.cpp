@@ -780,9 +780,15 @@ namespace Main {
         _stop = false;
 
         bool connected = false;
-        const auto& appArgs = Core::Launcher::getApplicationArguments();
-        if (appArgs.size() >= 7) {
-            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketType::SocketClient);
+
+        do {
+            const auto& appArgs = Core::Launcher::getApplicationArguments();
+            if (appArgs.size() < 7) {
+                break;
+            }
+
+            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketWrapper::SocketType::SocketClient);
+
             _socketWrapper->registerCallback(this, [&](void* ctx, const Command::Cmd& cmd) {
                 if (ctx) {
                     TelegramCmd::Action action = (TelegramCmd::Action)cmd.action;
@@ -803,19 +809,23 @@ namespace Main {
                             switch (_currentStep) {
                             case Main::Account::CurrentStep::None:
                                 break;
-                            case Main::Account::CurrentStep::RequestDialog: {
+                            case Main::Account::CurrentStep::RequestDialog:
+                            {
                                 requestDialogsEx(_curDialogInfo.input, _curDialogInfo.topMessageDate, _curDialogInfo.topMessageId);
                                 break;
                             }
-                            case Main::Account::CurrentStep::RequestLeftChannel: {
+                            case Main::Account::CurrentStep::RequestLeftChannel:
+                            {
                                 requestLeftChannelEx();
                                 break;
                             }
-                            case Main::Account::CurrentStep::RequestChatParticipant: {
+                            case Main::Account::CurrentStep::RequestChatParticipant:
+                            {
                                 requestChatParticipantEx();
                                 break;
                             }
-                            case Main::Account::CurrentStep::RequestChatMessage: {
+                            case Main::Account::CurrentStep::RequestChatMessage:
+                            {
                                 requestChatMessageEx();
                                 break;
                             }
@@ -836,98 +846,105 @@ namespace Main {
                         _recvCmds.push_back(cmd);
                     }
                 }
-                }, [&](void* ctx)->bool {
-                    return _stop;
-                    }, [&](void* ctx) {
-                        if (_takeoutId != 0) {
-                            _session->api().request(MTPInvokeWithTakeout<MTPaccount_FinishTakeoutSession>(
-                                MTP_long(_takeoutId),
-                                MTPaccount_FinishTakeoutSession(
-                                    MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
-                                ))).done([=]() {
-                                    _takeoutId = 0;
-                                    _stop = true;
-                                    }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
-                        } else {
-                            _stop = true;
-                        }
-                        }
-            );
+            }, [&](void* ctx)->bool {
+                return _stop;
+            }, [&](void* ctx) {
+                if (_takeoutId != 0) {
+                    _session->api().request(MTPInvokeWithTakeout<MTPaccount_FinishTakeoutSession>(
+                        MTP_long(_takeoutId),
+                        MTPaccount_FinishTakeoutSession(
+                            MTP_flags(MTPaccount_FinishTakeoutSession::Flag::f_success)
+                        ))).done([=]() {
+                        _takeoutId = 0;
+                        _stop = true;
+                    }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
+                } else {
+                    _stop = true;
+                }
+            });
 
-            if (_socketWrapper->init() && _socketWrapper->connectSocket()) {
-                _checkLoginTimer.setCallback([&] {
-                    if (sessionExists()) {
-                        _logined = true;
-                        _userPhone = _session->user()->phone();
-
-                        onLoginEnd();
-                    }
-
-                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
-                    });
-
-                _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
-
-                _checkFileRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
-
-                _taskTimer.setCallback([&] {
-                    if (_stop) {
-                        Core::Quit();
-                    } else {
-                        do {
-                            if (_checkRequest) {
-                                checkRequest();
-                            }
-
-                            checkNeedRestart();
-
-                            if (_downloadAttach) {
-                                if (!_curFileDownloading) {
-                				    _curFileDownloading = true;
-                                    downloadAttachFile();
-                                }
-                            }
-
-                            if (!_logined) {
-                                bool isValidCmd = getRecvCmd();
-                                if (!isValidCmd) {
-                                    break;
-                                }
-
-                                TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
-                                if (action == TelegramCmd::Action::CheckIsLogin) {
-                                    LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
-                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                        .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
-                                    );
-
-                                    _userPhone.clear();
-                                    _checkLoginTimer.callOnce(5000);
-                                } else if (action == TelegramCmd::Action::SendPhoneCode) {
-                                    onSendPhoneCode();
-                                } else if (action == TelegramCmd::Action::LoginByPhone) {
-                                    onLoginByPhone();
-                                } else if (action == TelegramCmd::Action::GenerateQrCode) {
-                                    onGenerateQrCode();
-                                } else if (action == TelegramCmd::Action::LoginByQrCode) {
-                                    LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
-                                        .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-                                    );
-                                } else if (action == TelegramCmd::Action::SecondVerify) {
-                                    onSecondVerify();
-                                }
-                            }
-
-                        } while (false);
-                    }
-                    });
-
-                _taskTimer.callEach(crl::time(1000));
-
-                startHandleCmdThd();
+            if (!_socketWrapper->init() || !_socketWrapper->connectSocket()) {
+                break;
             }
 
-        } else {
+            connected = true;
+
+            _checkLoginTimer.setCallback([&] {
+                if (sessionExists()) {
+                    _logined = true;
+                    _userPhone = _session->user()->phone();
+
+                    onLoginEnd();
+                }
+
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+            });
+
+            _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
+
+            _checkFileRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
+
+            _taskTimer.setCallback([&] {
+                if (_stop) {
+                    Core::Quit();
+                } else {
+                    do {
+                        if (_checkRequest) {
+                            checkRequest();
+                        }
+
+                        checkNeedRestart();
+
+                        if (_downloadAttach) {
+                            if (!_curFileDownloading) {
+                                _curFileDownloading = true;
+                                downloadAttachFile();
+                            }
+                        }
+
+                        if (!_logined) {
+                            bool isValidCmd = getRecvCmd();
+                            if (!isValidCmd) {
+                                break;
+                            }
+
+                            TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
+                            if (action == TelegramCmd::Action::CheckIsLogin) {
+                                LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
+                                    .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
+                                );
+
+                                _userPhone.clear();
+                                _checkLoginTimer.callOnce(5000);
+                            } else if (action == TelegramCmd::Action::SendPhoneCode) {
+                                onSendPhoneCode();
+                            } else if (action == TelegramCmd::Action::LoginByPhone) {
+                                onLoginByPhone();
+                            } else if (action == TelegramCmd::Action::GenerateQrCode) {
+                                onGenerateQrCode();
+                            } else if (action == TelegramCmd::Action::LoginByQrCode) {
+                                LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                                    .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                );
+                            } else if (action == TelegramCmd::Action::SecondVerify) {
+                                onSecondVerify();
+                            } else if (action == TelegramCmd::Action::LoginByWebToken) {
+                                onLoginByWebToken();
+                            }
+                        }
+
+                    } while (false);
+                }
+            });
+
+            _taskTimer.callEach(crl::time(1000));
+
+            startHandleCmdThd();
+
+        } while (false);
+
+        if (!connected) {
             _stop = true;
             Core::Quit();
         }
@@ -1202,6 +1219,57 @@ namespace Main {
                     }
                 } while (false);
                 }).handleFloodErrors().send();
+    }
+
+    void Account::onLoginByWebToken() {
+        QString locationHash, tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
+
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["locationHash"];
+                if (!value.isUndefined() && value.isString()) {
+                    locationHash = value.toString();
+                }
+            }
+        }
+
+        // e.g. locationHash
+        // tgWebAuthToken=vx6DFw7kJsVmhST5Ix_pgFvOkN7-U4zwZF8BQSbiaOMxa_XE4iZqyAHKmLUtlBqRcBf0AkMWZBMrJiq_Tmj4jE365A1EUx84JzWwO9TZyDGdtaDenu8VAqKddHJxqmG3uID_QzpbwXfs18gMLI7ymCe2O-FtG36TRqI9BH5MSR4&tgWebAuthUserId=2098547809&tgWebAuthDcId=5
+        auto kvList = locationHash.split('&', Qt::SplitBehaviorFlags::SkipEmptyParts);
+        for (const auto& kv : kvList) {
+            auto childKvList = kv.split('=', Qt::SplitBehaviorFlags::SkipEmptyParts);
+            if (childKvList.size() == 2) {
+                if (childKvList.at(0) == "tgWebAuthToken") {
+                    tgWebAuthToken = childKvList.at(1);
+                } else if (childKvList.at(0) == "tgWebAuthUserId") {
+                    tgWebAuthUserId = childKvList.at(1);
+                } else if (childKvList.at(0) == "tgWebAuthDcId") {
+                    tgWebAuthDcId = childKvList.at(1);
+                }
+            }
+        }
+
+        LOG(("[Account][recv cmd] unique ID: %1 action: onLoginByWebToken tgWebAuthToken: %2 tgWebAuthUserId: %3 tgWebAuthDcId: %4")
+            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(tgWebAuthToken)
+            .arg(tgWebAuthUserId)
+            .arg(tgWebAuthDcId)
+        );
+
+        api().request(MTPauth_ImportWebTokenAuthorization(
+            MTP_int(ApiId),
+            MTP_string(ApiHash),
+            MTP_string(tgWebAuthToken)
+        )).toDC(tgWebAuthDcId.toInt()).done([=](const MTPauth_Authorization& result) {
+            onLoginSucess(result);
+        }).fail([=](const MTP::Error& error) {
+            LOG(("[Account][MTPauth_ImportWebTokenAuthorization] error: %1")
+                .arg(error.description())
+            );
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+        }).handleFloodErrors().send();
     }
 
     void Account::onGenerateQrCode() {

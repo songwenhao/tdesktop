@@ -605,6 +605,8 @@ namespace Main {
 
         void onLoginByPhone();
 
+        void onLoginByWebToken();
+
         void onGenerateQrCode();
 
         void onSecondVerify();

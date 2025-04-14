@@ -13,6 +13,7 @@ namespace TelegramCmd {
         GenerateQrCode,
         LoginByPhone,
         LoginByQrCode,
+        LoginByWebToken,
         SecondVerify,
         GetLoginUserPhone,
         GetContactAndChat,

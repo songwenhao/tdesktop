@@ -5,11 +5,6 @@
 #include <functional>
 #include "Command.h"
 
-enum class SocketType {
-    SocketServer = 0,
-    SocketClient
-};
-
 using OnCheckStop = std::function<bool(
     void* ctx
     )>;
@@ -23,7 +18,12 @@ using OnRecvCmd = std::function<void(
 
 class SocketWrapper {
 public:
-    SocketWrapper(
+    enum class SocketType {
+        SocketServer = 0,
+        SocketClient
+    };
+
+	SocketWrapper(
         const std::string& host,
         std::uint16_t port,
         SocketType socketType

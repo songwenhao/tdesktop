@@ -1,33 +1,38 @@
-#include <vector>
+#ifdef _MSC_VER
+	#ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
+
+    #define  _WINSOCK_DEPRECATED_NO_WARNINGS
+    #include <WinSock2.h>
+    #include <ws2tcpip.h>
+	#pragma comment(lib, "Ws2_32.lib")
+#else
+    #include <dlfcn.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #include <sys/stat.h>
+    #include <sys/types.h>
+    #include <sys/syscall.h>
+    #include <sys/socket.h>
+    #include <sys/ioctl.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <semaphore.h>
+	#define unsigned int DWORD
+    #define HANDLE sem_t*
+	#define SOCKET_ERROR -1
+	#define INVALID_SOCKET -1
+    #define SOCKET int
+#endif
 #include <map>
 #include <thread>
 #include <mutex>
-
-#ifdef _MSC_VER
-#define WIN32_LEAN_AND_MEAN             // 从 Windows 头中排除极少使用的资料
-// Windows 头文件: 
-#include <windows.h>
-
-#define  _WINSOCK_DEPRECATED_NO_WARNINGS
-#include <WinSock2.h>
-#include <ws2tcpip.h>
-#else
-#include <dlfcn.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/syscall.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <semaphore.h>
-#define HANDLE sem_t*
-#endif
+#include <memory>
+#include <future>
 #include <cstdarg>
 #include <cstring>
-#include <future>
 
 #include "SocketWrapper.h"
 
@@ -79,7 +84,6 @@ public:
         pid_(0) {
         logBufMutex_ = std::make_unique<std::mutex>();
         logBuf_ = std::make_unique<char[]>(logBufSize_);
-        logPrefixStr_ = (isSocketServer_ ? "[server]" : "[client]");
 
 #ifdef _MSC_VER
         socketConnectedEvent_ = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -110,8 +114,8 @@ public:
 
         do {
             if (isSocketServer_) {
-                if (serverSocket_ == -1) {
-                    printLog("create socket error: %s(errno: %d)\n", strerror(errno), errno);
+                if (serverSocket_ == INVALID_SOCKET) {
+                    printLog("socket is null\n");
                     break;
                 }
 
@@ -149,6 +153,7 @@ public:
                 fd_set fds;
                 timeval tv;
                 int ret;
+                DWORD errorCode = 0;
 
                 while (true) {
                     if (checkStopConnect && checkStopConnect()) {
@@ -163,17 +168,25 @@ public:
                     }
 
                     // 因为是非阻塞的，这个时候错误码应该是WSAEWOULDBLOCK，Linux下是EINPROGRESS
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    if (ret < 0 && errorCode != WSAEWOULDBLOCK) {
+                        printLog(L"connect failed error: %s(errno: %d)\n", getSocketErrorString(errorCode).c_str(), errorCode);
+                        break;
+                    }
+#else
                     if (ret < 0 && errno != EINPROGRESS) {
                         printLog("connect failed error: %s(errno: %d)\n", strerror(errno), errno);
                         break;
-                    }
+                }
+#endif
 
                     FD_ZERO(&fds);
                     FD_SET(clientSocket_, &fds);
 
                     tv.tv_sec = 1;
                     tv.tv_usec = 0;
-                    ret = select(clientSocket_ + 1, NULL, &fds, NULL, &tv);
+                    ret = select((int)clientSocket_ + 1, NULL, &fds, NULL, &tv);
                     if (ret == 0) {
                         printLog("connect timeout\n");
                         waitTime += 1000;
@@ -181,7 +194,12 @@ public:
                             break;
                         }
                     } else if (ret < 0) {
+#ifdef _MSC_VER
+                        errorCode = WSAGetLastError();
+                        printLog(L"connect failed error: %s(errno: %d)\n", getSocketErrorString(errorCode).c_str(), errorCode);
+#else
                         printLog("connect failed error: %s(errno: %d)\n", strerror(errno), errno);
+#endif
                     } else {
                         printLog("connect success\n");
                         connected = true;
@@ -237,24 +255,55 @@ public:
     }
 
     bool init() {
+        const char* funcName = __FUNCTION__;
+
+#ifdef _MSC_VER
+        const wchar_t* funcNameW = __FUNCTIONW__;
+#endif
+
         bool ret = false;
         serverSocket_ = -1;
         clientSocket_ = -1;
 
-        std::string logPrefixStr = std::string("[") + __FUNCTION__ + "] init socket";
+        DWORD errorCode = 0;
 
-        printLog("%s begin ...", logPrefixStr.c_str());
+        printLog("%s begin ...", funcName);
+
+#ifdef _MSC_VER
+        WSADATA wsaData;
+#endif
 
         do {
+#ifdef _MSC_VER
+            int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+            if (result != NO_ERROR) {
+                printLog("[%s] WSAStartup failed: %d\n", funcName, result);
+                break;
+            }
+#endif
+
             if (isSocketServer_) {
-                if ((serverSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-                    printLog("create socket error: %s(errno: %d)\n", strerror(errno), errno);
+#ifdef _MSC_VER
+                if ((serverSocket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] create socket error: %s(errno: %d)\n", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
                     break;
                 }
-
+#else
+                if ((serverSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
+                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    break;
+                }
+#endif
                 int reuse = 1;
-                if (setsockopt(serverSocket_, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse , sizeof(int)) == -1) {
-                    printLog("setsockopt SO_REUSEADDR error: %s(errno: %d)\n", strerror(errno), errno);
+                if (setsockopt(serverSocket_, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse , sizeof(int)) == SOCKET_ERROR) {
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] setsockopt SO_REUSEADDR error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                    errorCode = errno;
+                    printLog("[%s] setsockopt SO_REUSEADDR error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
@@ -268,12 +317,24 @@ public:
                 }
 
                 if (inet_pton(AF_INET, host_.c_str(), &socketAddr_.sin_addr.s_addr) <= 0){
-                    printLog("inet_pton error for %s\n", host_.c_str());
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] inet_pton error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                    errorCode = errno;
+                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
-                if (bind(serverSocket_, (struct sockaddr *)&socketAddr_, sizeof(socketAddr_)) == -1) {
-                    printLog("bind socket error: %s(errno: %d)\n", strerror(errno), errno);
+                if (bind(serverSocket_, (struct sockaddr *)&socketAddr_, sizeof(socketAddr_)) == SOCKET_ERROR) {
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] bind socket error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                    errorCode = errno;
+                    printLog("[%s] bind socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
@@ -284,12 +345,18 @@ public:
                     int ret = getsockname(serverSocket_, (struct sockaddr*)&localaddr, &len);
                     if (ret == 0) {
                         port_ = ntohs(localaddr.sin_port);
-                        printLog("real port: %d\n", port_);
+                        printLog("[%s] real port: %d\n", funcName, port_);
                     }
                 }
 
-                if (listen(serverSocket_, 1) == -1) {
-                    printLog("listen socket error: %s(errno: %d)\n", strerror(errno), errno);
+                if (listen(serverSocket_, 1) == SOCKET_ERROR) {
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] listen socket error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                    errorCode = errno;
+                    printLog("[%s] listen socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
@@ -297,12 +364,19 @@ public:
 
             } else {
                 if (port_ == 0 || port_ >= 65535) {
-                    printLog("error port: %d\n", port_);
+                    printLog("[%s] error port: %d\n", funcName, port_);
                     break;
                 }
 
-                if ((clientSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-                    printLog("create socket error: %s(errno: %d)\n", strerror(errno), errno);
+#ifdef _MSC_VER
+                if ((clientSocket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == SOCKET_ERROR) {
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] create socket error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                if ((clientSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == SOCKET_ERROR) {
+                    errorCode = errno;
+                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
@@ -311,7 +385,13 @@ public:
                 socketAddr_.sin_port = htons(port_);
 
                 if (inet_pton(AF_INET, host_.c_str(), &socketAddr_.sin_addr.s_addr) <= 0){
-                    printLog("inet_pton error for %s\n", host_.c_str());
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] inet_pton error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                    errorCode = errno;
+                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#endif
                     break;
                 }
 
@@ -319,14 +399,15 @@ public:
 #ifdef _MSC_VER
                 unsigned long on = 1;
                 if (ioctlsocket(clientSocket_, FIONBIO, &on) < 0) {
-                    printLog("set socket no block failed\n");
+                    errorCode = WSAGetLastError();
+                    printLog(L"[%s] set socket no block failed error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
                     break;
                 }
 #else
                 int oldSocketFlag = fcntl(clientSocket_, F_GETFL, 0);
                 int newSocketFlag = oldSocketFlag | O_NONBLOCK;
                 if (fcntl(clientSocket_, F_SETFL, newSocketFlag) == -1) {
-                    printLog("set socket no block failed\n");
+                    printLog("[%s] set socket no block failed\n", funcName);
                     break;
                 }
                 // unsigned long on = 1;
@@ -358,9 +439,13 @@ public:
 #endif
                 clientSocket_ = -1;
             }
+
+#ifdef _MSC_VER
+            WSACleanup();
+#endif
         }
 
-        printLog("%s end ...", logPrefixStr.c_str());
+        printLog("%s end ...", funcName);
 
         return ret;
     }
@@ -408,6 +493,10 @@ public:
             clientSocket_ = -1;
         }
 
+#ifdef _MSC_VER
+        WSACleanup();
+#endif
+
         if (socketConnectedEvent_) {
 #ifdef _MSC_VER
             CloseHandle(socketConnectedEvent_);
@@ -433,10 +522,14 @@ public:
         ) {
         const char* funcName = __FUNCTION__;
 
+#ifdef _MSC_VER
+        const wchar_t* funcNameW = __FUNCTIONW__;
+#endif
+
         bool ok = false;
 
         std::uint32_t totalReadSize = 0;
-        ssize_t readSize = 0;
+        int readSize = 0;
 
         do {
             if (!data) {
@@ -446,23 +539,39 @@ public:
             fd_set fds;
             timeval timeout = {0, 0};
             int ret;
+            DWORD errorCode = 0;
 
             while (!checkStop()) {
                 timeout.tv_sec = 3;
                 timeout.tv_usec = 0;
                 FD_ZERO(&fds);
                 FD_SET(clientSocket_, &fds);
-                ret = select(clientSocket_ + 1, &fds, nullptr, nullptr, &timeout);
-                if (ret == -1) {
-                    printLog("[%s] select read socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                ret = select((int)clientSocket_ + 1, &fds, nullptr, nullptr, &timeout);
+                if (ret == SOCKET_ERROR) {
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+#else
+                    errorCode = errno;
+#endif
                     break;
                 } else if (ret) {
                     /*if (FD_ISSET(clientSocket_, &fds)) {
                     }*/
-                    readSize = read(clientSocket_, data + totalReadSize, dataSize - totalReadSize);
+#ifdef _MSC_VER
+                    readSize = recv(clientSocket_, data + totalReadSize, dataSize - totalReadSize, 0);
+                    if (readSize <= 0) {
+                        errorCode = WSAGetLastError();
+                        if (errorCode != WSAEWOULDBLOCK) {
+                            break;
+                        }
+                    }
+#else
+                    readSize = (int)read(clientSocket_, data + totalReadSize, dataSize - totalReadSize);
                     if (readSize <= 0 && errno != EINTR) {
+                        errorCode = errno;
                         break;
                     }
+#endif
 
                     totalReadSize += readSize;
                     if (totalReadSize >= dataSize) {
@@ -477,7 +586,11 @@ public:
             if (totalReadSize >= dataSize) {
                 ok = true;
             } else {
-                printLog("[%s] socket read failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#ifdef _MSC_VER
+                printLog(L"[%s] socket read failed, error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                printLog("[%s] socket read failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+#endif
             }
 
         } while (false);
@@ -497,30 +610,50 @@ public:
         ) {
         const char* funcName = __FUNCTION__;
 
+#ifdef _MSC_VER
+        const wchar_t* funcNameW = __FUNCTIONW__;
+#endif
+
         bool ok = false;
         std::uint32_t totalWriteSize = 0;
-        ssize_t writeSize = 0;
+        int writeSize = 0;
 
         do {
             fd_set fds;
             timeval timeout = {0, 0};
             int ret;
+            DWORD errorCode = 0;
 
             while (!checkStop()) {
                 timeout.tv_sec = 3;
                 timeout.tv_usec = 0;
                 FD_ZERO(&fds);
                 FD_SET(clientSocket_, &fds);
-                ret = select(clientSocket_ + 1, nullptr, &fds, nullptr, &timeout);
-                if (ret == -1) {
-                    printLog("[%s] select write socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                ret = select((int)clientSocket_ + 1, nullptr, &fds, nullptr, &timeout);
+                if (ret == SOCKET_ERROR) {
+#ifdef _MSC_VER
+                    errorCode = WSAGetLastError();
+#else
+                    errorCode = errno;
+#endif
                     break;
                 } else if (ret) {
                     if (FD_ISSET(clientSocket_, &fds)) {
-                        writeSize = write(clientSocket_, data + totalWriteSize, dataSize - totalWriteSize);
+#ifdef _MSC_VER
+                        writeSize = send(clientSocket_, data + totalWriteSize, dataSize - totalWriteSize, 0);
+                        if (writeSize <= 0) {
+                            errorCode = WSAGetLastError();
+                            if (errorCode != WSAEWOULDBLOCK) {
+                                break;
+                            }
+                        }
+#else
+                        writeSize = (int)write(clientSocket_, data + totalWriteSize, dataSize - totalWriteSize);
                         if (writeSize <= 0 && errno != EINTR) {
+                            errorCode = errno;
                             break;
                         }
+#endif
 
                         totalWriteSize += writeSize;
                         if (totalWriteSize >= dataSize) {
@@ -536,7 +669,11 @@ public:
             if (totalWriteSize >= dataSize) {
                 ok = true;
             } else {
-                printLog("[%s] socket write failed, error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+#ifdef _MSC_VER
+                printLog(L"[%s] select write socket failed, error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
+#else
+                printLog("[%s] select write socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+#endif
             }
 
         } while (false);
@@ -710,7 +847,7 @@ public:
                     DWORD waitTime = 0;
 
                     if (signalEvent) {
-                        while (!CheckStop()) {
+                        while (!checkStop()) {
                             waitCode = WaitForSingleObject(signalEvent, 1000);
                             if (waitCode != WAIT_TIMEOUT) {
                                 break;
@@ -824,6 +961,23 @@ public:
 
     }
 
+#ifdef _MSC_VER
+    std::wstring getSocketErrorString(DWORD errorCode) {
+        std::wstring errMsg;
+        LPVOID buf = NULL;
+
+        FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+            NULL, errorCode, 0, (LPTSTR)&buf, 0, NULL);
+        if (buf) {
+            errMsg = (const wchar_t*)buf;
+            LocalFree(buf);
+        }
+
+        return errMsg;
+    }
+#endif
+
     void printLog(
         const char* format,
         ...
@@ -849,12 +1003,13 @@ public:
         if (buffer) {
             // time
             time_t now = time(nullptr);
-            std::tm* tm = localtime(&now);
-            strftime(buffer, 512, "%Y-%m-%d %H:%M:%S", tm);
+            std::tm tm{};
+            localtime_s(&tm, &now);
+            strftime(buffer, 512, "[%Y-%m-%d %H:%M:%S]", &tm);
 
             size_t offset = strlen(buffer);
 
-            strcat(buffer + offset, logPrefixStr_.c_str());
+            strcat(buffer + offset, (isSocketServer_ ? "[server]" : "[client]"));
             offset = strlen(buffer);
 
             vsnprintf(buffer + offset, len - offset, format, args);
@@ -872,13 +1027,56 @@ public:
         va_end(args);
     }
 
+#ifdef _MSC_VER
+    void printLog(
+        const wchar_t* format,
+        ...
+    ) {
+#ifndef _DEBUG
+        return;
+#endif
+
+        std::lock_guard<std::mutex> locker(*logBufMutex_);
+
+        va_list args;
+        va_start(args, format);
+
+        size_t len = logBufSize_;
+
+        wchar_t* buffer = (wchar_t*)logBuf_.get();
+        if (buffer) {
+            // time
+            time_t now = time(nullptr);
+            std::tm* tm = localtime(&now);
+            wcsftime(buffer, 512, L"[%Y-%m-%d %H:%M:%S]", tm);
+
+            size_t offset = wcslen(buffer);
+
+            wcscat(buffer + offset, (isSocketServer_ ? L"[server]" : L"[client]"));
+            offset = wcslen(buffer);
+
+            _vsnwprintf(buffer + offset, len - offset, format, args);
+            offset = wcslen(buffer);
+
+            wcscat(buffer + offset, L"\r\n");
+
+            wprintf(buffer);
+
+            OutputDebugStringW(buffer);
+        }
+
+        va_end(args);
+    }
+#endif
+
+
 private:
     std::string host_;
     std::uint16_t port_;
     struct sockaddr_in socketAddr_;
     bool isSocketServer_;
-    int serverSocket_;
-    int clientSocket_;
+    SOCKET serverSocket_;
+    SOCKET clientSocket_;
 
     std::thread* socketReadThd_;
     bool stopFlag_;
@@ -890,7 +1088,6 @@ private:
     OnStop onStop_;
 
     std::unique_ptr<std::mutex> logBufMutex_;
-    std::string logPrefixStr_;
     std::unique_ptr<char[]> logBuf_;
     const std::uint32_t logBufSize_ = 1024 * 1024;
 
