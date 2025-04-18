@@ -783,11 +783,11 @@ namespace Main {
 
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 7) {
+            if (appArgs.size() < 6) {
                 break;
             }
 
-            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketWrapper::SocketType::SocketClient);
+            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[5].toUShort(), SocketWrapper::SocketType::SocketClient);
 
             _socketWrapper->registerCallback(this, [&](void* ctx, const Command::Cmd& cmd) {
                 if (ctx) {
@@ -1307,11 +1307,11 @@ namespace Main {
     void Account::onLoginEnd() {
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 7) {
+            if (appArgs.size() < 6) {
                 break;
             }
 
-            _dataPath = formatFilePath(qstringToStdWString(appArgs[3]));
+            _dataPath = formatFilePath(qstringToStdWString(appArgs[2]));
             if (_dataPath.size() < 1) {
                 break;
             }
@@ -1328,7 +1328,7 @@ namespace Main {
 
             _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[4]));
+            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[3]));
             if (_utf8RootPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_utf8RootPath.back() == '\\') {
@@ -1341,7 +1341,7 @@ namespace Main {
 #endif  
             }
 
-            _attachPath = formatFilePath(qstringToStdWString(appArgs[5]));
+            _attachPath = formatFilePath(qstringToStdWString(appArgs[4]));
             if (_attachPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_attachPath.back() != L'\\') {
