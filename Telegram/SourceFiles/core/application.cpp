@@ -167,8 +167,8 @@ Application::Application()
 , _autoLockTimer([=] { checkAutoLock(); })
 , _fileOpenTimer([=] { checkFileOpen(); }) {
     const auto& appArgs = Core::Launcher::getApplicationArguments();
-    if (appArgs.size() >= 7) {
-        _activeAccountId = appArgs[6];
+    if (appArgs.size() >= 8) {
+        _activeAccountId = appArgs[7];
     }
 	Ui::Integration::Set(&_private->uiIntegration);
 
@@ -365,7 +365,7 @@ void Application::run() {
 
 	bool setProxy = false;
     auto appArgs = Core::Launcher::getApplicationArguments();
-    if (appArgs.size() >= 2) {
+    if (appArgs.size() >= 3) {
         QString proxyString = appArgs[1];
         QStringList proxySettings = proxyString.split('|');
         if (proxySettings.size() >= 3) {

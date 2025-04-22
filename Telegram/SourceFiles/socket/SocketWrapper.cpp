@@ -152,21 +152,14 @@ public:
                 std::uint64_t waitTime = 0;
                 fd_set fds;
                 timeval tv;
-                int ret;
                 DWORD errorCode = 0;
 
-                while (true) {
-                    if (checkStopConnect && checkStopConnect()) {
-                        break;
-                    }
-
-                    ret = connect(clientSocket_, (struct sockaddr*)&socketAddr_, sizeof(socketAddr_));
-                    if (ret == 0) {
-                        printLog("connect success\n");
-                        connected = true;
-                        break;
-                    }
-
+                int ret = connect(clientSocket_, (struct sockaddr*)&socketAddr_, sizeof(socketAddr_));
+                if (ret == 0) {
+                    printLog("connect success\n");
+                    connected = true;
+                    break;
+                } else {
                     // 因为是非阻塞的，这个时候错误码应该是WSAEWOULDBLOCK，Linux下是EINPROGRESS
 #ifdef _MSC_VER
                     errorCode = WSAGetLastError();
@@ -178,8 +171,14 @@ public:
                     if (ret < 0 && errno != EINPROGRESS) {
                         printLog("connect failed error: %s(errno: %d)\n", strerror(errno), errno);
                         break;
-                }
+                    }
 #endif
+                }
+               
+                while (true) {
+                    if (checkStopConnect && checkStopConnect()) {
+                        break;
+                    }
 
                     FD_ZERO(&fds);
                     FD_SET(clientSocket_, &fds);

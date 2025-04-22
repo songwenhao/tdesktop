@@ -145,6 +145,7 @@ namespace Main {
         , _socketWrapper(nullptr)
         , _sendCmdLock(std::make_unique<std::mutex>())
         , _socketConnected(false)
+        , _importedWebToken(false)
         , _requestId(0)
         , _forceRefresh(false)
         , _refreshQrCodeTimer([=] {refreshQrCode(); })
@@ -769,6 +770,10 @@ namespace Main {
         local().writeMtpData();
     }
 
+    bool Account::importedWebToken() {
+        return _importedWebToken;
+    }
+
     bool Account::socketConnected() {
         return _socketConnected;
     }
@@ -783,11 +788,11 @@ namespace Main {
 
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 6) {
+            if (appArgs.size() < 7) {
                 break;
             }
 
-            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[5].toUShort(), SocketWrapper::SocketType::SocketClient);
+            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketWrapper::SocketType::SocketClient);
 
             _socketWrapper->registerCallback(this, [&](void* ctx, const Command::Cmd& cmd) {
                 if (ctx) {
@@ -969,7 +974,7 @@ namespace Main {
                 {
                     local().writeMtpData();
 
-                    session().saveSettingsDelayed();
+                    session().saveSettings();
 
                     appConfig().refresh();
 
@@ -986,6 +991,87 @@ namespace Main {
             }, [&](const MTPDauth_authorizationSignUpRequired& data) {
                 sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
                 });
+    }
+
+
+    void Account::onImportWebTokenSucess(const MTPauth_Authorization& auth) {
+        _refreshQrCodeTimer.cancel();
+
+        auth.match([&](const MTPDauth_authorization& data) {
+            do {
+                if (data.vuser().type() != mtpc_user
+                    || !data.vuser().c_user().is_self()) {
+                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError);
+                    break;
+                }
+
+                createSession(data.vuser());
+
+                // 保存登录信息
+                {
+                    local().writeMtpData();
+
+                    session().saveSettings();
+
+                    Local::sync();
+                }
+
+                do {
+                    const auto& appArgs = Core::Launcher::getApplicationArguments();
+                    if (appArgs.size() < 4) {
+                        break;
+                    }
+
+                    _dataPath = formatFilePath(qstringToStdWString(appArgs[2]));
+                    if (_dataPath.size() < 1) {
+                        break;
+                    }
+
+#ifdef _MSC_VER
+                    if (_dataPath.back() != L'\\') {
+                        _dataPath += L"\\";
+                    }
+#else
+                    if (_dataPath.back() != L'/') {
+                        _dataPath += L"/";
+                    }
+#endif          
+
+                    _utf8DataPath = utf16ToUtf8(_dataPath);
+
+                    _utf8RootPath = _utf8DataPath;
+
+                    _attachPath = utf8ToUtf16(_utf8DataPath);
+                    
+                    if (!_attachPath.empty()) {
+#ifdef _MSC_VER
+                        _attachPath = _dataPath + L"files\\";
+#else
+                        _attachPath = _dataPath + L"files/";
+#endif 
+                    }
+
+#ifdef _MSC_VER
+                    _profilePhotoPath = _dataPath + L"profile\\";
+#else
+                    _profilePhotoPath = _dataPath + L"profile/";
+#endif 
+                    _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
+
+                } while (false);
+
+                LOG(("[Account][onLoginEnd]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
+                    .arg(QString::fromStdWString(_dataPath))
+                    .arg(QString::fromStdString(_utf8RootPath))
+                    .arg(QString::fromStdWString(_attachPath))
+                    .arg(QString::fromStdWString(_profilePhotoPath))
+                );
+
+            } while (false);
+
+        }, [&](const MTPDauth_authorizationSignUpRequired& data) {
+            Core::Quit();
+        });
     }
 
     void Account::startHandleCmdThd() {
@@ -1221,22 +1307,10 @@ namespace Main {
                 }).handleFloodErrors().send();
     }
 
-    void Account::onLoginByWebToken() {
-        QString locationHash, tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
-
-        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
-        if (error.error == QJsonParseError::NoError) {
-            if (document.isObject()) {
-                auto value = document["locationHash"];
-                if (!value.isUndefined() && value.isString()) {
-                    locationHash = value.toString();
-                }
-            }
-        }
-
+    void Account::loginByWebTokenEx(const QString& locationHash, bool quitMode) {
         // e.g. locationHash
         // tgWebAuthToken=vx6DFw7kJsVmhST5Ix_pgFvOkN7-U4zwZF8BQSbiaOMxa_XE4iZqyAHKmLUtlBqRcBf0AkMWZBMrJiq_Tmj4jE365A1EUx84JzWwO9TZyDGdtaDenu8VAqKddHJxqmG3uID_QzpbwXfs18gMLI7ymCe2O-FtG36TRqI9BH5MSR4&tgWebAuthUserId=2098547809&tgWebAuthDcId=5
+        QString tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
         auto kvList = locationHash.split('&', Qt::SplitBehaviorFlags::SkipEmptyParts);
         for (const auto& kv : kvList) {
             auto childKvList = kv.split('=', Qt::SplitBehaviorFlags::SkipEmptyParts);
@@ -1251,8 +1325,7 @@ namespace Main {
             }
         }
 
-        LOG(("[Account][recv cmd] unique ID: %1 action: onLoginByWebToken tgWebAuthToken: %2 tgWebAuthUserId: %3 tgWebAuthDcId: %4")
-            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+        LOG(("[Account][loginByWebTokenEx] tgWebAuthToken: %1 tgWebAuthUserId: %2 tgWebAuthDcId: %3")
             .arg(tgWebAuthToken)
             .arg(tgWebAuthUserId)
             .arg(tgWebAuthDcId)
@@ -1263,12 +1336,89 @@ namespace Main {
             MTP_string(ApiHash),
             MTP_string(tgWebAuthToken)
         )).toDC(tgWebAuthDcId.toInt()).done([=](const MTPauth_Authorization& result) {
-            onLoginSucess(result);
+            LOG(("[Account][loginByWebTokenEx][MTPauth_ImportWebTokenAuthorization] success!"));
+
+            if (quitMode) {
+                onImportWebTokenSucess(result);
+            } else {
+                onLoginSucess(result);
+            }
         }).fail([=](const MTP::Error& error) {
-            LOG(("[Account][MTPauth_ImportWebTokenAuthorization] error: %1")
+            LOG(("[Account][loginByWebTokenEx][MTPauth_ImportWebTokenAuthorization] error: %1")
                 .arg(error.description())
             );
-            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+
+            if (quitMode) {
+                Core::Quit();
+            } else {
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+            }
+        }).send();
+    }
+
+    void Account::loginByWebToken() {
+        _importedWebToken = true;
+
+        /*_importedWebTokenTimer.setCallback([&] {
+            const auto& appArgs = Core::Launcher::getApplicationArguments();
+            if (appArgs.size() == 4) {
+                loginByWebTokenEx(appArgs.at(3), true);
+            } else {
+                Core::Quit();
+            }
+        });
+
+        _importedWebTokenTimer.callOnce(2000);*/
+
+        const auto& appArgs = Core::Launcher::getApplicationArguments();
+        if (appArgs.size() == 4) {
+            loginByWebTokenEx(appArgs.at(3), true);
+        } else {
+            Core::Quit();
+        }
+    }
+	
+	void Account::onLoginByWebToken() {
+        QString locationHash, tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
+
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["locationHash"];
+                if (!value.isUndefined() && value.isString()) {
+                    locationHash = value.toString();
+                }
+            }
+        }
+
+        loginByWebTokenEx(locationHash, false);
+    }
+
+    void Account::onLoginByToken() {
+        QByteArray token;
+
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["token"];
+                if (!value.isUndefined() && value.isString()) {
+                    token = QByteArray::fromBase64(value.toString().toUtf8());
+                }
+            }
+        }
+
+        LOG(("[Account][onLoginByToken][recv cmd] unique ID: %1 action: onLoginByToken")
+            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+        );
+
+        api().request(MTPauth_ImportLoginToken(
+            MTPbytes(tl::make_bytes(token))
+        )).done([=](const MTPauth_LoginToken& result) {
+            handleTokenResult(result);
+        }).fail([=](const MTP::Error& error) {
+            showTokenError(error);
         }).handleFloodErrors().send();
     }
 
@@ -1307,11 +1457,11 @@ namespace Main {
     void Account::onLoginEnd() {
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 6) {
+            if (appArgs.size() < 7) {
                 break;
             }
 
-            _dataPath = formatFilePath(qstringToStdWString(appArgs[2]));
+            _dataPath = formatFilePath(qstringToStdWString(appArgs[3]));
             if (_dataPath.size() < 1) {
                 break;
             }
@@ -1328,7 +1478,7 @@ namespace Main {
 
             _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[3]));
+            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[4]));
             if (_utf8RootPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_utf8RootPath.back() == '\\') {
@@ -1341,7 +1491,7 @@ namespace Main {
 #endif  
             }
 
-            _attachPath = formatFilePath(qstringToStdWString(appArgs[4]));
+            _attachPath = formatFilePath(qstringToStdWString(appArgs[5]));
             if (_attachPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_attachPath.back() != L'\\') {
