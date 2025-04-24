@@ -325,6 +325,18 @@ namespace Main {
         _sessionValue = _session.get();
 
         Ensures(_session != nullptr);
+
+        QString curAccountId = QString::number(_session->user()->id.value);
+        QString activeAccount = Core::App().activeAccountId();
+        LOG(("activeAccount: %1 curAccountId: %2").arg(activeAccount).arg(curAccountId));
+
+        if (!activeAccount.isEmpty()) {
+            if (activeAccount == curAccountId) {
+                if (!_socketConnected) {
+                    connectSocket();
+                }
+            }
+        }
     }
 
     void Account::destroySession(DestroyReason reason) {

@@ -225,16 +225,10 @@ void Controller::showAccount(
 
         const auto& appArgs = Core::Launcher::getApplicationArguments();
 		if (appArgs.size() >= 7) {
-			if (!activeAccount.isEmpty()) {
-				if (activeAccount == QString::number(session->user()->id.value)) {
-					if (!account->socketConnected()) {
-						account->connectSocket();
-					}
-				}
-			} else {
-				if (!account->socketConnected()) {
-					account->connectSocket();
-				}
+			if (activeAccount.isEmpty()) {
+                if (!account->socketConnected()) {
+                    account->connectSocket();
+                }
 			}
 		} else if (appArgs.size() == 4) {
 			if (!account->importedWebToken()) {
