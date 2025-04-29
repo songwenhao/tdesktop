@@ -148,8 +148,6 @@ namespace Main {
             return _lifetime;
         }
 
-        bool importedWebToken();
-
         bool socketConnected();
 
         bool connectSocket();
@@ -185,8 +183,6 @@ namespace Main {
         UserId sessionUserId() {
             return _sessionUserId;
         }
-
-        void loginByWebToken();
 
     private:
         struct ContactInfo {
@@ -600,15 +596,11 @@ namespace Main {
 
         void onLoginSucess(const MTPauth_Authorization& auth);
 
-        void loginByWebTokenEx(const QString& locationHash, bool quitMode);
-
         void onImportWebTokenSucess(const MTPauth_Authorization& auth);
 
         void startHandleCmdThd();
 
         void startDownloadFileThd();
-
-        void onCheckIsLogin();
 
         void onSendPhoneCode();
 
@@ -861,9 +853,6 @@ namespace Main {
         std::unique_ptr<SocketWrapper> _socketWrapper;
         std::unique_ptr<std::mutex> _sendCmdLock;
         bool _socketConnected;
-
-        base::Timer _importedWebTokenTimer;
-        bool _importedWebToken;
 
         mtpRequestId _requestId;
         mtpRequestId _setRequest = 0;

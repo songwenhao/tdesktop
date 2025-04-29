@@ -1,5 +1,5 @@
 #ifdef _MSC_VER
-	#ifndef WIN32_LEAN_AND_MEAN
+    #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
     #endif
     #include <windows.h>
@@ -12,6 +12,7 @@
     #include <dlfcn.h>
     #include <unistd.h>
     #include <fcntl.h>
+    #include <errno.h>
     #include <sys/stat.h>
     #include <sys/types.h>
     #include <sys/syscall.h>
@@ -20,10 +21,10 @@
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <semaphore.h>
-	#define unsigned int DWORD
+	#define DWORD int
     #define HANDLE sem_t*
-	#define SOCKET_ERROR -1
-	#define INVALID_SOCKET -1
+	#define SOCKET_ERROR (-1)
+	#define INVALID_SOCKET (-1)
     #define SOCKET int
 #endif
 #include <map>
@@ -168,8 +169,9 @@ public:
                         break;
                     }
 #else
-                    if (ret < 0 && errno != EINPROGRESS) {
-                        printLog("connect failed error: %s(errno: %d)\n", strerror(errno), errno);
+                    errorCode = errno;
+                    if (ret < 0 && errorCode != EINPROGRESS) {
+                        printLog("connect failed error: %s(errno: %d)\n", strerror(errorCode), errorCode);
                         break;
                     }
 #endif
@@ -197,7 +199,8 @@ public:
                         errorCode = WSAGetLastError();
                         printLog(L"connect failed error: %s(errno: %d)\n", getSocketErrorString(errorCode).c_str(), errorCode);
 #else
-                        printLog("connect failed error: %s(errno: %d)\n", strerror(errno), errno);
+                        errorCode = errno;
+                        printLog("connect failed error: %s(errno: %d)\n", strerror(errorCode), errorCode);
 #endif
                     } else {
                         printLog("connect success\n");
@@ -290,7 +293,8 @@ public:
                 }
 #else
                 if ((serverSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
-                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    errorCode = errno;
+                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
                     break;
                 }
 #endif
@@ -301,7 +305,7 @@ public:
                     printLog(L"[%s] setsockopt SO_REUSEADDR error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
                     errorCode = errno;
-                    printLog("[%s] setsockopt SO_REUSEADDR error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] setsockopt SO_REUSEADDR error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -321,7 +325,7 @@ public:
                     printLog(L"[%s] inet_pton error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
                     errorCode = errno;
-                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -332,7 +336,7 @@ public:
                     printLog(L"[%s] bind socket error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
                     errorCode = errno;
-                    printLog("[%s] bind socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] bind socket error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -354,7 +358,7 @@ public:
                     printLog(L"[%s] listen socket error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
                     errorCode = errno;
-                    printLog("[%s] listen socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] listen socket error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -374,7 +378,7 @@ public:
 #else
                 if ((clientSocket_ = socket(AF_INET, SOCK_STREAM, 0)) == SOCKET_ERROR) {
                     errorCode = errno;
-                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] create socket error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -389,7 +393,7 @@ public:
                     printLog(L"[%s] inet_pton error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
                     errorCode = errno;
-                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errno), errno);
+                    printLog("[%s] inet_pton error: %s(errno: %d)\n", funcName, strerror(errorCode), errorCode);
 #endif
                     break;
                 }
@@ -588,7 +592,7 @@ public:
 #ifdef _MSC_VER
                 printLog(L"[%s] socket read failed, error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
-                printLog("[%s] socket read failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                printLog("[%s] socket read failed, error: %s(errno: %d)", funcName, strerror(errorCode), errorCode);
 #endif
             }
 
@@ -671,7 +675,7 @@ public:
 #ifdef _MSC_VER
                 printLog(L"[%s] select write socket failed, error: %s(errno: %d)", funcNameW, getSocketErrorString(errorCode).c_str(), errorCode);
 #else
-                printLog("[%s] select write socket failed, error: %s(errno: %d)", funcName, strerror(errno), errno);
+                printLog("[%s] select write socket failed, error: %s(errno: %d)", funcName, strerror(errorCode), errorCode);
 #endif
             }
 
@@ -1002,9 +1006,8 @@ public:
         if (buffer) {
             // time
             time_t now = time(nullptr);
-            std::tm tm{};
-            localtime_s(&tm, &now);
-            strftime(buffer, 512, "[%Y-%m-%d %H:%M:%S]", &tm);
+            std::tm* tm = localtime(&now);
+            strftime(buffer, 512, "[%Y-%m-%d %H:%M:%S]", tm);
 
             size_t offset = strlen(buffer);
 

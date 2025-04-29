@@ -224,17 +224,14 @@ void Controller::showAccount(
 		LOG(("activeAccount: %1").arg(activeAccount));
 
         const auto& appArgs = Core::Launcher::getApplicationArguments();
-		if (appArgs.size() >= 7) {
-			if (activeAccount.isEmpty()) {
+        auto v = appArgs.value("port");
+        if (!v.isEmpty()) {
+            if (activeAccount.isEmpty()) {
                 if (!account->socketConnected()) {
                     account->connectSocket();
                 }
-			}
-		} else if (appArgs.size() == 4) {
-			if (!account->importedWebToken()) {
-				account->loginByWebToken();
-			}
-		}
+            }
+        }
 	}, _accountLifetime);
 }
 

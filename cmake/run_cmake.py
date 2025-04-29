@@ -13,11 +13,18 @@ def run(project, arguments, buildType=''):
     cmake = ['cmake']
     vsArch = ''
     explicitGenerator = False
+    findStr = 'outDirName='
     for arg in arguments:
         if arg == 'debug':
             cmake.append('-DCMAKE_BUILD_TYPE=Debug')
         elif arg == 'x86' or arg == 'x64' or arg == 'arm':
             vsArch = arg
+        elif arg.startswith(findStr):
+            pos = arg.find(findStr)
+            if pos != -1:
+                outDirName = arg[pos + len(findStr):]
+                if len(outDirName) > 0:
+                    basePath = scriptPath + '/../' + outDirName + '/' + buildType
         elif arg != 'force':
             if arg.startswith('-G'):
                 explicitGenerator = True

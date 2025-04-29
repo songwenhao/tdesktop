@@ -26,6 +26,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cstdio>
 #include <ostream>
 
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+
 namespace Core {
 namespace {
 
@@ -300,7 +303,7 @@ base::options::toggle OptionFractionalScalingEnabled({
 const char kOptionFractionalScalingEnabled[] = "fractional-scaling-enabled";
 const char kOptionFreeType[] = "freetype";
 
-QStringList Launcher::_appArgs;
+QMap<QString, QString> Launcher::_parsedAppArgs;
 Launcher *Launcher::InstanceSetter::Instance = nullptr;
 
 std::unique_ptr<Launcher> Launcher::Create(int argc, char *argv[]) {
@@ -325,13 +328,39 @@ Launcher::~Launcher() {
 void Launcher::init() {
 	LOG(("Launcher::init"));
 	
-	_appArgs = _arguments;
-
-	qsizetype argsSize = _appArgs.size();
+	qsizetype argsSize = _arguments.size();
 	LOG(("Arguments size: %1").arg(argsSize));
 	for (qsizetype i = 0; i < argsSize; ++i) {
-		LOG(("arg %1: %2").arg(i+1).arg(_appArgs.at(i)));
+		LOG(("arg %1: %2").arg(i+1).arg(_arguments.at(i)));
 	}
+
+	if (argsSize > 1) {
+		QByteArray jsonCmdline = _arguments.at(1).toUtf8();
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(QByteArray::fromBase64(jsonCmdline), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                const auto obj = document.object();
+                QString k, v;
+                QJsonValue jsonValue;
+                for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+                    k = it.key();
+
+                    v.clear();
+                    jsonValue = it.value();
+                    if (jsonValue.isDouble()) {
+                        v = QString::number(jsonValue.toDouble());
+                    } else if (jsonValue.isString()) {
+                        v = jsonValue.toString();
+                    } else {
+                        continue;
+                    }
+
+                    _parsedAppArgs.insert(k, v);
+                }
+            }
+        }
+    }
 
 	prepareSettings();
 
@@ -480,8 +509,20 @@ const QStringList &Launcher::arguments() const {
 	return _arguments;
 }
 
-QStringList Launcher::getApplicationArguments() {
-	return _appArgs;
+const QMap<QString, QString> Launcher::getApplicationArguments() {
+	// e.g.
+    // {
+    //   "activeAccountId": "2098547809",
+	//   "attachPath" : "E:\\PhoneForensics\\1\\telegram-pc\\files",
+	//   "dataPath" : "E:\\PhoneForensics\\1\\telegram-pc",
+	//   "mainDcId": 5,
+	//   "port" : 12345,
+	//   "proxy" : "0|127.0.0.1|7890",
+	//   "rootPath" : "E:\\PhoneForensics\\1\\telegram-pc",
+	//   "workingDir" : "E:\\PhoneForensics\\1\\telegram-pc"
+	// }
+
+	return _parsedAppArgs;
 }
 
 QString Launcher::initialWorkingDir() const {
@@ -589,16 +630,13 @@ void Launcher::processArguments() {
 		_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
 	}
 
-	if (_appArgs.size() >= 7) {
-        _customWorkingDir = _appArgs.at(2);
-		if (!_customWorkingDir.isEmpty()) {
-			_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
-		}
-    } else if (_appArgs.size() == 3) {
-		_customWorkingDir = _appArgs.at(2);
-		if (!_customWorkingDir.isEmpty()) {
-			_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
-		}
+    const auto& appArgs = Core::Launcher::getApplicationArguments();
+	auto v = appArgs.value("workingDir");
+	if (!v.isEmpty()) {
+        _customWorkingDir = v;
+        if (!_customWorkingDir.isEmpty()) {
+            _customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
+        }
 	}
 
 	gStartUrl = parseResult.value("--", {}).join(QString());

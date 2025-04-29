@@ -250,7 +250,7 @@ Domain::StartModernResult Domain::startModern(
 		}
 	}
 
-    if (appArgs.size() == 3) {
+    if (appArgs.value("dataPath").isEmpty()) {
         // save existing account info
         QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
         QFile::remove(saveAccountsFilePath);

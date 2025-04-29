@@ -145,7 +145,6 @@ namespace Main {
         , _socketWrapper(nullptr)
         , _sendCmdLock(std::make_unique<std::mutex>())
         , _socketConnected(false)
-        , _importedWebToken(false)
         , _requestId(0)
         , _forceRefresh(false)
         , _refreshQrCodeTimer([=] {refreshQrCode(); })
@@ -326,14 +325,16 @@ namespace Main {
 
         Ensures(_session != nullptr);
 
-        QString curAccountId = QString::number(_session->user()->id.value);
-        QString activeAccount = Core::App().activeAccountId();
-        LOG(("activeAccount: %1 curAccountId: %2").arg(activeAccount).arg(curAccountId));
+        if (_curRecvCmd.action != (std::int32_t)TelegramCmd::Action::LoginByWebToken) {
+            QString curAccountId = QString::number(_session->user()->id.value);
+            QString activeAccount = Core::App().activeAccountId();
+            LOG(("activeAccount: %1 curAccountId: %2").arg(activeAccount).arg(curAccountId));
 
-        if (!activeAccount.isEmpty()) {
-            if (activeAccount == curAccountId) {
-                if (!_socketConnected) {
-                    connectSocket();
+            if (!activeAccount.isEmpty()) {
+                if (activeAccount == curAccountId) {
+                    if (!_socketConnected) {
+                        connectSocket();
+                    }
                 }
             }
         }
@@ -351,21 +352,6 @@ namespace Main {
 
         if (reason == DestroyReason::LoggedOut) {
             _session->finishLogout();
-            /*bool sendLoginInvalid = false;
-            QString activeAccount = Core::App().activeAccountId();
-            if (!activeAccount.isEmpty()) {
-                if (activeAccount == QString::number(session().user()->id.value)) {
-                    sendLoginInvalid = true;
-                }
-            } else {
-                sendLoginInvalid = true;
-            }
-
-            if (sendLoginInvalid) {
-                Command::Cmd cmd;
-                cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
-                sendCmd(cmd);
-            }*/
         }
         _session = nullptr;
     }
@@ -578,6 +564,12 @@ namespace Main {
             MTP::Instance::Mode::Normal,
             std::move(fields));
 
+        const auto& appArgs = Core::Launcher::getApplicationArguments();
+        auto v = appArgs.value("mainDcId");
+        if (!v.isEmpty()) {
+            _mtp->setMainDcId(v.toInt());
+        }
+
         const auto writingKeys = _mtp->lifetime().make_state<bool>(false);
         _mtp->writeKeysRequests(
         ) | rpl::filter([=] {
@@ -681,6 +673,14 @@ namespace Main {
             // We log out because we've forgotten passcode.
             loggedOut();
         }
+
+        if (_socketWrapper) {
+            Command::Cmd cmd;
+            cmd.action = std::int32_t(TelegramCmd::Action::LoginInvalid);
+            sendCmd(cmd);
+
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, QString::fromStdWString(L"登录状态已失效！"));
+        }
     }
 
     bool Account::loggingOut() const {
@@ -782,16 +782,12 @@ namespace Main {
         local().writeMtpData();
     }
 
-    bool Account::importedWebToken() {
-        return _importedWebToken;
-    }
-
     bool Account::socketConnected() {
         return _socketConnected;
     }
 
     bool Account::connectSocket() {
-		LOG(("Account::connectSocket"));
+		LOG((__FUNCTION__));
 
         _socketConnected = true;
         _stop = false;
@@ -800,11 +796,13 @@ namespace Main {
 
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 7) {
+            auto v = appArgs.value("dataPath");
+            if (v.isEmpty()) {
                 break;
             }
 
-            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", appArgs[6].toUShort(), SocketWrapper::SocketType::SocketClient);
+            v = appArgs.value("port");
+            _socketWrapper = std::make_unique<SocketWrapper>("127.0.0.1", v.toUShort(), SocketWrapper::SocketType::SocketClient);
 
             _socketWrapper->registerCallback(this, [&](void* ctx, const Command::Cmd& cmd) {
                 if (ctx) {
@@ -887,14 +885,36 @@ namespace Main {
             connected = true;
 
             _checkLoginTimer.setCallback([&] {
-                if (sessionExists()) {
-                    _logined = true;
-                    _userPhone = _session->user()->phone();
+                if (domain().started()) {
+                    _checkLoginTimer.cancel();
 
-                    onLoginEnd();
+                    QString activeAccount = Core::App().activeAccountId();
+                    if (activeAccount.isEmpty()) {
+                        std::vector<not_null<Account*>> accounts = domain().orderedAccounts();
+                        for (const auto account : accounts) {
+                            if (account->sessionExists() && (account->session().user()->id == _session->user()->id)) {
+                                _logined = true;
+                                _userPhone = _session->user()->phone();
+                                break;
+                            }
+                        }
+                    } else {
+                        std::vector<not_null<Account*>> accounts = domain().orderedAccounts();
+                        for (const auto account : accounts) {
+                            if (account->sessionExists() && (QString::number(account->session().user()->id.value) == activeAccount)) {
+                                _logined = true;
+                                _userPhone = _session->user()->phone();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (_logined) {
+                        onLoginEnd();
+                    }
+
+                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
                 }
-
-                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
             });
 
             _checkNormalRequestTimer.setCallback(std::bind(&Main::Account::checkRequestTimerCallback, this));
@@ -927,13 +947,14 @@ namespace Main {
 
                             TelegramCmd::Action action = (TelegramCmd::Action)_curRecvCmd.action;
                             if (action == TelegramCmd::Action::CheckIsLogin) {
-                                LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
+                                LOG(("[Account][recv cmd] unique ID: %1 action: %2 content: %3")
                                     .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
                                     .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
                                 );
 
                                 _userPhone.clear();
-                                _checkLoginTimer.callOnce(5000);
+                                _checkLoginTimer.callEach(2000);
                             } else if (action == TelegramCmd::Action::SendPhoneCode) {
                                 onSendPhoneCode();
                             } else if (action == TelegramCmd::Action::LoginByPhone) {
@@ -941,8 +962,9 @@ namespace Main {
                             } else if (action == TelegramCmd::Action::GenerateQrCode) {
                                 onGenerateQrCode();
                             } else if (action == TelegramCmd::Action::LoginByQrCode) {
-                                LOG(("[Account][recv cmd] unique ID: %1 action: LoginByQrCode")
+                                LOG(("[Account][recv cmd] unique ID: %1 action: %2")
                                     .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
                                 );
                             } else if (action == TelegramCmd::Action::SecondVerify) {
                                 onSecondVerify();
@@ -986,6 +1008,10 @@ namespace Main {
                 {
                     local().writeMtpData();
 
+                    local().writeMtpConfig();
+
+                    local().writeSelf();
+
                     session().saveSettings();
 
                     appConfig().refresh();
@@ -1007,8 +1033,6 @@ namespace Main {
 
 
     void Account::onImportWebTokenSucess(const MTPauth_Authorization& auth) {
-        _refreshQrCodeTimer.cancel();
-
         auth.match([&](const MTPDauth_authorization& data) {
             do {
                 if (data.vuser().type() != mtpc_user
@@ -1023,61 +1047,18 @@ namespace Main {
                 {
                     local().writeMtpData();
 
+                    local().writeMtpConfig();
+
+                    local().writeSelf();
+
                     session().saveSettings();
 
                     Local::sync();
                 }
-
-                do {
-                    const auto& appArgs = Core::Launcher::getApplicationArguments();
-                    if (appArgs.size() < 4) {
-                        break;
-                    }
-
-                    _dataPath = formatFilePath(qstringToStdWString(appArgs[2]));
-                    if (_dataPath.size() < 1) {
-                        break;
-                    }
-
-#ifdef _MSC_VER
-                    if (_dataPath.back() != L'\\') {
-                        _dataPath += L"\\";
-                    }
-#else
-                    if (_dataPath.back() != L'/') {
-                        _dataPath += L"/";
-                    }
-#endif          
-
-                    _utf8DataPath = utf16ToUtf8(_dataPath);
-
-                    _utf8RootPath = _utf8DataPath;
-
-                    _attachPath = utf8ToUtf16(_utf8DataPath);
-                    
-                    if (!_attachPath.empty()) {
-#ifdef _MSC_VER
-                        _attachPath = _dataPath + L"files\\";
-#else
-                        _attachPath = _dataPath + L"files/";
-#endif 
-                    }
-
-#ifdef _MSC_VER
-                    _profilePhotoPath = _dataPath + L"profile\\";
-#else
-                    _profilePhotoPath = _dataPath + L"profile/";
-#endif 
-                    _utf8ProfilePhotoPath = utf16ToUtf8(_profilePhotoPath);
-
-                } while (false);
-
-                LOG(("[Account][onLoginEnd]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
-                    .arg(QString::fromStdWString(_dataPath))
-                    .arg(QString::fromStdString(_utf8RootPath))
-                    .arg(QString::fromStdWString(_attachPath))
-                    .arg(QString::fromStdWString(_profilePhotoPath))
-                );
+                
+                _logined = true;
+                QString curAccountId = QString::number(_session->user()->id.value);
+                sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, curAccountId);
 
             } while (false);
 
@@ -1159,27 +1140,6 @@ namespace Main {
         thd.detach();
     }
 
-    void Account::onCheckIsLogin() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: CheckIsLogin content: %2")
-            .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
-            .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
-        );
-
-        _userPhone.clear();
-
-        // 等待mtp服务启动完毕
-        QThread::msleep(5000);
-
-        if (sessionExists()) {
-            _logined = true;
-            _userPhone = _session->user()->phone();
-
-            onLoginEnd();
-        }
-
-        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
-    }
-
     void Account::onSendPhoneCode() {
         _userPhone.clear();
         _phoneHash.clear();
@@ -1204,8 +1164,10 @@ namespace Main {
 
         _userPhone = QString::fromUtf8((countryCode + phone).c_str());
 
-        LOG(("[Account][recv cmd] unique ID: %1 action: SendPhoneCode phone: %2")
+        LOG(("[%1] unique ID: %2 action: %3 phone: %4")
+            .arg(__FUNCTION__)
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
             .arg(_userPhone)
         );
 
@@ -1273,8 +1235,10 @@ namespace Main {
     }
 
     void Account::onLoginByPhone() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: LoginByPhone phoneCode: %2")
+        LOG(("[%1] unique ID: %2 action: %3 phoneCode: %4")
+            .arg(__FUNCTION__)
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
             .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
         );
 
@@ -1289,7 +1253,7 @@ namespace Main {
             }).fail([=](const MTP::Error& error) {
                 do {
                     if (MTP::IsFloodError(error)) {
-                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.type());
                         break;
                     }
 
@@ -1298,13 +1262,13 @@ namespace Main {
                         || err == u"PHONE_CODE_EXPIRED"_q
                         || err == u"PHONE_NUMBER_BANNED"_q) { // show error
                         if (err == u"PHONE_CODE_EXPIRED"_q) {
-                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeExpired, "", error.description());
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeExpired, "", error.type());
                         } else {
-                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.type());
                         }
                         break;
                     } else if (err == u"PHONE_CODE_EMPTY"_q || err == u"PHONE_CODE_INVALID"_q) {
-                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.description());
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::CodeInvalid, "", error.type());
                         break;
                     } else if (err == u"SESSION_PASSWORD_NEEDED"_q) {
                         requestPasswordData();
@@ -1318,10 +1282,23 @@ namespace Main {
                 } while (false);
                 }).handleFloodErrors().send();
     }
-
-    void Account::loginByWebTokenEx(const QString& locationHash, bool quitMode) {
+	
+	void Account::onLoginByWebToken() {
         // e.g. locationHash
         // tgWebAuthToken=vx6DFw7kJsVmhST5Ix_pgFvOkN7-U4zwZF8BQSbiaOMxa_XE4iZqyAHKmLUtlBqRcBf0AkMWZBMrJiq_Tmj4jE365A1EUx84JzWwO9TZyDGdtaDenu8VAqKddHJxqmG3uID_QzpbwXfs18gMLI7ymCe2O-FtG36TRqI9BH5MSR4&tgWebAuthUserId=2098547809&tgWebAuthDcId=5
+        QString locationHash;
+
+        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
+        if (error.error == QJsonParseError::NoError) {
+            if (document.isObject()) {
+                auto value = document["locationHash"];
+                if (!value.isUndefined() && value.isString()) {
+                    locationHash = value.toString();
+                }
+            }
+        }
+
         QString tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
         auto kvList = locationHash.split('&', Qt::SplitBehaviorFlags::SkipEmptyParts);
         for (const auto& kv : kvList) {
@@ -1337,74 +1314,30 @@ namespace Main {
             }
         }
 
-        LOG(("[Account][loginByWebTokenEx] tgWebAuthToken: %1 tgWebAuthUserId: %2 tgWebAuthDcId: %3")
+        LOG(("[%1] tgWebAuthToken: %2 tgWebAuthUserId: %3 tgWebAuthDcId: %4")
+            .arg(__FUNCTION__)
             .arg(tgWebAuthToken)
             .arg(tgWebAuthUserId)
             .arg(tgWebAuthDcId)
         );
 
-        api().request(MTPauth_ImportWebTokenAuthorization(
+        _requestId = api().request(MTPauth_ImportWebTokenAuthorization(
             MTP_int(ApiId),
             MTP_string(ApiHash),
             MTP_string(tgWebAuthToken)
         )).toDC(tgWebAuthDcId.toInt()).done([=](const MTPauth_Authorization& result) {
-            LOG(("[Account][loginByWebTokenEx][MTPauth_ImportWebTokenAuthorization] success!"));
+            LOG(("[%1][MTPauth_ImportWebTokenAuthorization] success!").arg(__FUNCTION__));
 
-            if (quitMode) {
-                onImportWebTokenSucess(result);
-            } else {
-                onLoginSucess(result);
-            }
+            onImportWebTokenSucess(result);
+
         }).fail([=](const MTP::Error& error) {
-            LOG(("[Account][loginByWebTokenEx][MTPauth_ImportWebTokenAuthorization] error: %1")
-                .arg(error.description())
+            LOG(("[%1][MTPauth_ImportWebTokenAuthorization] error: %2")
+                .arg(__FUNCTION__)
+                .arg(error.type())
             );
 
-            if (quitMode) {
-                Core::Quit();
-            } else {
-                sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.description());
-            }
+            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", error.type());
         }).send();
-    }
-
-    void Account::loginByWebToken() {
-        _importedWebToken = true;
-
-        /*_importedWebTokenTimer.setCallback([&] {
-            const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() == 4) {
-                loginByWebTokenEx(appArgs.at(3), true);
-            } else {
-                Core::Quit();
-            }
-        });
-
-        _importedWebTokenTimer.callOnce(2000);*/
-
-        const auto& appArgs = Core::Launcher::getApplicationArguments();
-        if (appArgs.size() == 4) {
-            loginByWebTokenEx(appArgs.at(3), true);
-        } else {
-            Core::Quit();
-        }
-    }
-	
-	void Account::onLoginByWebToken() {
-        QString locationHash, tgWebAuthToken, tgWebAuthUserId, tgWebAuthDcId;
-
-        auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-        const auto document = QJsonDocument::fromJson(_curRecvCmd.content.c_str(), &error);
-        if (error.error == QJsonParseError::NoError) {
-            if (document.isObject()) {
-                auto value = document["locationHash"];
-                if (!value.isUndefined() && value.isString()) {
-                    locationHash = value.toString();
-                }
-            }
-        }
-
-        loginByWebTokenEx(locationHash, false);
     }
 
     void Account::onLoginByToken() {
@@ -1421,8 +1354,10 @@ namespace Main {
             }
         }
 
-        LOG(("[Account][onLoginByToken][recv cmd] unique ID: %1 action: onLoginByToken")
+        LOG(("[%1][recv cmd] unique ID: %2 action: %3")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
         );
 
         api().request(MTPauth_ImportLoginToken(
@@ -1435,8 +1370,10 @@ namespace Main {
     }
 
     void Account::onGenerateQrCode() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: GenerateQrCode")
+        LOG(("[%1] unique ID: %2 action: %3")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
         );
 
         mtpUpdates(
@@ -1455,8 +1392,10 @@ namespace Main {
 
     void Account::onSecondVerify() {
 
-        LOG(("[Account][recv cmd] unique ID: %1 action: SecondVerify verifyCode: %2")
+        LOG(("[%1] unique ID: %2 action: %3 verifyCode: %4")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
             .arg(QString::fromUtf8(_curRecvCmd.content.c_str()))
         );
 
@@ -1469,11 +1408,12 @@ namespace Main {
     void Account::onLoginEnd() {
         do {
             const auto& appArgs = Core::Launcher::getApplicationArguments();
-            if (appArgs.size() < 7) {
+            auto v = appArgs.value("dataPath");
+            if (v.isEmpty()) {
                 break;
             }
 
-            _dataPath = formatFilePath(qstringToStdWString(appArgs[3]));
+            _dataPath = formatFilePath(qstringToStdWString(v));
             if (_dataPath.size() < 1) {
                 break;
             }
@@ -1490,7 +1430,7 @@ namespace Main {
 
             _utf8DataPath = utf16ToUtf8(_dataPath);
 
-            _utf8RootPath = formatFilePath(qstringToStdString(appArgs[4]));
+            _utf8RootPath = formatFilePath(qstringToStdString(appArgs.value("rootPath")));
             if (_utf8RootPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_utf8RootPath.back() == '\\') {
@@ -1503,7 +1443,7 @@ namespace Main {
 #endif  
             }
 
-            _attachPath = formatFilePath(qstringToStdWString(appArgs[5]));
+            _attachPath = formatFilePath(qstringToStdWString(appArgs.value("attachPath")));
             if (_attachPath.size() > 1) {
 #ifdef _MSC_VER
                 if (_attachPath.back() != L'\\') {
@@ -1533,7 +1473,8 @@ namespace Main {
 
         } while (false);
 
-        LOG(("[Account][onLoginEnd]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
+        LOG(("[%1]\n_dataPath: %2\n_utf8RootPath: %3\n_attachPath: %4\n_profilePhotoPath: %5\n")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromStdWString(_dataPath))
             .arg(QString::fromStdString(_utf8RootPath))
             .arg(QString::fromStdWString(_attachPath))
@@ -1542,8 +1483,10 @@ namespace Main {
     }
 
     void Account::onGetLoginUserPhone() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: GetLoginUserPhone")
+        LOG(("[%1] unique ID: %2 action: %3")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
         );
 
         QString content;
@@ -1572,8 +1515,10 @@ namespace Main {
             }
         }
 
-        LOG(("[Account][recv cmd] unique ID: %1 action: GetContactAndChat exportLeftChannels: %2 downloadUserPic: %3")
+        LOG(("[%1] unique ID: %2 action: %3 exportLeftChannels: %4 downloadUserPic: %5")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
             .arg(_exportLeftChannels ? "yes" : "no")
             .arg(_downloadPeerProfilePhoto ? "yes" : "no")
         );
@@ -1735,8 +1680,10 @@ namespace Main {
                             }
 
                             if (!peerData) {
-                                LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 %3")
+                                LOG(("[%1] unique ID: %2 action: %3 peerId: %4 %5")
+                                    .arg(__FUNCTION__)
                                     .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                    .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
                                     .arg(task.peerId)
                                     .arg(QString::fromStdWString(L"可能已退出该会话，无法获取数据！"))
                                 );
@@ -1766,9 +1713,11 @@ namespace Main {
                                 task.isExistInDb = true;
                             }
 
-                            LOG(("[Account][recv cmd] unique ID: %1 action: GetChatMessage peerId: %2 downloadAttach: %3 onlyMyMsg: %4 "
-                                "maxAttachFileSize: %5 msgBeginTime: %6 msgEndTime: %7 lastOffsetMsgId: %8 isExistInDb: %9 getMsgDone: %10 getAttachDone:%11")
+                            LOG(("[%1] unique ID: %2 action: %3 peerId: %4 downloadAttach: %5 onlyMyMsg: %6 "
+                                "maxAttachFileSize: %7 msgBeginTime: %8 msgEndTime: %9 lastOffsetMsgId: %10 isExistInDb: %10 getMsgDone: %11 getAttachDone:%12")
+                                .arg(QString::fromUtf8(__FUNCTION__))
                                 .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+                                .arg(telegramActionToString((TelegramCmd::Action)_curRecvCmd.action))
                                 .arg(task.peerId)
                                 .arg(task.downloadAttach ? "yes" : "no")
                                 .arg(task.onlyMyMsg ? "yes" : "no")
@@ -1839,8 +1788,10 @@ namespace Main {
                             peerUsername.second = value.toString();
                         }
 
-                        LOG(("[Account][recv cmd] unique ID: %1 action: onJoinInPeer username: %2 name: %3")
+                        LOG(("[%1] unique ID: %2 action: %3 username: %4 name: %5")
+                            .arg(QString::fromUtf8(__FUNCTION__))
                             .arg(QString::fromUtf8(_curPeerJoinCmd.uniqueId.c_str()))
+                            .arg(telegramActionToString((TelegramCmd::Action)_curPeerJoinCmd.action))
                             .arg(peerUsername.first)
                             .arg(peerUsername.second)
                         );
@@ -1860,16 +1811,20 @@ namespace Main {
     }
 
     void Account::onExportData() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: ExportData")
+        LOG(("[%1] unique ID: %2 action: %3")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curPeerJoinCmd.action))
         );
 
         requestLeftChannel();
     }
 
     void Account::onLogOut() {
-        LOG(("[Account][recv cmd] unique ID: %1 action: LogOut")
+        LOG(("[%1] unique ID: %2 action: %3")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromUtf8(_curRecvCmd.uniqueId.c_str()))
+            .arg(telegramActionToString((TelegramCmd::Action)_curPeerJoinCmd.action))
         );
 
         _mtp->logout([this]() {
@@ -1959,7 +1914,8 @@ namespace Main {
 
         } while (false);
 
-        LOG(("[Account][onChangeDataPath]\n_dataPath: %1\n_utf8RootPath: %2\n_attachPath: %3\n_profilePhotoPath: %4\n")
+        LOG(("[%1]\n_dataPath: %2\n_utf8RootPath: %3\n_attachPath: %4\n_profilePhotoPath: %5\n")
+            .arg(QString::fromUtf8(__FUNCTION__))
             .arg(QString::fromStdWString(_dataPath))
             .arg(QString::fromStdString(_utf8RootPath))
             .arg(QString::fromStdWString(_attachPath))
@@ -2140,7 +2096,7 @@ namespace Main {
             }
             }).fail([=](const MTP::Error& error) {
                 LOG(("[Account][requestDialogsEx] error: %1")
-                    .arg(error.description())
+                    .arg(error.type())
                 );
 
                 if (_exportLeftChannels) {
@@ -2748,7 +2704,7 @@ namespace Main {
                         _stopCheckNormalRequestTimer = true;
                         LOG(("[Account][requestChatMessageEx] curPeerId: %1 error: %2")
                             .arg(_curTask.curPeerId)
-                            .arg(error.description())
+                            .arg(error.type())
                         );
                         requestChatMessage();
                         }).send();
@@ -2779,7 +2735,7 @@ namespace Main {
                             _stopCheckNormalRequestTimer = true;
                             LOG(("[Account][requestChatMessageEx] curPeerId: %1 error: %2")
                                 .arg(_curTask.curPeerId)
-                                .arg(error.description())
+                                .arg(error.type())
                             );
                             requestChatMessage();
                             }).toDC(MTP::ShiftDcId(0, MTP::kExportDcShift)).send();
@@ -5590,7 +5546,10 @@ namespace Main {
                     _runningCmds.emplace(_curRecvCmd.uniqueId);
                     isValidCmd = true;
 
-                    LOG(("[Account][recv cmd] %1").arg(QString::fromUtf8(_curRecvCmd.content.c_str())));
+                    LOG(("[%1] action: %2 content: %3")
+                        .arg(__FUNCTION__)
+                        .arg(_curRecvCmd.action)
+                        .arg(QString::fromUtf8(_curRecvCmd.content.c_str())));
                 }
             }
         }
@@ -5840,7 +5799,7 @@ namespace Main {
                                 }
                             }
 
-                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", desc);
+                            sendCmdResult(_curRecvCmd, TelegramCmd::Status::UnknownError, "", type);
                             break;
                         }
 
@@ -5920,6 +5879,11 @@ namespace Main {
         }
         case TelegramCmd::Action::LoginByQrCode: {
             actionString = "LoginByQrCode";
+            break;
+        }
+        case TelegramCmd::Action::LoginByWebToken:
+        {
+            actionString = "LoginByWebToken";
             break;
         }
         case TelegramCmd::Action::SecondVerify: {
@@ -6281,7 +6245,7 @@ namespace Main {
 
                 uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！%2")
                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
-                    .arg(error.description()));
+                    .arg(error.type()));
 
                 joinToPeer();
 
@@ -6310,7 +6274,7 @@ namespace Main {
 
                 uploadMsg(QString::fromStdWString(L"加入群组或频道 [%1] 失败！%2")
                     .arg(!_curPeerUsername.second.isEmpty() ? _curPeerUsername.second : _curPeerUsername.first)
-                    .arg(error.description()));
+                    .arg(error.type()));
 
                 joinToPeer();
 
