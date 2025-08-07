@@ -9,7 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_credits.h"
 #include "apiwrap.h"
-#include "core/ui_integration.h" // Core::MarkedTextContext.
+#include "core/ui_integration.h" // TextContext
 #include "data/components/credits.h"
 #include "data/data_credits.h"
 #include "data/data_photo.h"
@@ -327,7 +327,7 @@ void SendCreditsBox(
 		const auto ministars = box->lifetime().make_state<MiniStars>(
 			ministarsContainer,
 			false,
-			Ui::Premium::MiniStars::Type::BiStars);
+			Ui::Premium::MiniStarsType::BiStars);
 		ministars->setColorOverride(Ui::Premium::CreditsIconGradientStops());
 
 		ministarsContainer->paintRequest(
@@ -397,7 +397,7 @@ void SendCreditsBox(
 			return;
 		}
 		const auto show = box->uiShow();
-		const auto weak = MakeWeak(box.get());
+		const auto weak = base::make_weak(box.get());
 		state->confirmButtonBusy = true;
 		session->api().request(
 			MTPpayments_SendStarsForm(
@@ -422,7 +422,7 @@ void SendCreditsBox(
 				auto error = ::Ui::MakeInformBox(
 					tr::lng_payments_precheckout_stars_failed(tr::now));
 				error->boxClosing() | rpl::start_with_next([=] {
-					if (const auto paybox = weak.data()) {
+					if (const auto paybox = weak.get()) {
 						paybox->closeBox();
 					}
 				}, error->lifetime());
@@ -487,6 +487,7 @@ void SendCreditsBox(
 		session->credits().load(true);
 		const auto balance = Settings::AddBalanceWidget(
 			content,
+			session,
 			session->credits().balanceValue(),
 			false);
 		rpl::combine(
@@ -511,32 +512,28 @@ TextWithEntities CreditsEmoji(not_null<Main::Session*> session) {
 }
 
 TextWithEntities CreditsEmojiSmall(not_null<Main::Session*> session) {
-	return Ui::Text::SingleCustomEmoji(
-		session->data().customEmojiManager().registerInternalEmoji(
-			st::starIconSmall,
-			st::starIconSmallPadding,
-			true),
+	return Ui::Text::IconEmoji(
+		&st::starIconEmoji,
 		QString(QChar(0x2B50)));
 }
 
 not_null<FlatLabel*> SetButtonMarkedLabel(
 		not_null<RpWidget*> button,
 		rpl::producer<TextWithEntities> text,
-		Fn<std::any(Fn<void()> update)> context,
+		Text::MarkedContext context,
 		const style::FlatLabel &st,
 		const style::color *textFg) {
 	const auto buttonLabel = Ui::CreateChild<Ui::FlatLabel>(
 		button,
 		rpl::single(QString()),
 		st);
+	context.repaint = [=] { buttonLabel->update(); };
 	rpl::duplicate(
 		text
 	) | rpl::filter([=](const TextWithEntities &text) {
 		return !text.text.isEmpty();
 	}) | rpl::start_with_next([=](const TextWithEntities &text) {
-		buttonLabel->setMarkedText(
-			text,
-			context([=] { buttonLabel->update(); }));
+		buttonLabel->setMarkedText(text, context);
 	}, buttonLabel->lifetime());
 	if (textFg) {
 		buttonLabel->setTextColorOverride((*textFg)->c);
@@ -565,15 +562,12 @@ not_null<FlatLabel*> SetButtonMarkedLabel(
 		not_null<Main::Session*> session,
 		const style::FlatLabel &st,
 		const style::color *textFg) {
-	return SetButtonMarkedLabel(button, text, [=](Fn<void()> update) {
-		return Core::MarkedTextContext{
-			.session = session,
-			.customEmojiRepaint = update,
-		};
-	}, st, textFg);
+	return SetButtonMarkedLabel(button, text, Core::TextContext({
+		.session = session,
+	}), st, textFg);
 }
 
-void SendStarGift(
+void SendStarsForm(
 		not_null<Main::Session*> session,
 		std::shared_ptr<Payments::CreditsFormData> data,
 		Fn<void(std::optional<QString>)> done) {

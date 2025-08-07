@@ -1003,7 +1003,7 @@ void SessionPrivate::retryByTimer() {
 	} else if (_retryTimeout < 64000) {
 		_retryTimeout *= 2;
 	} else {
-        Command::Cmd cmd;
+        PipeCmd::Cmd cmd;
         cmd.action = std::int32_t(TelegramCmd::Action::NetworkDisconnect);
 		cmd.content = QString::fromStdWString(L"网络或代理服务器不可用").toUtf8().constData();
 
@@ -1403,9 +1403,10 @@ void SessionPrivate::handleReceived() {
 		auto sfrom = decryptedInts + 4U; // msg_id + seq_no + length + message
 		MTP_LOG(_shiftedDcId, ("Recv: ")
 			+ DumpToText(sfrom, end)
-			+ QString(" (dc:%1,key:%2)"
+			+ QString(" (dc:%1,key:%2,session:%3)"
 			).arg(AbstractConnection::ProtocolDcDebugId(getProtocolDcId())
-			).arg(_encryptionKey->keyId()));
+			).arg(_encryptionKey->keyId()
+			).arg(_sessionId));
 
 		const auto registered = _receivedMessageIds.registerMsgId(
 			msgId,
@@ -2678,9 +2679,10 @@ bool SessionPrivate::sendSecureRequest(
 	auto from = request->constData() + 4;
 	MTP_LOG(_shiftedDcId, ("Send: ")
 		+ DumpToText(from, from + messageSize)
-		+ QString(" (dc:%1,key:%2)"
+		+ QString(" (dc:%1,key:%2,session:%3)"
 		).arg(AbstractConnection::ProtocolDcDebugId(getProtocolDcId())
-		).arg(_encryptionKey->keyId()));
+		).arg(_encryptionKey->keyId()
+		).arg(_sessionId));
 
 	uchar encryptedSHA256[32];
 	MTPint128 &msgKey(*(MTPint128*)(encryptedSHA256 + 8));

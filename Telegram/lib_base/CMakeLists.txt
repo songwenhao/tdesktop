@@ -222,6 +222,7 @@ PRIVATE
     base/variant.h
     base/virtual_method.h
     base/weak_ptr.h
+    base/weak_qptr.h
     base/zlib_help.h
     base/qt/qt_common_adapters.h
     base/qt/qt_compare.h
@@ -261,9 +262,7 @@ PRIVATE
     desktop-app::external_xxhash
 )
 
-if (WIN32)
-    nuget_add_winrt(lib_base)
-elseif (LINUX)
+if (LINUX)
     target_link_libraries(lib_base
     PUBLIC
         desktop-app::external_kcoreaddons

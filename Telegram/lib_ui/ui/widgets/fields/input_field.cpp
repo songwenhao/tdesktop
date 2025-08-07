@@ -6,6 +6,13 @@
 //
 #include "ui/widgets/fields/input_field.h"
 
+#include "base/platform/base_platform_info.h"
+#include "base/qt_signal_producer.h"
+#include "base/qt/qt_common_adapters.h"
+#include "base/invoke_queued.h"
+#include "base/qthelp_regex.h"
+#include "base/random.h"
+#include "emoji_suggestions_helper.h"
 #include "ui/text/text.h"
 #include "ui/text/text_renderer.h" // kQuoteCollapsedLines
 #include "ui/widgets/fields/custom_field_object.h"
@@ -15,15 +22,7 @@
 #include "ui/ui_utility.h"
 #include "ui/painter.h"
 #include "ui/qt_object_factory.h"
-#include "ui/qt_weak_factory.h"
 #include "ui/integration.h"
-#include "base/invoke_queued.h"
-#include "base/random.h"
-#include "base/platform/base_platform_info.h"
-#include "base/qt_signal_producer.h"
-#include "emoji_suggestions_helper.h"
-#include "base/qthelp_regex.h"
-#include "base/qt/qt_common_adapters.h"
 #include "styles/style_widgets.h"
 #include "styles/palette.h"
 
@@ -1857,16 +1856,14 @@ void InputField::setTagMimeProcessor(Fn<QString(QStringView)> processor) {
 }
 
 void InputField::setCustomTextContext(
-		Fn<std::any(Fn<void()> repaint)> context,
+		Text::MarkedContext context,
 		Fn<bool()> pausedEmoji,
-		Fn<bool()> pausedSpoiler,
-		CustomEmojiFactory factory) {
+		Fn<bool()> pausedSpoiler) {
 	_customObject = std::make_unique<CustomFieldObject>(
 		this,
 		std::move(context),
 		std::move(pausedEmoji),
-		std::move(pausedSpoiler),
-		std::move(factory));
+		std::move(pausedSpoiler));
 	_inner->document()->documentLayout()->registerHandler(
 		kCustomEmojiFormat,
 		_customObject.get());
@@ -2327,7 +2324,7 @@ void InputField::touchFinish() {
 	if (!_touchPress) {
 		return;
 	}
-	const auto weak = MakeWeak(this);
+	const auto weak = base::make_weak(this);
 	if (!_touchMove && window()) {
 		QPoint mapped(mapFromGlobal(_touchStart));
 
@@ -3586,7 +3583,7 @@ void InputField::handleContentsChanged() {
 
 	if (tagsChanged || (_lastTextWithTags.text != currentText)) {
 		_lastTextWithTags.text = currentText;
-		const auto weak = MakeWeak(this);
+		const auto weak = base::make_weak(this);
 		_changes.fire({});
 		if (!weak) {
 			return;
@@ -3935,14 +3932,15 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 		|| e->modifiers().testFlag(Qt::MetaModifier);
 	const auto enterSubmit = (_mode != Mode::MultiLine)
 		|| ShouldSubmit(_submitSettings, e->modifiers());
-	const auto enter = (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return);
-	const auto backspace = (e->key() == Qt::Key_Backspace);
-	if (e->key() == Qt::Key_Left
-		|| e->key() == Qt::Key_Right
-		|| e->key() == Qt::Key_Up
-		|| e->key() == Qt::Key_Down
-		|| e->key() == Qt::Key_Home
-		|| e->key() == Qt::Key_End) {
+	const auto key = e->key();
+	const auto enter = (key == Qt::Key_Enter || key == Qt::Key_Return);
+	const auto backspace = (key == Qt::Key_Backspace);
+	if (key == Qt::Key_Left
+		|| key == Qt::Key_Right
+		|| key == Qt::Key_Up
+		|| key == Qt::Key_Down
+		|| key == Qt::Key_Home
+		|| key == Qt::Key_End) {
 		_reverseMarkdownReplacement = false;
 	}
 
@@ -3959,25 +3957,29 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 		e->accept();
 	} else if (enter && enterSubmit) {
 		_submits.fire(e->modifiers());
-	} else if (e->key() == Qt::Key_Escape) {
+	} else if (key == Qt::Key_Escape) {
 		e->ignore();
 		_cancelled.fire({});
-	} else if (e->key() == Qt::Key_Tab || e->key() == Qt::Key_Backtab) {
+	} else if (key == Qt::Key_Tab || key == Qt::Key_Backtab) {
 		if (alt || ctrl) {
 			e->ignore();
 		} else if (_customTab) {
 			_tabbed.fire({});
-		} else if (!focusNextPrevChild(e->key() == Qt::Key_Tab && !shift)) {
+		} else if (!focusNextPrevChild(key == Qt::Key_Tab && !shift)) {
 			e->ignore();
 		}
-	} else if (e->key() == Qt::Key_Search || e == QKeySequence::Find) {
+	} else if (key == Qt::Key_Search || e == QKeySequence::Find) {
 		e->ignore();
 	} else if (handleMarkdownKey(e)) {
 		e->accept();
-	} else if (_customUpDown && (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down || e->key() == Qt::Key_PageUp || e->key() == Qt::Key_PageDown)) {
+	} else if (_customUpDown
+		&& (key == Qt::Key_Up
+			|| key == Qt::Key_Down
+			|| key == Qt::Key_PageUp
+			|| key == Qt::Key_PageDown)) {
 		e->ignore();
 #ifdef Q_OS_MAC
-	} else if (e->key() == Qt::Key_E && e->modifiers().testFlag(Qt::ControlModifier)) {
+	} else if (key == Qt::Key_E && e->modifiers().testFlag(Qt::ControlModifier)) {
 		const auto cursor = textCursor();
 		const auto start = cursor.selectionStart();
 		const auto end = cursor.selectionEnd();
@@ -3999,8 +4001,9 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 			? (~Qt::ShiftModifier)
 			: oldModifiers;
 		const auto changeModifiers = (oldModifiers & ~allowedModifiers) != 0;
+		const auto changedModifiers = (oldModifiers & allowedModifiers);
 		if (changeModifiers) {
-			e->setModifiers(oldModifiers & allowedModifiers);
+			e->setModifiers(changedModifiers);
 		}
 
 		// If we enable this, the Undo/Redo will work through Key_Space
@@ -4012,8 +4015,8 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 		//	&& (e != QKeySequence::Redo);
 		const auto createEditBlock = enter
 			|| backspace
-			|| (e->key() == Qt::Key_Space)
-			|| (e->key() == Qt::Key_Delete);
+			|| (key == Qt::Key_Space)
+			|| (key == Qt::Key_Delete);
 		if (createEditBlock) {
 			cursor.beginEditBlock();
 		}
@@ -4035,12 +4038,36 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 			}
 			e->accept();
 		} else {
+			// Ctrl+Shift+V as "Paste as Plain Text" support.
+			auto removedShift = false;
+			const auto nowModifiers = e->modifiers();
+			if ((e != QKeySequence::Paste)
+				&& (oldModifiers & Qt::ShiftModifier)) {
+				// If we had Shift+Smth and we see that Smth == Paste,
+				// then we'll "Paste as Plain Text". Like Ctrl+Shift+V.
+				e->setModifiers(oldModifiers & ~Qt::ShiftModifier);
+				if (e == QKeySequence::Paste) {
+					removedShift = true;
+				} else {
+					e->setModifiers(nowModifiers);
+				}
+			}
+
 			_inner->QTextEdit::keyPressEvent(e);
+
+			if (removedShift) {
+				e->setModifiers(nowModifiers);
+			}
 		}
 		if (createEditBlock) {
 			cursor.endEditBlock();
 		}
-		_inner->ensureCursorVisible();
+		if (key != Qt::Key_Control
+			&& key != Qt::Key_Shift
+			&& key != Qt::Key_Alt
+			&& key != Qt::Key_Meta) {
+			_inner->ensureCursorVisible();
+		}
 		if (changeModifiers) {
 			e->setModifiers(oldModifiers);
 		}
@@ -4048,21 +4075,21 @@ void InputField::keyPressEventInner(QKeyEvent *e) {
 		if (updatedCursor.position() == oldPosition) {
 			const auto shift = e->modifiers().testFlag(Qt::ShiftModifier);
 			bool check = false;
-			if (e->key() == Qt::Key_PageUp || e->key() == Qt::Key_Up) {
+			if (key == Qt::Key_PageUp || key == Qt::Key_Up) {
 				updatedCursor.movePosition(QTextCursor::Start, shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor);
 				check = true;
-			} else if (e->key() == Qt::Key_PageDown || e->key() == Qt::Key_Down) {
+			} else if (key == Qt::Key_PageDown || key == Qt::Key_Down) {
 				updatedCursor.movePosition(QTextCursor::End, shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor);
 				check = true;
 			} else if (!oldSelection
-				&& (e->key() == Qt::Key_Left
-					|| e->key() == Qt::Key_Right
-					|| e->key() == Qt::Key_Backspace)) {
+				&& (key == Qt::Key_Left
+					|| key == Qt::Key_Right
+					|| key == Qt::Key_Backspace)) {
 				e->ignore();
 			}
 			if (check) {
 				if (oldPosition == updatedCursor.position()) {
-					if (shift || !exitQuoteWithNewBlock(e->key())) {
+					if (shift || !exitQuoteWithNewBlock(key)) {
 						e->ignore();
 					}
 				} else {
@@ -4288,7 +4315,7 @@ void InputField::inputMethodEventInner(QInputMethodEvent *e) {
 	}
 	_inputMethodCommit = e->commitString();
 
-	const auto weak = MakeWeak(this);
+	const auto weak = base::make_weak(this);
 	_inner->QTextEdit::inputMethodEvent(e);
 
 	if (weak && _inputMethodCommit.has_value()) {
@@ -5143,7 +5170,13 @@ void InputField::insertFromMimeDataInner(const QMimeData *source) {
 	const auto text = [&] {
 		const auto textMime = TextUtilities::TagsTextMimeType();
 		const auto tagsMime = TextUtilities::TagsMimeType();
-		if (!source->hasFormat(textMime) || !source->hasFormat(tagsMime)) {
+		const auto modifiers = QGuiApplication::keyboardModifiers();
+		const auto plain = (modifiers & Qt::ControlModifier)
+			&& (modifiers & Qt::ShiftModifier);
+		const auto skipTags = plain
+			|| !source->hasFormat(textMime)
+			|| !source->hasFormat(tagsMime);
+		if (skipTags) {
 			_insertedTags.clear();
 
 			auto result = source->text();

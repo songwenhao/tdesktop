@@ -15,7 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/background_box.h"
 #include "boxes/stickers_box.h"
 #include "chat_helpers/compose/compose_show.h"
-#include "core/ui_integration.h" // Core::MarkedTextContext.
+#include "core/ui_integration.h" // TextContext
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_changes.h"
@@ -165,7 +165,7 @@ private:
 
 	const uint32 _level;
 	const TextWithEntities _icon;
-	const Core::MarkedTextContext _context;
+	const Ui::Text::MarkedContext _context;
 	Ui::Text::String _text;
 	bool _minimal = false;
 
@@ -466,7 +466,10 @@ LevelBadge::LevelBadge(
 		st::settingsLevelBadgeLock,
 		QMargins(0, st::settingsLevelBadgeLockSkip, 0, 0),
 		false)))
-, _context({ .session = session }) {
+, _context(Core::TextContext({
+	.session = session,
+	.repaint = [this] { update(); },
+})) {
 	updateText();
 }
 
@@ -571,15 +574,15 @@ void Set(
 			MTP_flags(Flag::f_color | Flag::f_background_emoji_id),
 			MTP_int(values.colorIndex),
 			MTP_long(values.backgroundEmojiId)));
-	} else if (peer->isMegagroup()) {
 	} else if (const auto channel = peer->asChannel()) {
-		using Flag = MTPchannels_UpdateColor::Flag;
-		send(MTPchannels_UpdateColor(
-			MTP_flags(Flag::f_color | Flag::f_background_emoji_id),
-			channel->inputChannel,
-			MTP_int(values.colorIndex),
-			MTP_long(values.backgroundEmojiId)));
-
+		if (peer->isBroadcast()) {
+			using Flag = MTPchannels_UpdateColor::Flag;
+			send(MTPchannels_UpdateColor(
+				MTP_flags(Flag::f_color | Flag::f_background_emoji_id),
+				channel->inputChannel,
+				MTP_int(values.colorIndex),
+				MTP_long(values.backgroundEmojiId)));
+		}
 		if (values.statusChanged
 			&& (values.statusId || peer->emojiStatusId())) {
 			peer->owner().emojiStatuses().set(
@@ -1479,7 +1482,11 @@ void CheckBoostLevel(
 		show->show(Box(Ui::AskBoostBox, Ui::AskBoostBoxData{
 			.link = qs(data.vboost_url()),
 			.boost = counters,
+			.features = (peer->isChannel()
+				? LookupBoostFeatures(peer->asChannel())
+				: Ui::BoostFeatures()),
 			.reason = *reason,
+			.group = !peer->isBroadcast(),
 		}, openStatistics, nullptr));
 		cancel();
 	}).fail([=](const MTP::Error &error) {

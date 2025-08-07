@@ -6,6 +6,10 @@
 //
 #include "ui/text/text_custom_emoji.h"
 
+#include "ui/style/style_core.h"
+#include "ui/text/text_utilities.h"
+#include "ui/text/text.h"
+
 namespace Ui::Text {
 
 int AdjustCustomEmojiSize(int emojiSize) {
@@ -135,6 +139,105 @@ bool LimitedLoopsEmoji::ready() {
 
 bool LimitedLoopsEmoji::readyInDefaultState() {
 	return _wrapped->readyInDefaultState();
+}
+
+std::unique_ptr<CustomEmoji> MakeCustomEmoji(
+		QStringView data,
+		const MarkedContext &context) {
+	if (auto simple = TryMakeSimpleEmoji(data)) {
+		return simple;
+	} else if (const auto &factory = context.customEmojiFactory) {
+		return factory(data, context);
+	}
+	return nullptr;
+}
+
+StaticCustomEmoji::StaticCustomEmoji(
+	QImage &&image,
+	QString entity,
+	QMargins padding)
+: _image(std::move(image))
+, _entity(std::move(entity))
+, _padding(padding) {
+}
+
+int StaticCustomEmoji::width() {
+	return _padding.left()
+		+ (_image.width() / style::DevicePixelRatio())
+		+ _padding.right();
+}
+
+QString StaticCustomEmoji::entityData() {
+	return _entity;
+}
+
+void StaticCustomEmoji::paint(QPainter &p, const Context &context) {
+	p.drawImage(
+		context.position + QPoint(_padding.left(), _padding.top()),
+		_image);
+}
+
+void StaticCustomEmoji::unload() {
+	_image = QImage();
+}
+
+bool StaticCustomEmoji::ready() {
+	return true;
+}
+
+bool StaticCustomEmoji::readyInDefaultState() {
+	return true;
+}
+
+PaletteDependentCustomEmoji::PaletteDependentCustomEmoji(
+	Fn<QImage()> factory,
+	QString entity,
+	QMargins padding)
+: _factory(std::move(factory))
+, _entity(std::move(entity))
+, _padding(padding) {
+}
+
+int PaletteDependentCustomEmoji::width() {
+	if (_frame.isNull()) {
+		validateFrame();
+	}
+	return _padding.left()
+		+ (_frame.width() / style::DevicePixelRatio())
+		+ _padding.right();
+}
+
+QString PaletteDependentCustomEmoji::entityData() {
+	return _entity;
+}
+
+void PaletteDependentCustomEmoji::paint(
+		QPainter &p,
+		const Context &context) {
+	validateFrame();
+	p.drawImage(
+		context.position + QPoint(_padding.left(), _padding.top()),
+		_frame);
+}
+
+void PaletteDependentCustomEmoji::unload() {
+	_frame = QImage();
+}
+
+bool PaletteDependentCustomEmoji::ready() {
+	return true;
+}
+
+bool PaletteDependentCustomEmoji::readyInDefaultState() {
+	return true;
+}
+
+void PaletteDependentCustomEmoji::validateFrame() {
+	const auto version = style::PaletteVersion();
+	if (_frame.isNull() || _paletteVersion != version) {
+		_paletteVersion = version;
+		_frame = _factory();
+	}
 }
 
 } // namespace Ui::Text

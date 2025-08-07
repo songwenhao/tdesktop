@@ -521,7 +521,7 @@ String::String(
 	const TextWithEntities &textWithEntities,
 	const TextParseOptions &options,
 	int32 minResizeWidth,
-	const std::any &context)
+	const MarkedContext &context)
 : _minResizeWidth(minResizeWidth) {
 	setMarkedText(st, textWithEntities, options, context);
 }
@@ -689,7 +689,11 @@ int String::countMaxMonospaceWidth() const {
 	return result;
 }
 
-void String::setMarkedText(const style::TextStyle &st, const TextWithEntities &textWithEntities, const TextParseOptions &options, const std::any &context) {
+void String::setMarkedText(
+		const style::TextStyle &st,
+		const TextWithEntities &textWithEntities,
+		const TextParseOptions &options,
+		const MarkedContext &context) {
 	_st = &st;
 	clear();
 	{
@@ -1726,6 +1730,7 @@ TextForMimeData String::toText(
 		const auto entity = handler->getTextEntity();
 		const auto plainUrl = (entity.type == EntityType::Url)
 			|| (entity.type == EntityType::Email)
+			|| (entity.type == EntityType::BankCard)
 			|| (entity.type == EntityType::Phone);
 		const auto full = plainUrl
 			? QStringView(entity.data).mid(0, entity.data.size())

@@ -589,7 +589,8 @@ public:
   void push_back(char c)
   {
     char str[] = {c, 0};
-    self_type n{g_strconcat(c_str() ? c_str() : "", str, NULL), transfer_full};
+    self_type n{
+        g_strconcat(c_str() ? c_str() : "", str, (char *)NULL), transfer_full};
     swap(n);
   }
 
@@ -602,7 +603,8 @@ public:
 
   self_type &append(const char *str)
   {
-    self_type n{g_strconcat(c_str() ? c_str() : "", str, NULL), transfer_full};
+    self_type n{
+        g_strconcat(c_str() ? c_str() : "", str, (char *)NULL), transfer_full};
     swap(n);
     return *this;
   }
@@ -677,7 +679,7 @@ operator+(const _string_view x, const _string_view y) noexcept
     return {g_strdup(y.c_str()), transfer_full};
   if (!y)
     return {g_strdup(x.c_str()), transfer_full};
-  return {g_strconcat(x.c_str(), y.c_str(), NULL), transfer_full};
+  return {g_strconcat(x.c_str(), y.c_str(), (char *)NULL), transfer_full};
 }
 
 inline cstring

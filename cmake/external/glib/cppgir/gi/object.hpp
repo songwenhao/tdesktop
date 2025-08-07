@@ -272,13 +272,21 @@ public:
   }
 
   // type-based generic object creation
+  template<typename CTYPE, typename... Args>
+  static auto new_(GType gtype, Args &&...args)
+  {
+    auto parameters = make_construct_params(std::forward<Args>(args)...);
+    auto *result = CTYPE(new_(gtype, parameters));
+    return gi::wrap(result, transfer_full);
+  }
+
+  // type-based generic object creation
+  // Args are a sequence of name, value
   template<typename TYPE, typename... Args>
   static TYPE new_(Args &&...args)
   {
-    auto parameters = make_construct_params(std::forward<Args>(args)...);
-    typename TYPE::BaseObjectType *result =
-        (typename TYPE::BaseObjectType *)new_(TYPE::get_type_(), parameters);
-    return gi::wrap(result, transfer_full);
+    return new_<typename TYPE::BaseObjectType *>(
+        TYPE::get_type_(), std::forward<Args>(args)...);
   }
 
   // property stuff
@@ -374,22 +382,28 @@ public:
   }
 #endif
 
-  ParamSpec find_property(
-      const gi::cstring_v propname, bool _throw = false) const
+  static ParamSpec find_property(
+      GType gtype, const gi::cstring_v propname, bool _throw = false)
   {
     GParamSpec *spec;
-    if (g_type_is_a(gobj_type_(), G_TYPE_INTERFACE)) {
+    if (g_type_is_a(gtype, G_TYPE_INTERFACE)) {
       // interface should be loaded if we have an instance here
-      auto vtable = g_type_default_interface_peek(gobj_type_());
+      auto vtable = g_type_default_interface_peek(gtype);
       spec = g_object_interface_find_property(vtable, propname.c_str());
     } else {
       spec = g_object_class_find_property(
-          G_OBJECT_GET_CLASS(gobj_()), propname.c_str());
+          (GObjectClass *)g_type_class_peek(gtype), propname.c_str());
     }
     if (_throw && !spec)
       detail::try_throw(
-          detail::unknown_property_error(gobj_type_(), propname.c_str()));
+          detail::unknown_property_error(gtype, propname.c_str()));
     return gi::wrap(spec, transfer_none);
+  }
+
+  ParamSpec find_property(
+      const gi::cstring_v propname, bool _throw = false) const
+  {
+    return find_property(gobj_type_(), propname, _throw);
   }
 
   gi::Collection<gi::DSpan, GParamSpec *, gi::transfer_container_t>

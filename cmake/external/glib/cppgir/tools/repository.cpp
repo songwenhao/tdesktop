@@ -23,8 +23,10 @@ public:
   std::string ns;
   // ODR check
   mutable std::unordered_map<std::string, std::string> type_index;
+  // substitutes for missing c:type
+  subst_c_types c_types;
 
-  RepositoryPriv()
+  RepositoryPriv(subst_c_types m) : c_types(std::move(m))
   {
     // make basic types known
     for (auto &&girname : basic_types) {
@@ -248,6 +250,17 @@ Repository::add(const key_type &girname, const mapped_type::tree_type &n)
           re_qualify, "::");
       assert(!(flags & TYPE_CLASS) || is_qualified(cpptype));
 
+      // in rare cases c:type is missing for a record/class
+      // (e.g. GtkSnapshot = alias of Gdk type)
+      // use an override substitute type
+      if ((flags & TYPE_CLASS) && ctype.empty()) {
+        auto sit = self.c_types.find(qualified);
+        if (sit != self.c_types.end()) {
+          ctype = sit->second;
+          logger(Log::INFO, "{} using substitute c:type {}", qualified, ctype);
+        }
+      }
+
       // always top-level qualify ctype to avoid ns ambiguity
       if (ctype.size())
         ctype = GI_SCOPE + ctype;
@@ -322,7 +335,7 @@ Repository::check_odr(const std::string &cpptype, const std::string &ctype)
 }
 
 std::shared_ptr<Repository>
-Repository::new_()
+Repository::new_(subst_c_types m)
 {
-  return std::make_shared<RepositoryPriv>();
+  return std::make_shared<RepositoryPriv>(std::move(m));
 }

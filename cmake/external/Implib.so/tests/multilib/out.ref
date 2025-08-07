@@ -1,4 +1,0 @@
-libA: f1()
-libA: f2()
-libB: f3()
-libB: f4()

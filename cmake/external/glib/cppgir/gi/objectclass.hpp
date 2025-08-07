@@ -45,6 +45,25 @@ enum class SignalFlags : std::underlying_type<::GSignalFlags>::type;
 }
 } // namespace repository
 
+// specify construction type when creating ObjectClass based object
+struct construct_t
+{
+  const int value;
+  constexpr explicit construct_t(int v = 0) : value(v) {}
+};
+struct construct_auto_t : public construct_t
+{
+  constexpr construct_auto_t() : construct_t(0) {}
+};
+struct construct_cpp_t : public construct_t
+{
+  constexpr construct_cpp_t() : construct_t(1) {}
+};
+struct construct_c_t : public construct_t
+{
+  constexpr construct_c_t() : construct_t(2) {}
+};
+
 namespace detail
 {
 class ObjectBaseClass : public noncopyable
@@ -84,9 +103,11 @@ protected:
 protected:
   // owns 1 ref (possibly managed externally)
   GObject *gobject_;
+  // GType in case no gobject_
+  GType gtype_;
   // additional type setup
-  using interface_inits_t =
-      std::vector<std::pair<interface_register_function, gpointer>>;
+  using interface_init_t = std::pair<interface_register_function, gpointer>;
+  using interface_inits_t = std::vector<interface_init_t>;
   interface_inits_t itfs;
 };
 
@@ -110,6 +131,9 @@ protected:
   }
 };
 
+template<typename ClassDef, typename SubClass>
+gpointer forward_make_type_init_data();
+
 template<typename InterfaceDef>
 class InterfaceImpl : public InterfaceDef, public InterfaceClass
 {
@@ -120,6 +144,14 @@ protected:
   {
     add_interface(class_type, InterfaceDef::instance_type::get_type_(),
         InterfaceDef::interface_init, init_data);
+  }
+
+  // init data for registration-only use
+  template<typename SubClass>
+  static ObjectBaseClass::interface_init_t interface_init_data()
+  {
+    return {InterfaceImpl::register_interface,
+        (gpointer)forward_make_type_init_data<InterfaceImpl, SubClass>()};
   }
 
   InterfaceImpl(gpointer init_data = nullptr)
@@ -183,6 +215,7 @@ object_data_quark()
 
 using repository::GObject::Object;
 using repository::GObject::ParamSpec;
+using repository::GObject::SignalFlags;
 
 //// init data collection ////
 
@@ -208,6 +241,13 @@ make_type_init_data()
   // hard cast; should return meaningful data
   return (type_init_data_factory_t)&BaseDef::TypeInitData::template factory<
       SubClass>;
+}
+
+template<typename ClassDef, typename SubClass>
+gpointer
+forward_make_type_init_data()
+{
+  return (gpointer)make_type_init_data<ClassDef, SubClass>();
 }
 
 // helper macro to obtain data from factory (if provided)
@@ -291,16 +331,107 @@ using DefinitionData = Combine<typename SubClass::DefinitionData, Default>;
 
 //// class setup ////
 
+// this collects properties that will be installed on a class type
+// during the class_init (as opposed to added later on by property members)
+// this is especially needed to install properties required by an interface
+// (as those are checked by object_interface_check_properties early on)
 typedef std::map<std::string, std::pair<PropertyBase *, ParamSpec>> properties;
 
-inline void property_class_init(
-    ObjectClass *impl, gpointer g_class, gpointer class_data);
+template<typename T>
+class property;
+
+template<typename T, typename Base = repository::GObject::Object>
+class signal;
+
+struct ParamSpecInit : public ParamSpec
+{
+  cstring_v name_;
+  ParamSpec spec_;
+
+  // full spec arguments
+  template<typename T, typename P, typename... Args,
+      typename std::enable_if<sizeof...(Args) != 1>::type * = nullptr>
+  ParamSpecInit(property<P> T::*, Args &&...args)
+      : spec_(ParamSpec::new_<P>(std::forward<Args>(args)...))
+  {}
+
+  // name suffices for override property
+  template<typename T, typename P>
+  ParamSpecInit(property<P> T::*, const cstring_v name) : name_(name)
+  {}
+};
+
+struct properties_init : public properties
+{
+  properties_init(std::initializer_list<ParamSpecInit> pd)
+  {
+    for (auto &&e : pd) {
+      // should have either one
+      auto name = e.name_;
+      if (e.spec_)
+        name = e.spec_.name_();
+      insert({name, {nullptr, e.spec_}});
+    }
+  }
+};
+
+struct SignalSpec
+{
+  GType ret_type;
+  std::vector<GType> types;
+  gi::cstring_v name;
+  SignalFlags flags;
+
+  template<typename T, typename R, typename Instance, typename... Args>
+  SignalSpec(signal<R(Instance, Args...)> T::*, const gi::cstring_v _name,
+      SignalFlags _flags = (SignalFlags)0)
+      : ret_type(gi::traits::gtype<R>::get_type()),
+        types({gi::traits::gtype<Args>::get_type()...}), name(_name),
+        flags(_flags)
+  {}
+};
+
+using SignalSpecInit = SignalSpec;
+
+using signals = std::vector<SignalSpec>;
+using signals_init = signals;
+
+inline void class_init_props_sigs(
+    ObjectClass *impl, gpointer g_class, gpointer props, gpointer sigs);
 
 inline gi::cstring_v
 klass_type_name(const std::type_info &ti, gi::cstring_v klassname)
 {
   return (klassname && klassname.at(0)) ? klassname : ti.name();
 }
+
+template<typename T, typename Enable = void>
+struct custom_class_init : public std::false_type
+{
+  static constexpr GClassInitFunc value = nullptr;
+};
+
+template<typename T>
+struct custom_class_init<T,
+    typename traits::if_valid_type<decltype(T::custom_class_init)>::type>
+    : public std::true_type
+{
+  static constexpr auto value = T::custom_class_init;
+};
+
+template<typename T, typename Enable = void>
+struct custom_instance_init : public std::false_type
+{
+  static constexpr GInstanceInitFunc value = nullptr;
+};
+
+template<typename T>
+struct custom_instance_init<T,
+    typename traits::if_valid_type<decltype(T::custom_init)>::type>
+    : public std::true_type
+{
+  static constexpr auto value = T::custom_init;
+};
 
 class ObjectClass : public virtual ObjectBaseClass
 {
@@ -312,6 +443,22 @@ public:
   struct DefinitionData
   {
     constexpr static bool defines(...) { return false; }
+  };
+
+  // used as single argument in constructor for c-first style subclass
+  struct InitData
+  {
+    mutable Object instance;
+
+    explicit operator bool() const { return instance.gobj_(); }
+
+  protected:
+    // only for internal use
+    // and also complicates calling any function/constructor using this type
+    // silly dummy argument prevents ambiguity in ObjectImpl constructors
+    // when specifying all {}
+    explicit InitData(int) {}
+    friend class ObjectClass;
   };
 
 protected:
@@ -335,13 +482,29 @@ private:
     return result;
   }
 
+  typedef void (*GObjectConstructed)(GObject *object);
+  typedef GObject *(*GObjectConstructor)(GType type,
+      guint n_construct_properties,
+      GObjectConstructParam *construct_properties);
+
   typedef std::vector<std::pair<GClassInitFunc, type_init_data_factory_t>>
       class_inits_t;
   struct class_data_t
   {
     std::unique_ptr<class_inits_t> class_inits;
+    GClassInitFunc custom_class_init;
     const properties *props;
+    const signals *sigs;
     ObjectClass *impl;
+    GObjectConstructor constructor;
+  };
+
+  struct custom_inits_t
+  {
+    GClassInitFunc custom_class_init{};
+    GInstanceInitFunc custom_init{};
+    GObjectConstructor constructor{};
+    GObjectConstructed constructed{};
   };
 
   static void class_init_all(gpointer g_class, gpointer class_data)
@@ -359,17 +522,23 @@ private:
   {
     class_data_t *data = ((class_data_t *)class_data);
     // delegate property handling
-    property_class_init(data->impl, g_class, (gpointer *)data->props);
+    class_init_props_sigs(
+        data->impl, g_class, (gpointer)data->props, (gpointer)data->sigs);
+    // set constructed to invoke constructor
+    if (data->constructor)
+      ((GObjectClass *)(g_class))->constructor = data->constructor;
+    // also call top-level class custom class init
+    if (data->custom_class_init) {
+      data->custom_class_init(g_class, nullptr);
+    }
   }
 
   GType register_type(GType base_type, const gi::cstring_v klassname,
       const ClassInitNode &init_node, const interface_inits_t &itfs,
-      const properties &props)
+      const properties &props, const signals &sigs, custom_inits_t custom_inits)
   {
-    auto custom_name = std::string(CLASS_PREFIX) + canonical_name(klassname);
-
     // nothing to do if already registered
-    GType custom_type = g_type_from_name(custom_name.c_str());
+    GType custom_type = g_type_from_name(klassname.c_str());
     if (custom_type)
       return custom_type;
 
@@ -389,7 +558,8 @@ private:
     std::unique_ptr<class_inits_t> class_inits(new class_inits_t());
     auto node = &init_node;
     while (node) {
-      class_inits->push_back({node->self, node->class_init_data_factory});
+      if (node->self)
+        class_inits->push_back({node->self, node->class_init_data_factory});
       node = node->child;
     }
 
@@ -400,8 +570,11 @@ private:
     // (so the list has to handled special, but the others will still be
     // around)
     class_data->class_inits = std::move(class_inits);
+    class_data->custom_class_init = custom_inits.custom_class_init;
     class_data->impl = this;
     class_data->props = &props;
+    class_data->sigs = &sigs;
+    class_data->constructor = custom_inits.constructor;
 
     const GTypeInfo derived_info = {
         class_size,
@@ -411,31 +584,50 @@ private:
         nullptr,              // class_finalize
         class_data.release(), // class_data
         instance_size,
-        0,       // n_preallocs
-        nullptr, // instance_init
-        nullptr, // value_table
+        0,                        // n_preallocs
+        custom_inits.custom_init, // instance_init
+        nullptr,                  // value_table
     };
 
     custom_type = g_type_register_static(
-        base_type, custom_name.c_str(), &derived_info, GTypeFlags(0));
+        base_type, klassname.c_str(), &derived_info, GTypeFlags(0));
 
     // handle interfaces
     for (auto &&itf : itfs)
       itf.first(custom_type, itf.second);
 
+    // force/finish class creation,
+    // so a subsequent _peek does not return NULL
+    // (and lists above are still around)
+    g_type_class_unref(g_type_class_ref(custom_type));
+
     return custom_type;
   }
 
-  void init(GType parent, const gi::cstring_v klassname,
-      const ClassInitNode *node,
-      const repository::GObject::construct_params &params,
-      const properties &props, gpointer instance = nullptr)
+  // minor convenience wrap for the above
+  GType register_type(GType parent, const gi::cstring_v klassname,
+      const ClassInitNode *node, const properties &props, const signals &sigs,
+      custom_inits_t custom_inits)
   {
-    GType gtype = register_type(
-        parent, klassname, {class_init, nullptr, node}, itfs, props);
+    auto gtype = register_type(parent, klassname, {class_init, nullptr, node},
+        itfs, props, sigs, custom_inits);
+    itfs.clear();
+    return gtype;
+  }
+
+  void setup_instance(GType gtype,
+      const repository::GObject::construct_params &params,
+      gpointer instance = nullptr)
+  {
+    // not good if provided instance already has associated C++ instance
+    g_return_if_fail(!instance || !ObjectClass::instance((GObject *)instance));
+    g_return_if_fail(gtype);
+
+    // no longer needed`
     itfs.clear();
     // create and link object instance
     // if needed, that is, otherwise use provided instance and tie onto that one
+    gtype_ = gtype;
     GObject *obj = gobject_ =
         (GObject *)(instance ? instance : Object::new_(gtype, params));
     // should still be floating, then we assume ownership
@@ -447,6 +639,106 @@ private:
     g_object_set_qdata_full(obj, object_data_quark(), this, destroy_notify);
   }
 
+  // C++ side construction
+  // always (try to) register type and create instance
+  template<typename SubClass>
+  void register_setup(GType parent, const gi::cstring_v klassname,
+      const ClassInitNode *node,
+      const repository::GObject::construct_params &params,
+      const properties &props, const signals &sigs, custom_inits_t custom_inits,
+      gpointer instance = nullptr, std::nullptr_t = nullptr)
+  {
+    // sort-of internal prefixed klassname
+    auto custom_name = std::string(CLASS_PREFIX) + canonical_name(klassname);
+    auto gtype =
+        register_type(parent, custom_name, node, props, sigs, custom_inits);
+    setup_instance(gtype, params, instance);
+  }
+
+  template<typename SubClass>
+  static GObject *instance_constructor(GType type, guint n_construct_properties,
+      GObjectConstructParam *construct_properties)
+  {
+    // chain up, but we can skip other parent variations of this function
+    auto gtype = SubClass::baseclass_type::get_type_();
+    auto klass = G_OBJECT_CLASS(g_type_class_peek(gtype));
+    auto instance =
+        klass->constructor(type, n_construct_properties, construct_properties);
+
+    g_assert(instance);
+    // there should be no C++ side yet
+    // as we chain up past any possible C++ parent
+    g_assert(!ObjectClass::instance(instance));
+
+    // handle C++ setup
+    auto floating = g_object_is_floating(instance);
+    // avoid inadvertent sink
+    InitData id{0};
+    id.instance = gi::wrap((GObject *)g_object_ref(instance), transfer_full);
+    try {
+      auto self = new SubClass(id);
+      // sanity check on ref
+      if (floating && !g_object_is_floating(instance)) {
+        g_warning("%s constructor sinks instance", typeid(SubClass).name());
+        // try to unsink if it seems safe and applicable
+        auto obj = (GObject *)instance;
+        // theoretically not MT safe, but if == 1, only 1 thread should be
+        // involved
+        if (obj->ref_count == 1) {
+          g_warning("re-floating instance");
+          g_object_force_floating(obj);
+        }
+      }
+      (void)self;
+      // self->setup is essentially run below at bottom of constructor chain)
+      // this will then assign ownership of self to instance
+      g_assert(self->gobj_() == (gpointer)instance);
+    } catch (const std::exception &exc) {
+      // bad things will happen
+      report_exception(exc);
+      g_critical("constructor failed in instance_init");
+    }
+
+    return instance;
+  }
+
+  // C-side construction
+  // either register type, or finish setup of an instance (triggered on C side_
+  template<typename SubClass>
+  void register_setup(GType parent, const gi::cstring_v klassname,
+      const ClassInitNode *node,
+      const repository::GObject::construct_params &params,
+      const properties &props, const signals &sigs, custom_inits_t custom_inits,
+      gpointer instance = nullptr, const InitData *id = {})
+  {
+    g_assert(id);
+    g_assert(!instance);
+    // no real instance, so used for type registration purpose
+    if (!id->instance) {
+      // these parts are not applicable
+      (void)instance;
+      (void)params;
+      g_assert(!instance);
+      g_assert(params.empty());
+      // we have our own custom init, which creates the cpp object
+      // so the latter's constructor serves as custom init
+      // custom_inits.custom_init = instance_init<SubClass>;
+      custom_inits.constructor = instance_constructor<SubClass>;
+      // there is no gobject_ instance
+      // make sure to track type for subsequent signal and property registration
+      gtype_ =
+          register_type(parent, klassname, node, props, sigs, custom_inits);
+      g_assert(gtype_);
+    } else {
+      // so this is a new instance as created by instance_init
+      // ensure instance association here at the end of constructor chain
+      // so it is that way for the sequel of the subclass constructor
+      // (and redundant signal and property registration)
+      instance = id->instance.gobj_();
+      setup_instance(G_OBJECT_TYPE(instance), {}, instance);
+    }
+  }
+
   static void destroy_notify(gpointer data)
   {
     ObjectClass *impl = (ObjectClass *)data;
@@ -456,20 +748,41 @@ private:
   }
 
 protected:
+  template<typename SubClass>
+  static custom_inits_t make_custom_inits()
+  {
+    return {GClassInitFunc(custom_class_init<SubClass>::value),
+        GInstanceInitFunc(custom_instance_init<SubClass>::value)};
+  }
+
   ObjectClass(GType parent, const gi::cstring_v klassname,
       const ClassInitNode &node,
       const repository::GObject::construct_params &params,
       const properties &props)
   {
-    init(parent, klassname, &node, params, props);
+    register_setup<void>(
+        parent, klassname, &node, params, props, {}, {}, nullptr, nullptr);
   }
 
-  ObjectClass(const void *, GType parent, const gi::cstring_v klassname,
+  template<typename SubClass, typename InitData>
+  ObjectClass(const SubClass *, GType parent, const gi::cstring_v klassname,
       const ClassInitNode &node,
       const repository::GObject::construct_params &params,
-      const properties &props, gpointer instance)
+      const properties &props, gpointer instance, InitData id)
   {
-    init(parent, klassname, &node, params, props, instance);
+    register_setup<SubClass>(parent, klassname, &node, params, props, {},
+        make_custom_inits<SubClass>(), instance, id);
+  }
+
+  template<typename SubClass>
+  ObjectClass(const SubClass *, const gi::cstring_v klassname, GType base,
+      const ObjectClass::ClassInitNode &node, const interface_inits_t &itfs,
+      const properties &props, const signals &sigs)
+  {
+    this->itfs = itfs;
+    auto id = InitData{0};
+    register_setup<SubClass>(base, klassname, &node, {}, props, sigs,
+        make_custom_inits<SubClass>(), nullptr, &id);
   }
 
   ~ObjectClass()
@@ -497,30 +810,58 @@ public:
       const repository::GObject::construct_params &params = {},
       const properties &props = {})
   {
-    init(instance_type::get_type_(), ti.name(), nullptr, params, props);
+    register_setup<void>(instance_type::get_type_(), ti.name(), nullptr, params,
+        props, {}, {}, nullptr, nullptr);
   }
 
-  template<typename SubClass>
+  template<typename SubClass, typename InitData = std::nullptr_t>
   ObjectClass(const SubClass *,
       const repository::GObject::construct_params &params = {},
       const properties &props = {}, gpointer instance = nullptr,
-      const gi::cstring_v klassname = nullptr)
+      const gi::cstring_v klassname = nullptr, InitData id = nullptr)
   {
     const auto &ti = typeid(SubClass);
-    init(instance_type::get_type_(), klass_type_name(ti, klassname), nullptr,
-        params, props, instance);
+    register_setup<SubClass>(instance_type::get_type_(),
+        klass_type_name(ti, klassname), nullptr, params, props, {},
+        make_custom_inits<SubClass>(), instance, id);
   }
 
   operator Object() { return gi::wrap(gobject_, transfer_none); }
 
+  GType gobj_klass_type()
+  {
+    // there should almost always be an object instance
+    // except during initial registration of c-first style
+    return gobject_ ? G_OBJECT_TYPE(gobject_) : gtype_;
+  }
+
   GObjectClass *gobj_klass()
   {
-    return (GObjectClass *)g_type_class_peek(G_OBJECT_TYPE(gobject_));
+    return (GObjectClass *)g_type_class_peek(gobj_klass_type());
   }
 
   static ObjectClass *instance(GObject *gobject)
   {
     return (ObjectClass *)g_object_get_qdata(gobject, object_data_quark());
+  }
+
+private:
+  template<typename T>
+  friend GType register_type();
+
+  template<typename T>
+  static GType register_type_()
+  {
+    // check if the class has defined a get_type_()
+    // rather than nifty compile-time checks, simply use runtme
+    auto btype = T::baseclass_type::get_type_();
+    auto gtype = T::get_type_();
+    if (gtype == btype) {
+      // so nothing happened, use constructor to register
+      // instantiate dummy instance that registers type
+      gtype = (T{InitData{0}}).gobj_klass_type();
+    }
+    return gtype;
   }
 };
 
@@ -565,32 +906,47 @@ protected:
 
   // as above, new style
   // constructor to be used by custom subclass
-  template<typename SubClass>
+  template<typename SubClass, typename InitData = std::nullptr_t>
   ClassTemplate(const SubClass *sub,
       const repository::GObject::construct_params &params = {},
       const properties &props = {}, gpointer instance = nullptr,
-      const gi::cstring_v klassname = nullptr)
+      const gi::cstring_v klassname = nullptr, InitData id = nullptr)
       : Interfaces(instance_type_t::get_type_(),
             gpointer(make_type_init_data<Interfaces, SubClass>()))...,
         BaseClass(sub, instance_type_t::get_type_(),
             klass_type_name(typeid(SubClass), klassname),
             {&ClassDef::class_init, make_type_init_data<ClassDef, SubClass>(),
                 nullptr},
-            params, props, instance)
+            params, props, instance, id)
   {}
 
   // constructor for inner inheritance chain
-  template<typename SubClass>
+  template<typename SubClass, typename InitData = std::nullptr_t>
   ClassTemplate(const SubClass *sub, GType base, const gi::cstring_v klassname,
       const ObjectClass::ClassInitNode &node,
       const repository::GObject::construct_params &params,
-      const properties &props, gpointer instance = nullptr)
+      const properties &props, gpointer instance = nullptr,
+      InitData id = nullptr)
       : Interfaces(instance_type_t::get_type_(),
             gpointer(make_type_init_data<Interfaces, SubClass>()))...,
         BaseClass(sub, base, klassname,
             {&ClassDef::class_init, make_type_init_data<ClassDef, SubClass>(),
                 &node},
-            params, props, instance)
+            params, props, instance, id)
+  {}
+
+  // constructor used in inner inheritance chain for registration collection
+  template<typename SubClass>
+  ClassTemplate(const SubClass *sub, const gi::cstring_v klassname, GType base,
+      const ObjectClass::ClassInitNode &node,
+      const typename ClassTemplate::interface_inits_t &itfs,
+      const properties &props, const signals &sigs)
+      : Interfaces(instance_type_t::get_type_(),
+            gpointer(make_type_init_data<Interfaces, SubClass>()))...,
+        BaseClass(sub, klassname, base,
+            {&ClassDef::class_init, make_type_init_data<ClassDef, SubClass>(),
+                &node},
+            itfs, props, sigs)
   {}
 
 public:
@@ -602,9 +958,9 @@ public:
   // access to regular object side
   instance_type_t object_()
   {
-    return gi::wrap((typename instance_type_t::BaseObjectType *)g_object_ref(
-                        this->gobject_),
-        gi::transfer_full);
+    auto obj = this->gobject_ ? g_object_ref(this->gobject_) : nullptr;
+    return gi::wrap(
+        (typename instance_type_t::BaseObjectType *)(obj), gi::transfer_full);
   }
 };
 
@@ -630,6 +986,8 @@ protected:
     this->data_ = this->gobject_;
   }
 
+  // NOTE only 1 gtype will be registered,
+  // so all (subclass) constructors should specify consistent/same data
   template<typename SubClass>
   ObjectImpl(const SubClass *sub,
       const repository::GObject::construct_params &params =
@@ -644,7 +1002,8 @@ protected:
   // where constructed instance is associated with provided object instance
   // (rather than the latter created as part of construction, as usual)
   // if klassname KlassName is specified,
-  // registered typename is GOBJECT__KlassName
+  // registered typename is GIOBJECT__KlassName
+  // CAUTION the approach below is more likely applicable
   template<typename SubClass>
   ObjectImpl(ObjectT instance, const SubClass *sub,
       const gi::cstring_v klassname = nullptr,
@@ -656,10 +1015,59 @@ protected:
     this->data_ = this->gobject_;
   }
 
+  // this will either;
+  // + register an object GType with an instance_init that
+  //   new()'s a corresponding cpp object (and associates suitably)
+  //   so, it can be safely created based on GType (e.g. by some C-factory)
+  //   (InitData is essentially empty in this case,
+  //    and the cpp ObjectImpl instance is a transient dummy)
+  // + construct instance invoked as part of the aforementioned new()
+  //   (InitData then holds C object instance)
+  // registered type is klassname (as-is)
+  template<typename SubClass>
+  ObjectImpl(const SubClass *sub, const ObjectClass::InitData &id,
+      const gi::cstring_v klassname = {},
+      const properties &props = properties{})
+      : ClassT(sub, {}, props, nullptr, klassname, &id)
+  { // should have a name if this is used to register a type
+    g_return_if_fail(id || !klassname.empty());
+    // link object ptrs (untracked by ObjectBase)
+    this->data_ = this->gobject_;
+  }
+
   ~ObjectImpl()
   { // disconnect (avoid ObjectBase management)
     this->data_ = nullptr;
   }
+
+  // registers a type (instead of using that part of the constructor above)
+  // if parent is 0, then it defaults to the type of the immediate parent
+  // (so it should only be specified if subclass'ing a subclass)
+  // itfs: use {I::interface_init_data(), ...} for *immediate* parents I,
+  //    *not* parent interfaces of parents
+  // props, signals: use succinct list-initialization (as used elsewhere)
+  template<typename SubClass>
+  static GType register_type_(const gi::cstring_v klassname, GType parent,
+      const typename ClassT::interface_inits_t &itfs,
+      const properties_init &props, const signals_init &sigs)
+  {
+    // collect all data using constructor chain and register type
+    // MT-safe according to C++11 specs
+    static GType gtype =
+        ObjectImpl((SubClass *)nullptr, klassname, parent, itfs, props, sigs)
+            .gobj_klass_type();
+    return gtype;
+  }
+
+private:
+  // circumvent protected constructors/destructors
+  template<typename SubClass>
+  ObjectImpl(const SubClass *sub, const gi::cstring_v klassname, GType parent,
+      const typename ClassT::interface_inits_t &itfs,
+      const properties_init &props, const signals_init &sigs)
+      : ClassT(sub, klassname, parent ? parent : baseclass_type::get_type_(),
+            {nullptr, nullptr, nullptr}, itfs, props, sigs)
+  {}
 };
 
 // wrapper helper to call virtual method
@@ -800,28 +1208,22 @@ public:
   {
     g_return_if_fail(impl);
     g_return_if_fail(klass);
-    g_return_if_fail(self);
-    // only 1 real parameter
-    g_return_if_fail(!pspec || !name.size());
+    // need at least 1 parameter
+    g_return_if_fail(pspec || name.size());
 
     // identify any property tracked by this PropertyBase code
     // (may or may not be unique process-wise)
     static guint prop_id;
 
-    auto gpspec = pspec.gobj_();
-    if (name.size()) {
-      g_object_class_override_property(klass, ++prop_id, name.c_str());
-      // the overridden one will be passed to get/set
-      // (and returned by find as well)
-      gpspec = g_object_class_find_property(klass, name.c_str());
-    } else {
+    auto pname = name;
+    if (pspec) {
       // mind transfer full
       g_object_class_install_property(klass, ++prop_id, pspec.gobj_copy_());
+      // normalize name
+      pname = pspec.name_();
+    } else {
+      g_object_class_override_property(klass, ++prop_id, name.c_str());
     }
-    // add metadata to pspec to retrieve upon set/get
-    auto offset = ((char *)self - (char *)impl);
-    auto quark = get_instance_quark(prop_id);
-    g_param_spec_set_qdata(gpspec, quark, GINT_TO_POINTER(offset));
 
     // mark property installed on this klass/type (by whatever code path)
     // sadly, in case of overridden properties,
@@ -829,7 +1231,32 @@ public:
     // or the override that we may be trying to add to this/our class
     // so, setup some parallel tracking using qdata
     auto gtype = G_OBJECT_CLASS_TYPE(klass);
-    g_type_set_qdata(gtype, get_prop_quark(gpspec->name), GINT_TO_POINTER(1));
+    g_type_set_qdata(
+        gtype, get_prop_quark(pname.c_str()), GINT_TO_POINTER(prop_id));
+
+    // self may be absent if only registering type
+    if (self) {
+      install_property_offset(impl, klass, self, pname, prop_id);
+    }
+  }
+
+  static void install_property_offset(ObjectClass *impl, GObjectClass *klass,
+      self_type *self, const gi::cstring_v name, guint prop_id)
+  {
+    g_return_if_fail(self);
+
+    // add metadata to pspec to retrieve upon set/get
+    // an overridden one will be passed to get/set
+    // (and returned by find as well)
+    auto gpspec = g_object_class_find_property(klass, name.c_str());
+    g_assert(gpspec);
+    auto quark = get_instance_quark(prop_id);
+    // NOTE no race/issue if multiple threads set this (to same value)
+    // (internal locks are used by glib)
+    if (!g_param_spec_get_qdata(gpspec, quark)) {
+      auto offset = ((char *)self - (char *)impl);
+      g_param_spec_set_qdata(gpspec, quark, GINT_TO_POINTER(offset));
+    }
   }
 
   virtual ~PropertyBase() {}
@@ -851,9 +1278,24 @@ public:
 };
 
 inline void
-property_class_init(ObjectClass *impl, gpointer g_class, gpointer class_data)
+class_init_props_sigs(
+    ObjectClass *impl, gpointer g_class, gpointer props, gpointer _sigs)
 {
-  PropertyBase::class_init(impl, g_class, class_data);
+  g_return_if_fail(g_class);
+
+  if (props)
+    PropertyBase::class_init(impl, g_class, props);
+
+  // handle signals right here
+  if (_sigs) {
+    auto sigs = (signals *)_sigs;
+    for (auto &sig : *sigs) {
+      auto gtype = G_OBJECT_CLASS_TYPE(g_class);
+      g_signal_newv(sig.name.c_str(), gtype, (GSignalFlags)sig.flags, nullptr,
+          nullptr, nullptr, nullptr, sig.ret_type, sig.types.size(),
+          sig.types.data());
+    }
+  }
 }
 
 template<typename T>
@@ -861,17 +1303,23 @@ class property : protected property_proxy<T>, public PropertyBase
 {
   T val_;
 
-  void add_property(ObjectClass *impl, const gi::cstring_v name)
+  void add_property(ObjectClass *impl, gi::cstring_v name)
   {
-    auto pspec = this->object_.find_property(name);
+    auto pspec = Object::find_property(impl->gobj_klass_type(), name);
     // could have been defined already upon prior object creation
     if (pspec) {
       this->pspec_ = pspec;
+      // normalize name
+      name = pspec.name_();
       // could be defined by a superclass
       // or already added to this class by prior instance
       auto gtype = G_OBJECT_CLASS_TYPE(impl->gobj_klass());
-      if (!g_type_get_qdata(gtype, get_prop_quark(name.c_str())))
+      if (auto pd = g_type_get_qdata(gtype, get_prop_quark(name.c_str()))) {
+        install_property_offset(
+            impl, impl->gobj_klass(), this, name, GPOINTER_TO_INT(pd));
+      } else {
         install_property(impl, impl->gobj_klass(), this, nullptr, name);
+      }
     } else {
       pspec = this->pspec_;
       install_property(impl, impl->gobj_klass(), this, pspec);
@@ -882,7 +1330,8 @@ class property : protected property_proxy<T>, public PropertyBase
     g_param_value_set_default(pspec.gobj_(), &value);
     val_ = detail::get_value<T>(&value);
     // avoid circular ref loop
-    g_object_unref(this->object_.gobj_());
+    if (this->object_)
+      g_object_unref(this->object_.gobj_());
   }
 
 protected:
@@ -975,11 +1424,6 @@ public:
 
 //// signal handling ////
 
-using repository::GObject::SignalFlags;
-
-template<typename T, typename Base = repository::GObject::Object>
-class signal;
-
 template<typename R, typename Instance, typename... Args, typename Base>
 class signal<R(Instance, Args...), Base>
     : public signal_proxy<R(Instance, Args...)>
@@ -998,15 +1442,16 @@ class signal<R(Instance, Args...), Base>
   }
 
 public:
-  signal(
-      Base *owner, const gi::cstring_v name, SignalFlags flags = (SignalFlags)0)
+  signal(ObjectClass *owner, const gi::cstring_v name,
+      SignalFlags flags = (SignalFlags)0)
       : super(*owner, name)
   {
-    const GType itype = owner->gobj_type_();
+    const GType itype = owner->gobj_klass_type();
     if (!g_signal_lookup(name.c_str(), itype))
       new_(name, itype, flags);
     // sneak away ref to avoid ref loop
-    g_object_unref(this->object_.gobj_());
+    if (this->object_)
+      g_object_unref(this->object_.gobj_());
   }
 
   ~signal()
@@ -1061,7 +1506,7 @@ public:
 
 template<typename T, typename... Args>
 ref_ptr<T>
-make_ref(Args &&...args)
+make_ref_tagged(construct_cpp_t, Args &&...args)
 {
   // move ownership of ref acquired during creation
   return ref_ptr<T>(new T(std::forward<Args>(args)...));
@@ -1085,6 +1530,44 @@ ref_ptr_cast(Object ob)
   return nullptr;
 }
 
+// similar to a typical glib xyz_get_type
+// as both register the type (once) and return it (many times)
+template<typename T>
+GType
+register_type()
+{
+  // C++11 standard specifies this should be MT-safe and occur only once
+  // as such similar to the typical g_once in xyz_get_type
+  static GType gtype = ObjectClass::register_type_<T>();
+  return gtype;
+}
+
+template<typename T, typename... Args>
+ref_ptr<T>
+make_ref_tagged(construct_c_t, Args &&...args)
+{
+  auto gtype = register_type<T>();
+  auto obj = Object::new_<::GObject *>(gtype, std::forward<Args>(args)...);
+  return ref_ptr_cast<T>(obj);
+}
+
+// Construct can be specified explicitly;
+// construct_c_t; also selected in auto case if supported,
+//    Args specify construct properties (see also GObject::new_)
+// construct_cpp_t; Args are forwarded to any applicable constructor
+template<typename T, typename Construct = construct_auto_t, typename... Args>
+ref_ptr<T>
+make_ref(Args &&...args)
+{
+  using tag_t = typename std::conditional<
+      std::is_same<Construct, construct_auto_t>::value,
+      typename std::conditional<
+          std::is_constructible<T, ObjectClass::InitData>::value, construct_c_t,
+          construct_cpp_t>::type,
+      Construct>::type;
+  return make_ref_tagged<T>(tag_t(), std::forward<Args>(args)...);
+}
+
 } // namespace detail
 
 // TODO impl namespace ??
@@ -1097,6 +1580,7 @@ using detail::signal;
 using detail::make_ref;
 using detail::ref_ptr;
 using detail::ref_ptr_cast;
+using detail::register_type;
 
 namespace repository
 {

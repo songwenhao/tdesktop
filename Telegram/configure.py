@@ -51,6 +51,17 @@ if not qt_version.resolve(arch):
 if 'qt6' in arguments:
     arguments.remove('qt6')
 
+outDirName = None
+targetArg = None
+for arg in arguments:
+    if 'outDirName=' in arg:
+        targetArg = arg
+        outDirName = arg[len('outDirName='):]
+        break
+
+if targetArg is not None:
+    arguments.remove(targetArg)
+
 if officialTarget != '':
     officialApiIdFile = scriptPath + '/../../DesktopPrivate/custom_api_id.h'
     if not os.path.isfile(officialApiIdFile):
@@ -66,4 +77,4 @@ if officialTarget != '':
     if arch != '':
         arguments.append(arch)
 
-finish(run_cmake.run(scriptName, arguments))
+finish(run_cmake.run(scriptName, arguments, outDirName))

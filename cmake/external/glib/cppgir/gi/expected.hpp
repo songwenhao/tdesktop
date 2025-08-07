@@ -6,7 +6,7 @@
 // this is also required in gcc's libstdc++ expected
 #else
 // so if that is missing, then prevent delegation to <expected>
-#define nsel_CONFIG_SELECT_EXPECTED  nsel_EXPECTED_NONSTD
+#define nsel_CONFIG_SELECT_EXPECTED nsel_EXPECTED_NONSTD
 #endif
 #include "nonstd/expected.hpp"
 #else

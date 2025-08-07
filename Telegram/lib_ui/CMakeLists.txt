@@ -155,6 +155,8 @@ PRIVATE
     ui/style/style_core_types.h
     ui/style/style_palette_colorizer.cpp
     ui/style/style_palette_colorizer.h
+    ui/text/custom_emoji_helper.cpp
+    ui/text/custom_emoji_helper.h
     ui/text/custom_emoji_instance.cpp
     ui/text/custom_emoji_instance.h
     ui/text/text.cpp
@@ -296,7 +298,6 @@ PRIVATE
     ui/ph.cpp
     ui/ph.h
     ui/qt_object_factory.h
-    ui/qt_weak_factory.h
     ui/rect.h
     ui/rect_part.h
     ui/round_rect.cpp
@@ -319,10 +320,6 @@ if (DESKTOP_APP_USE_PACKAGED_FONTS)
     remove_target_sources(lib_ui ${src_loc} fonts/fonts.qrc)
 endif()
 
-if (WIN32)
-    nuget_add_winrt(lib_ui)
-endif()
-
 target_include_directories(lib_ui
 PUBLIC
     ${src_loc}
@@ -338,5 +335,9 @@ PRIVATE
     desktop-app::external_lz4
     desktop-app::external_xxhash
 )
+
+if (WIN32 AND QT_VERSION LESS 6)
+    target_link_libraries(lib_ui PRIVATE desktop-app::external_angle)
+endif()
 
 target_prepare_qrc(lib_ui)

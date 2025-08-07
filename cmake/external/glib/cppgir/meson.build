@@ -25,7 +25,7 @@ endforeach
 boost_dep = dependency('boost', version : '>=1.58', required : true)
 
 # fmtlib
-fmtlib_dep = compiler.find_library('fmt', has_headers : ['fmt/format.h'])
+fmtlib_dep = compiler.find_library('fmt', has_headers : ['fmt/format.h'], required: false)
 # check C++20 format
 has_format = compiler.compiles(files('cmake/cpp20_format.cpp'),
   args : ['-std=c++20'],

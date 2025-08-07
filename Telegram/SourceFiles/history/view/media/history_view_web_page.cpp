@@ -220,6 +220,8 @@ constexpr auto kSponsoredUserpicLines = 2;
 		? tr::lng_view_button_voice_chat(tr::now)
 		: (type == WebPageType::Livestream)
 		? tr::lng_view_button_voice_chat_channel(tr::now)
+		: (type == WebPageType::ConferenceCall)
+		? tr::lng_view_button_call(tr::now)
 		: (type == WebPageType::Bot)
 		? tr::lng_view_button_bot(tr::now)
 		: (type == WebPageType::User)
@@ -230,6 +232,10 @@ constexpr auto kSponsoredUserpicLines = 2;
 		? tr::lng_view_button_emojipack(tr::now)
 		: (type == WebPageType::StickerSet)
 		? tr::lng_view_button_stickerset(tr::now)
+		: (type == WebPageType::StoryAlbum)
+		? tr::lng_view_button_storyalbum(tr::now)
+		: (type == WebPageType::GiftCollection)
+		? tr::lng_view_button_collection(tr::now)
 		: QString());
 	if (page->iv) {
 		const auto manager = &page->owner().customEmojiManager();
@@ -258,6 +264,7 @@ constexpr auto kSponsoredUserpicLines = 2;
 		|| (type == WebPageType::User)
 		|| (type == WebPageType::VoiceChat)
 		|| (type == WebPageType::Livestream)
+		|| (type == WebPageType::ConferenceCall)
 		|| (type == WebPageType::BotApp)
 		|| ((type == WebPageType::Theme)
 			&& webpage->document
@@ -267,7 +274,9 @@ constexpr auto kSponsoredUserpicLines = 2;
 		|| ((type == WebPageType::WallPaper)
 			&& webpage->document
 			&& webpage->document->isWallPaper())
-		|| (type == WebPageType::StickerSet);
+		|| (type == WebPageType::StickerSet)
+		|| (type == WebPageType::StoryAlbum)
+		|| (type == WebPageType::GiftCollection);
 }
 
 } // namespace
@@ -282,9 +291,9 @@ WebPage::WebPage(
 	: st::historyPagePreview)
 , _data(data)
 , _flags(flags)
-, _siteName(st::msgMinWidth - _st.padding.left() - _st.padding.right())
-, _title(st::msgMinWidth - _st.padding.left() - _st.padding.right())
-, _description(st::msgMinWidth - _st.padding.left() - _st.padding.right()) {
+, _siteName(st::minPhotoSize - rect::m::sum::h(_st.padding))
+, _title(st::minPhotoSize - rect::m::sum::h(_st.padding))
+, _description(st::minPhotoSize - rect::m::sum::h(_st.padding)) {
 	history()->owner().registerWebPageView(_data, _parent);
 }
 
@@ -379,11 +388,10 @@ QSize WebPage::countOptimalSize() {
 	// Detect _openButtonWidth before counting paddings.
 	_openButton = Ui::Text::String();
 	if (HasButton(_data)) {
-		const auto context = Core::MarkedTextContext{
+		const auto context = Core::TextContext({
 			.session = &_data->session(),
-			.customEmojiRepaint = [] {},
 			.customEmojiLoopLimit = 1,
-		};
+		});
 		_openButton.setMarkedText(
 			st::semiboldTextStyle,
 			PageToPhrase(_data),
@@ -403,7 +411,7 @@ QSize WebPage::countOptimalSize() {
 		_attach = nullptr;
 		const auto item = _parent->data();
 		_collage = PrepareCollageMedia(item, _data->collage);
-		const auto min = st::msgMinWidth - rect::m::sum::h(_st.padding);
+		const auto min = st::minPhotoSize - rect::m::sum::h(_st.padding);
 		_siteName = Ui::Text::String(min);
 		_title = Ui::Text::String(min);
 		_description = Ui::Text::String(min);
@@ -532,23 +540,18 @@ QSize WebPage::countOptimalSize() {
 		&& !_data->description.text.isEmpty()
 		&& !_data->uniqueGift) {
 		const auto &text = _data->description;
-
-		if (isLogEntryOriginal()) {
-			// Fix layout for small bubbles
-			// (narrow media caption edit log entries).
-			_description = Ui::Text::String(st::minPhotoSize
-				- rect::m::sum::h(padding));
-		}
-		using MarkedTextContext = Core::MarkedTextContext;
-		auto context = MarkedTextContext{
+		using Type = Core::TextContextDetails::HashtagMentionType;
+		auto context = Core::TextContext({
 			.session = &history()->session(),
-			.customEmojiRepaint = [=] { _parent->customEmojiRepaint(); },
-		};
-		if (_data->siteName == u"Twitter"_q) {
-			context.type = MarkedTextContext::HashtagMentionType::Twitter;
-		} else if (_data->siteName == u"Instagram"_q) {
-			context.type = MarkedTextContext::HashtagMentionType::Instagram;
-		}
+			.details = {
+				.type = ((_data->siteName == u"Twitter"_q)
+					? Type::Twitter
+					: (_data->siteName == u"Instagram"_q)
+					? Type::Instagram
+					: Type::Telegram),
+			},
+			.repaint = [=] { _parent->customEmojiRepaint(); },
+		});
 		_description.setMarkedText(
 			st::webPageDescriptionStyle,
 			text,

@@ -18,6 +18,7 @@ class BuilderExtra : public GI_GTK_BUILDER_BASE
 public:
   using super::get_object;
 
+  // T must be object-side type (not impl type)
   template<typename T>
   T get_object(const gi::cstring_v name)
   {
@@ -36,6 +37,10 @@ public:
    * Of course, it may also have additional arguments, and specify some
    * additional arguments to super class constructor, if needed.
    * See also comments on the latter.
+   *
+   * Note that this function *should* be called at some stage for any created
+   * C++-type based widget to ensure full and proper "C++ side" setup.
+   * See also gtk example (for additional comments).
    */
   template<typename T_Derived, typename... Args>
   gi::ref_ptr<T_Derived> get_object_derived(
@@ -61,6 +66,8 @@ public:
     if (wrapper && !wrapper_cast) {
       g_error("wrong C++ instance type (%s)", name.c_str());
       return {};
+    } else if (wrapper_cast) {
+      return ref_ptr<T_Derived>(wrapper_cast, false);
     }
 
     // obtain builder from this
@@ -71,11 +78,6 @@ public:
     // so ref_ptr needs to grab an extra one
     return ref_ptr<T_Derived>(
         new T_Derived(wobj, builder, std::forward<Args>(args)...), false);
-    // auto ret = make_ref<T_Derived>(wobj, builder,
-    // std::forward<Args>(args)...);
-    // // ret assumes ownership of object ref, so give it one
-    // g_object_ref(obj.gobj_());
-    // return ret;
   }
 
 }; // class

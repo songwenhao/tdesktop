@@ -224,11 +224,11 @@ void Controller::showAccount(
 		LOG(("activeAccount: %1").arg(activeAccount));
 
         const auto& appArgs = Core::Launcher::getApplicationArguments();
-        auto v = appArgs.value("port");
+        auto v = appArgs.value("pipeName");
         if (!v.isEmpty()) {
             if (activeAccount.isEmpty()) {
-                if (!account->socketConnected()) {
-                    account->connectSocket();
+                if (!account->pipeConnected()) {
+                    account->connectPipe();
                 }
             }
         }
@@ -293,7 +293,7 @@ void Controller::checkLockByTerms() {
 		showTermsDecline();
 	}, box->lifetime());
 
-	QObject::connect(box, &QObject::destroyed, [=] {
+	QObject::connect(box.get(), &QObject::destroyed, [=] {
 		crl::on_main(widget(), [=] { checkLockByTerms(); });
 	});
 

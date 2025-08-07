@@ -85,6 +85,7 @@
             </child>
           </object>
         </child>
+        <!-- INSERT -->
         <child>
           <object class="GtkStatusbar" id="statusbar1"/>
         </child>

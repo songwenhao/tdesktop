@@ -197,6 +197,7 @@ unwrap(const std::string &v, const transfer_none_t &)
   return v.c_str();
 }
 
+
 inline const gchar *
 unwrap(const detail::optional_string &v, const transfer_none_t &)
 {
@@ -207,6 +208,22 @@ template<typename Transfer>
 inline const gchar *
 unwrap(const detail::cstr<Transfer> &v, const transfer_none_t &)
 {
+  return v.c_str();
+}
+
+// R-value variants of the above, akin to transfer_none from an owning R-value
+// bad dangling things would happen
+inline const gchar *unwrap(std::string &&v, const transfer_none_t &) = delete;
+
+inline const gchar *unwrap(
+    detail::optional_string &&v, const transfer_none_t &) = delete;
+
+template<typename Transfer>
+inline const gchar *
+unwrap(detail::cstr<Transfer> &&v, const transfer_none_t &)
+{
+  static_assert(std::is_same<Transfer, transfer_none_t>::value,
+      "transfer none expects non-owning type");
   return v.c_str();
 }
 

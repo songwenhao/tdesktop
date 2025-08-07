@@ -11,6 +11,7 @@ GLib:record:Error
 GLib:function:g_assert_warning
 GLib:function:g_slice_.et_config
 GLib:function:g_variant_get_gtype
+GLib:function:g_thread_init_with_errorcheck_mutexes
 # GVariantIter apparently represents 2 distinct types;
 # + a C-boxed type (used with _init)
 # + a heap-based behaving like GBoxed (with _copy and _free)
@@ -151,6 +152,9 @@ Gtk:constant:IM_MODULE_EXTENSION_POINT_NAME
 # alternatives appear not so binding-friendly
 # so arrange to not discard these
 deprecated:Gtk:4.0
+
+# misc config; specify substitute c:type for GtkSnapshot (defined in override)
+#!ctype:Gtk.Snapshot:GI_PATCH_GtkSnapshot
 
 # signal emission method wrappers
 # undocumented; and should not be wrapped either

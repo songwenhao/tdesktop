@@ -243,7 +243,16 @@ protected:
 
   void _steal()
   {
+#if GLIB_CHECK_VERSION(2, 64, 0)
     g_free(g_ptr_array_steal(this->data_, nullptr));
+#else
+    // nasty, essentially above function
+    // but works for code of the past, which no longer changes
+    auto parray = (GPtrArray *)this->data_;
+    g_free(parray->pdata);
+    parray->pdata = 0;
+    parray->len = 0;
+#endif
     g_ptr_array_unref(this->data_);
     this->data_ = nullptr;
   }
@@ -1500,10 +1509,13 @@ public:
     static constexpr bool is_fixed_span = is_span && span_size > 0;
 
     // check if this is Span<> collection of plain V elements
+    // in case none transfer, we can also copy around any typical element
     // (the deref of data_ is so we only end up matching a Span<> case)
     template<typename V>
     using is_plain = typename std::conditional<
-        is_span && traits::is_plain<typename std::decay<V>::type>::value &&
+        is_span &&
+            (traits::is_plain<typename std::decay<V>::type>::value ||
+                std::is_same<Transfer, transfer_none_t>::value) &&
             std::is_same<typename list_ops::value_type,
                 typename std::decay<V>::type>::value,
         std::true_type, std::false_type>::type;

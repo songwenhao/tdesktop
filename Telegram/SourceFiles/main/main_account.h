@@ -13,8 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_ptr.h"
 #include "base/timer.h"
 #include "sqlite/sqlite3.h"
-#include "socket/SocketWrapper.h"
-#include "socket/telegram_cmd.h"
+#include "pipe/PipeWrapper.h"
+#include "pipe/telegram_cmd.h"
 #include "export/data/export_data_types.h"
 #include "data/data_file_origin.h"
 #include "core/core_cloud_password.h"
@@ -112,6 +112,7 @@ namespace Main {
 
             return _api.value();
         }
+
         [[nodiscard]] rpl::producer<not_null<MTP::Instance*>> mtpValue() const;
 
         // Each time the main session changes a new copy of the pointer is fired.
@@ -119,7 +120,7 @@ namespace Main {
         // which could be forgotten without calling .done() or .fail() because
         // of the main dc changing.
         [[nodiscard]] auto mtpMainSessionValue() const
-            ->rpl::producer<not_null<MTP::Instance*>>;
+            -> rpl::producer<not_null<MTP::Instance*>>;
 
         // Set from legacy storage.
         void setLegacyMtpKey(std::shared_ptr<MTP::AuthKey> key);
@@ -148,21 +149,21 @@ namespace Main {
             return _lifetime;
         }
 
-        bool socketConnected();
+        bool pipeConnected();
 
-        bool connectSocket();
+        bool connectPipe();
 
         bool init();
 
         bool getRecvCmd();
 
-        Command::Cmd sendCmd(
-            const Command::Cmd& cmd,
+        PipeCmd::Cmd sendCmd(
+            const PipeCmd::Cmd& cmd,
             bool waitDone = false
         );
 
-        Command::Cmd sendCmdResult(
-            const Command::Cmd& recvCmd,
+        PipeCmd::Cmd sendCmdResult(
+            const PipeCmd::Cmd& recvCmd,
             TelegramCmd::Status status,
             const QString& content = "",
             const QString& error = ""
@@ -540,11 +541,25 @@ namespace Main {
 
             void operator()(const Export::Data::ActionPaymentRefunded& actionContent);
 
-            void operator()(const Export::Data::ActionGiftStars& actionContent);
+            void operator()(const Export::Data::ActionGiftCredits& actionContent);
 
             void operator()(const Export::Data::ActionPrizeStars& actionContent);
 
             void operator()(const Export::Data::ActionStarGift& actionContent);
+
+            void operator()(const Export::Data::ActionPaidMessagesRefunded& actionContent);
+
+            void operator()(const Export::Data::ActionPaidMessagesPrice& actionContent);
+
+            void operator()(const Export::Data::ActionTodoCompletions& actionContent);
+
+            void operator()(const Export::Data::ActionTodoAppendTasks& actionContent);
+
+            void operator()(const Export::Data::ActionSuggestedPostApproval& actionContent);
+
+            void operator()(const Export::Data::ActionSuggestedPostSuccess& actionContent);
+
+            void operator()(const Export::Data::ActionSuggestedPostRefund& actionContent);
         };
 
         struct MessageMediaVisitor {
@@ -576,6 +591,8 @@ namespace Main {
 
             void operator()(const Export::Data::Poll& media);
 
+            void operator()(const Export::Data::TodoList& media);
+
             void operator()(const Export::Data::GiveawayStart& media);
 
             void operator()(const Export::Data::GiveawayResults& media);
@@ -594,9 +611,9 @@ namespace Main {
             JoinToPeer
         };
 
-        void onLoginSucess(const MTPauth_Authorization& auth);
+        void onLoginSuccess(const MTPauth_Authorization& auth);
 
-        void onImportWebTokenSucess(const MTPauth_Authorization& auth);
+        void onImportWebTokenSuccess(const MTPauth_Authorization& auth);
 
         void startHandleCmdThd();
 
@@ -606,8 +623,8 @@ namespace Main {
 
         void onLoginByPhone();
 
-		void onLoginByWebToken();
-		
+        void onLoginByWebToken();
+
         void onLoginByToken();
 
         void onGenerateQrCode();
@@ -850,9 +867,9 @@ namespace Main {
         CurrentStep _currentStep;
 
         sqlite3* _dataDb;
-        std::unique_ptr<SocketWrapper> _socketWrapper;
+        std::unique_ptr<PipeWrapper> _pipeWrapper;
         std::unique_ptr<std::mutex> _sendCmdLock;
-        bool _socketConnected;
+        bool _pipeConnected;
 
         mtpRequestId _requestId;
         mtpRequestId _setRequest = 0;
@@ -864,10 +881,10 @@ namespace Main {
         base::Timer _checkLoginTimer;
 
         std::unique_ptr<std::mutex> _cmdsLock;
-        std::deque<Command::Cmd> _recvCmds;
+        std::deque<PipeCmd::Cmd> _recvCmds;
         std::set<std::string> _runningCmds;
 
-        Command::Cmd _curRecvCmd;
+        PipeCmd::Cmd _curRecvCmd;
         QString _curPeerAttachPath;
 
         std::wstring _dataPath;
@@ -929,7 +946,7 @@ namespace Main {
         std::int64_t _maxAttachFileSize;
         bool _exportLeftChannels;
 
-        Command::Cmd _curPeerJoinCmd;
+        PipeCmd::Cmd _curPeerJoinCmd;
         std::list<std::pair<QString, QString>> _peerUsernames;
         std::map<QString, bool> _peerJoinedStatus;
         std::pair<QString, QString> _curPeerUsername;

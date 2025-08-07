@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/edit_birthday_box.h"
 #include "ui/integration.h"
 #include "payments/payments_non_panel_process.h"
+#include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/share_box.h"
 #include "boxes/connection_box.h"
 #include "boxes/gift_premium_box.h"
@@ -36,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "passport/passport_form_controller.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
+#include "ui/vertical_list.h"
 #include "data/components/credits.h"
 #include "data/data_birthday.h"
 #include "data/data_channel.h"
@@ -68,6 +70,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "info/info_controller.h"
+#include "info/info_memento.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "history/history.h"
 #include "history/history_item.h"
@@ -299,6 +303,42 @@ void ShowLanguagesBox(Window::SessionController *controller) {
 	Guard = LanguageBox::Show(controller);
 }
 
+void ShowPhonePrivacyBox(Window::SessionController *controller) {
+	static auto Guard = base::binary_guard();
+	auto guard = base::binary_guard();
+
+	using Privacy = Api::UserPrivacy;
+	const auto key = Privacy::Key::PhoneNumber;
+	controller->session().api().userPrivacy().reload(key);
+
+	const auto weak = base::make_weak(controller);
+	auto shared = std::make_shared<base::binary_guard>(
+		guard.make_guard());
+	auto lifetime = std::make_shared<rpl::lifetime>();
+	controller->session().api().userPrivacy().value(
+		key
+	) | rpl::take(
+		1
+	) | rpl::start_with_next([=](const Privacy::Rule &value) mutable {
+		using namespace ::Settings;
+		const auto show = shared->alive();
+		if (lifetime) {
+			base::take(lifetime)->destroy();
+		}
+		if (show) {
+			if (const auto controller = weak.get()) {
+				controller->show(Box<EditPrivacyBox>(
+					controller,
+					std::make_unique<PhoneNumberPrivacyController>(
+						controller),
+					value));
+			}
+		}
+	}, *lifetime);
+
+	Guard = std::move(guard);
+}
+
 bool SetLanguage(
 		Window::SessionController *controller,
 		const Match &match,
@@ -480,6 +520,8 @@ bool ShowWallPaper(
 			result |= ChatAdminRight::AddAdmins;
 		} else if (element == u"manage_video_chats"_q) {
 			result |= ChatAdminRight::ManageCall;
+		} else if (element == u"manage_direct_messages"_q) {
+			result |= ChatAdminRight::ManageDirect;
 		} else if (element == u"anonymous"_q) {
 			result |= ChatAdminRight::Anonymous;
 		} else if (element == u"manage_chat"_q) {
@@ -591,6 +633,10 @@ bool ResolveUsernameOrPhone(
 	}
 	const auto storyParam = params.value(u"story"_q);
 	const auto storyId = storyParam.toInt();
+	const auto storyAlbumParam = params.value(u"album"_q);
+	const auto storyAlbumId = storyAlbumParam.toInt();
+	const auto giftCollectionParam = params.value(u"collection"_q);
+	const auto giftCollectionId = giftCollectionParam.toInt();
 	const auto appname = webChannelPreviewLink ? QString() : appnameParam;
 	const auto commentParam = params.value(u"comment"_q);
 	const auto commentId = commentParam.toInt();
@@ -617,6 +663,8 @@ bool ResolveUsernameOrPhone(
 		.phone = phone,
 		.messageId = post,
 		.storyId = storyId,
+		.storyAlbumId = storyAlbumId,
+		.giftCollectionId = giftCollectionId,
 		.videoTimestamp = (!videot.isEmpty()
 			? ParseVideoTimestamp(videot)
 			: std::optional<TimeId>()),
@@ -660,6 +708,8 @@ bool ResolveUsernameOrPhone(
 			: std::nullopt),
 		.clickFromMessageId = myContext.itemId,
 		.clickFromBotWebviewContext = myContext.botWebviewContext,
+		.historyInNewWindow =
+			(params.value(u"tdesktop_target"_q) == u"blank"_q),
 	});
 	return true;
 }
@@ -714,6 +764,9 @@ bool ResolveSettings(
 	const auto type = [&]() -> std::optional<::Settings::Type> {
 		if (section == u"language"_q) {
 			ShowLanguagesBox(controller);
+			return {};
+		} else if (section == u"phone_privacy"_q) {
+			ShowPhonePrivacyBox(controller);
 			return {};
 		} else if (section == u"devices"_q) {
 			return ::Settings::Sessions::Id();
@@ -804,6 +857,7 @@ bool OpenMediaTimestamp(
 				document,
 				context,
 				context ? context->topicRootId() : MsgId(0),
+				context ? context->sublistPeerId() : PeerId(0),
 				false,
 				time));
 		} else if (document->isSong() || document->isVoiceMessage()) {
@@ -869,6 +923,8 @@ bool ShowEditBirthday(
 		const QVariant &context) {
 	if (!controller) {
 		return false;
+	} else if (controller->showFrozenError()) {
+		return true;
 	}
 	const auto user = controller->session().user();
 	const auto save = [=](Data::Birthday result) {
@@ -892,10 +948,41 @@ bool ShowEditBirthday(
 				: (u"Error: "_q + error.type()));
 		})).handleFloodErrors().send();
 	};
-	controller->show(Box(
-		Ui::EditBirthdayBox,
-		user->birthday(),
-		save));
+	if (match->captured(1).isEmpty()) {
+		controller->show(Box(Ui::EditBirthdayBox, user->birthday(), save));
+	} else {
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			Ui::EditBirthdayBox(box, user->birthday(), save);
+
+			const auto container = box->verticalLayout();
+			const auto session = &user->session();
+			const auto key = Api::UserPrivacy::Key::Birthday;
+			session->api().userPrivacy().reload(key);
+			auto isExactlyContacts = session->api().userPrivacy().value(
+				key
+			) | rpl::map([=](const Api::UserPrivacy::Rule &value) {
+				return (value.option == Api::UserPrivacy::Option::Contacts)
+					&& value.always.peers.empty()
+					&& !value.always.premiums
+					&& value.never.peers.empty();
+			}) | rpl::distinct_until_changed();
+			Ui::AddSkip(container);
+			const auto link = u"internal:edit_privacy_birthday:from_box"_q;
+			Ui::AddDividerText(container, rpl::conditional(
+				std::move(isExactlyContacts),
+				tr::lng_settings_birthday_contacts(
+					lt_link,
+					tr::lng_settings_birthday_contacts_link(
+					) | Ui::Text::ToLink(link),
+					Ui::Text::WithEntities),
+				tr::lng_settings_birthday_about(
+					lt_link,
+					tr::lng_settings_birthday_about_link(
+					) | Ui::Text::ToLink(link),
+					Ui::Text::WithEntities)));
+		}));
+
+	}
 	return true;
 }
 
@@ -906,11 +993,29 @@ bool ShowEditBirthdayPrivacy(
 	if (!controller) {
 		return false;
 	}
+	const auto isFromBox = !match->captured(1).isEmpty();
 	auto syncLifetime = controller->session().api().userPrivacy().value(
 		Api::UserPrivacy::Key::Birthday
 	) | rpl::take(
 		1
 	) | rpl::start_with_next([=](const Api::UserPrivacy::Rule &value) {
+		if (isFromBox) {
+			using namespace ::Settings;
+			class Controller final : public BirthdayPrivacyController {
+				object_ptr<Ui::RpWidget> setupAboveWidget(
+					not_null<Window::SessionController*> controller,
+					not_null<QWidget*> parent,
+					rpl::producer<Option> optionValue,
+					not_null<QWidget*> outerContainer) override {
+					return { nullptr };
+				}
+			};
+			controller->show(Box<EditPrivacyBox>(
+				controller,
+				std::make_unique<Controller>(),
+				value));
+			return;
+		}
 		controller->show(Box<EditPrivacyBox>(
 			controller,
 			std::make_unique<::Settings::BirthdayPrivacyController>(),
@@ -925,6 +1030,8 @@ bool ShowEditPersonalChannel(
 		const QVariant &context) {
 	if (!controller) {
 		return false;
+	} else if (controller->showFrozenError()) {
+		return true;
 	}
 
 	auto listController = std::make_unique<PersonalChannelController>(
@@ -1011,6 +1118,45 @@ bool CopyUsername(
 	const auto username = match->captured(1);
 	TextUtilities::SetClipboardText({ '@' + username });
 	controller->showToast(tr::lng_username_text_copied(tr::now));
+	return true;
+}
+
+bool EditPaidMessagesFee(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	const auto peerId = PeerId(match->captured(1).toULongLong());
+	if (const auto id = peerToChannel(peerId)) {
+		const auto channel = controller->session().data().channelLoaded(id);
+		if (channel && channel->canEditPermissions()) {
+			ShowEditChatPermissions(controller, channel);
+		}
+	} else {
+		controller->show(Box(EditMessagesPrivacyBox, controller));
+	}
+	return true;
+}
+
+bool ShowCommonGroups(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	const auto peerId = PeerId(match->captured(1).toULongLong());
+	if (const auto id = peerToUser(peerId)) {
+		const auto user = controller->session().data().userLoaded(id);
+		if (user) {
+			controller->showSection(
+				std::make_shared<Info::Memento>(
+					user,
+					Info::Section::Type::CommonGroups));
+		}
+	}
 	return true;
 }
 
@@ -1363,6 +1509,47 @@ bool ResolveUniqueGift(
 	return true;
 }
 
+bool ResolveConferenceCall(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	const auto slug = match->captured(1);
+	if (slug.isEmpty()) {
+		return false;
+	}
+	const auto myContext = context.value<ClickHandlerContext>();
+	controller->window().activate();
+	controller->resolveConferenceCall(match->captured(1), myContext.itemId);
+	return true;
+}
+
+bool ResolveStarsSettings(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	controller->showSettings(::Settings::CreditsId());
+	controller->window().activate();
+	return true;
+}
+
+bool ResolveTonSettings(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	controller->showSettings(::Settings::CurrencyId());
+	controller->window().activate();
+	return true;
+}
+
 } // namespace
 
 const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
@@ -1420,7 +1607,7 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			ResolvePrivatePost
 		},
 		{
-			u"^settings(/language|/devices|/folders|/privacy|/themes|/change_number|/auto_delete|/information|/edit_profile)?$"_q,
+			u"^settings(/language|/devices|/folders|/privacy|/themes|/change_number|/auto_delete|/information|/edit_profile|/phone_privacy)?$"_q,
 			ResolveSettings
 		},
 		{
@@ -1460,6 +1647,18 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			ResolveUniqueGift
 		},
 		{
+			u"^call/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			ResolveConferenceCall
+		},
+		{
+			u"^stars/?(^\\?.*)?(#|$)"_q,
+			ResolveStarsSettings
+		},
+		{
+			u"^ton/?(^\\?.*)?(#|$)"_q,
+			ResolveTonSettings
+		},
+		{
 			u"^([^\\?]+)(\\?|#|$)"_q,
 			HandleUnknown
 		},
@@ -1490,11 +1689,11 @@ const std::vector<LocalUrlHandler> &InternalUrlHandlers() {
 			ShowSearchTagsPromo
 		},
 		{
-			u"^edit_birthday$"_q,
+			u"^edit_birthday(.*)$"_q,
 			ShowEditBirthday,
 		},
 		{
-			u"^edit_privacy_birthday$"_q,
+			u"^edit_privacy_birthday(.*)$"_q,
 			ShowEditBirthdayPrivacy,
 		},
 		{
@@ -1516,6 +1715,14 @@ const std::vector<LocalUrlHandler> &InternalUrlHandlers() {
 		{
 			u"^username_regular/([a-zA-Z0-9\\-\\_\\.]+)@([0-9]+)$"_q,
 			CopyUsername,
+		},
+		{
+			u"^edit_paid_messages_fee/([0-9]+)$"_q,
+			EditPaidMessagesFee,
+		},
+		{
+			u"^common_groups/([0-9]+)$"_q,
+			ShowCommonGroups,
 		},
 		{
 			u"^stars_examples$"_q,
@@ -1611,6 +1818,9 @@ QString TryConvertUrlToLocal(QString url) {
 		} else if (const auto nftMatch = regex_match(u"^nft/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			const auto slug = nftMatch->captured(1);
 			return u"tg://nft?slug="_q + slug;
+		} else if (const auto callMatch = regex_match(u"^call/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
+			const auto slug = callMatch->captured(1);
+			return u"tg://call?slug="_q + slug;
 		} else if (const auto privateMatch = regex_match(u"^"
 			"c/(\\-?\\d+)"
 			"("
@@ -1641,6 +1851,8 @@ QString TryConvertUrlToLocal(QString url) {
 				"/[a-zA-Z0-9\\.\\_\\-]+/?(\\?|$)|"
 				"/\\d+/?(\\?|$)|"
 				"/s/\\d+/?(\\?|$)|"
+				"/a/\\d+/?(\\?|$)|"
+				"/c/\\d+/?(\\?|$)|"
 				"/\\d+/\\d+/?(\\?|$)"
 			")"_q, query, matchOptions)) {
 			const auto domain = usernameMatch->captured(1);
@@ -1663,6 +1875,10 @@ QString TryConvertUrlToLocal(QString url) {
 				added = u"&post="_q + postMatch->captured(1);
 			} else if (const auto storyMatch = regex_match(u"^/s/(\\d+)(/?\\?|/?$)"_q, usernameMatch->captured(2))) {
 				added = u"&story="_q + storyMatch->captured(1);
+			} else if (const auto albumMatch = regex_match(u"^/a/(\\d+)(/?\\?|/?$)"_q, usernameMatch->captured(2))) {
+				added = u"&album="_q + albumMatch->captured(1);
+			} else if (const auto collectionMatch = regex_match(u"^/c/(\\d+)(/?\\?|/?$)"_q, usernameMatch->captured(2))) {
+				added = u"&collection="_q + collectionMatch->captured(1);
 			} else if (const auto appNameMatch = regex_match(u"^/([a-zA-Z0-9\\.\\_\\-]+)(/?\\?|/?$)"_q, usernameMatch->captured(2))) {
 				added = u"&appname="_q + appNameMatch->captured(1);
 			}
@@ -1737,7 +1953,12 @@ void ResolveAndShowUniqueGift(
 		session->data().processUsers(data.vusers());
 		if (const auto gift = Api::FromTL(session, data.vgift())) {
 			using namespace ::Settings;
-			show->show(Box(GlobalStarGiftBox, show, *gift, st));
+			show->show(Box(
+				GlobalStarGiftBox,
+				show,
+				*gift,
+				StarGiftResaleInfo(),
+				st));
 		}
 	}).fail([=](const MTP::Error &error) {
 		clear();

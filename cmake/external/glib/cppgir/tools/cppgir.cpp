@@ -212,6 +212,7 @@ main(int argc, char *argv[])
   bool use_dl{};
   bool use_expected{};
   bool const_method{};
+  bool output_top{};
   bool dump_ignore{};
   std::string gir_path;
 
@@ -245,6 +246,9 @@ main(int argc, char *argv[])
           make_parser(&use_expected)},
       {"const-method", "GI_CONST_METHOD", "generate const methods",
           make_parser(&const_method)},
+      {"output-top", "GI_OUTPUT_TOP",
+          "generate convenience wrappers in output dir",
+          make_parser(&output_top)},
   };
 
   // optionally dump embedded ignore
@@ -326,6 +330,8 @@ Supported options and environment variables
               fmt::format("processing option {} {}", opt, wrap(nextarg)));
           if (!option.option.func(nextarg))
             return die(helpdesc, opt + "; invalid argument " + nextarg);
+        } else {
+          return die(helpdesc, "unknown option " + opt);
         }
       } else if (!opt.empty() && opt[0] == '-') {
         return die(helpdesc, "unknown option " + opt);
@@ -427,7 +433,20 @@ Supported options and environment variables
   if (cnt == 0 && !GI_DEFAULT_IGNORE.empty())
     return die(helpdesc, "required default ignore file location not specified");
 
-  auto match_ignore = Matcher(ignore_files, GI_DATA_IGNORE);
+  // HACKety hack; extract some other config from ignore files
+  // (avoids coming up with another separate config file for now)
+  std::map<std::string, std::string> custom_c_types;
+  auto custom = [&custom_c_types](const std::string &line) {
+    if (line.find("#!ctype:") == 0) {
+      std::vector<std::string> tmp;
+      addsplit(tmp, line);
+      if (tmp.size() == 3) {
+        custom_c_types[tmp[1]] = tmp[2];
+      }
+    }
+  };
+
+  auto match_ignore = Matcher(ignore_files, GI_DATA_IGNORE, custom);
   auto match_suppress = Matcher(suppress_files);
 
   // now let's start
@@ -438,10 +457,11 @@ Supported options and environment variables
   options.dl = use_dl;
   options.expected = use_expected;
   options.const_method = const_method;
+  options.output_top = output_top;
 
   logger(Log::INFO, "generating to directory {}", options.rootdir);
 
-  auto repo = Repository::new_();
+  auto repo = Repository::new_(custom_c_types);
   std::set<std::string> suppressions;
   GeneratorContext ctx{
       options, *repo, match_ignore, match_suppress, suppressions};

@@ -21,6 +21,8 @@ struct GeneratorOptions
   bool expected;
   // generate const methods
   bool const_method;
+  // generate top-level helpers in rootdir
+  bool output_top;
 };
 
 struct GeneratorContext

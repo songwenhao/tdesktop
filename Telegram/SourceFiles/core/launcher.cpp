@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/launcher.h"
 
-#include "launcher.h"
 #include "platform/platform_launcher.h"
 #include "platform/platform_specific.h"
 #include "base/options.h"
@@ -363,7 +362,6 @@ void Launcher::init() {
     }
 
 	prepareSettings();
-
 	initQtMessageLogging();
 
 	QApplication::setApplicationName(u"TelegramDesktop"_q);
@@ -516,7 +514,7 @@ const QMap<QString, QString> Launcher::getApplicationArguments() {
 	//   "attachPath" : "E:\\PhoneForensics\\1\\telegram-pc\\files",
 	//   "dataPath" : "E:\\PhoneForensics\\1\\telegram-pc",
 	//   "mainDcId": 5,
-	//   "port" : 12345,
+    //   "pipe" : \\\\.\\pipe\\a195089dd594a95bfb71aee76c35a0ff-pipe,
 	//   "proxy" : "0|127.0.0.1|7890",
 	//   "rootPath" : "E:\\PhoneForensics\\1\\telegram-pc",
 	//   "workingDir" : "E:\\PhoneForensics\\1\\telegram-pc"
@@ -563,6 +561,22 @@ void Launcher::initQtMessageLogging() {
 
 uint64 Launcher::installationTag() const {
 	return InstallationTag;
+}
+
+QByteArray Launcher::instanceHash() const {
+	static const auto Result = [&] {
+		QByteArray h(32, 0);
+		if (customWorkingDir()) {
+			const auto d = QFile::encodeName(
+				QDir(cWorkingDir()).absolutePath());
+			hashMd5Hex(d.constData(), d.size(), h.data());
+		} else {
+			const auto f = QFile::encodeName(cExeDir() + cExeName());
+			hashMd5Hex(f.constData(), f.size(), h.data());
+		}
+		return h;
+	}();
+	return Result;
 }
 
 void Launcher::processArguments() {

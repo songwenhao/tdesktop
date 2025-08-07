@@ -21,6 +21,7 @@ namespace gi
 namespace repository
 {
 // enable various ref-based boxed copy
+GI_ENABLE_BOXED_COPY(GClosure)
 GI_ENABLE_BOXED_COPY(GByteArray)
 GI_ENABLE_BOXED_COPY(GBytes)
 GI_ENABLE_BOXED_COPY(GRegex)

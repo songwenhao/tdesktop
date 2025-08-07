@@ -364,6 +364,11 @@ void PipPanel::init() {
 		Ui::Platform::ClearTransientParent(widget());
 	}, rp()->lifetime());
 
+	rp()->shownValue(
+	) | rpl::filter(rpl::mappers::_1) | rpl::start_with_next([=] {
+		Ui::Platform::SetWindowMargins(widget(), _padding);
+	}, rp()->lifetime());
+
 	rp()->screenValue(
 	) | rpl::skip(1) | rpl::start_with_next([=](not_null<QScreen*> screen) {
 		handleScreenChanged(screen);
@@ -878,6 +883,9 @@ void PipPanel::updateDecorations() {
 	_padding = padding;
 	_useTransparency = use;
 	widget()->setAttribute(Qt::WA_OpaquePaintEvent, !_useTransparency);
+	if (widget()->windowHandle()) {
+		Ui::Platform::SetWindowMargins(widget(), _padding);
+	}
 	setGeometry(newGeometry);
 	update();
 }
@@ -1001,7 +1009,7 @@ void Pip::handleLeave() {
 }
 
 void Pip::handleMouseMove(QPoint position) {
-	const auto weak = Ui::MakeWeak(_panel.widget());
+	const auto weak = base::make_weak(_panel.widget());
 	const auto guard = gsl::finally([&] {
 		if (weak) {
 			_panel.handleMouseMove(position);
@@ -1079,7 +1087,7 @@ Pip::OverState Pip::ResolveShownOver(OverState state) {
 }
 
 void Pip::handleMousePress(QPoint position, Qt::MouseButton button) {
-	const auto weak = Ui::MakeWeak(_panel.widget());
+	const auto weak = base::make_weak(_panel.widget());
 	const auto guard = gsl::finally([&] {
 		if (weak) {
 			_panel.handleMousePress(position, button);
@@ -1097,7 +1105,7 @@ void Pip::handleMousePress(QPoint position, Qt::MouseButton button) {
 }
 
 void Pip::handleMouseRelease(QPoint position, Qt::MouseButton button) {
-	const auto weak = Ui::MakeWeak(_panel.widget());
+	const auto weak = base::make_weak(_panel.widget());
 	const auto guard = gsl::finally([&] {
 		if (weak) {
 			_panel.handleMouseRelease(position, button);

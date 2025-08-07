@@ -149,6 +149,7 @@ EmojiButton {
 
 SendButton {
 	inner: IconButton;
+	stars: RoundButton;
 	record: icon;
 	recordOver: icon;
 	round: icon;
@@ -268,6 +269,11 @@ whenReadPadding: margins(34px, 3px, 17px, 4px);
 whenReadIconPosition: point(8px, 0px);
 whenReadSkip: 3px;
 whenReadShowPadding: margins(6px, 0px, 6px, 2px);
+whoSentItem: Menu(defaultMenu) {
+	itemPadding: margins(17px, 3px, 17px, 4px);
+	itemRightSkip: 0px;
+	itemStyle: whenReadStyle;
+}
 
 switchPmButton: RoundButton(defaultBoxButton) {
 	width: 320px;
@@ -855,6 +861,10 @@ historyComposeButton: FlatButton {
 		color: historyComposeButtonBgRipple;
 	}
 }
+historyComposeButtonText: FlatLabel(defaultFlatLabel) {
+	style: semiboldTextStyle;
+	textFg: windowActiveTextFg;
+}
 historyGiftToChannel: IconButton(defaultIconButton) {
 	width: 46px;
 	height: 46px;
@@ -865,6 +875,10 @@ historyGiftToChannel: IconButton(defaultIconButton) {
 	rippleAreaPosition: point(3px, 3px);
 	rippleAreaSize: 40px;
 	ripple: universalRippleAnimation;
+}
+historyDirectMessage: IconButton(historyGiftToChannel) {
+	icon: icon{{ "menu/chat_discuss", windowActiveTextFg }};
+	iconOver: icon{{ "menu/chat_discuss", windowActiveTextFg }};
 }
 historyUnblock: FlatButton(historyComposeButton) {
 	color: attentionButtonFg;
@@ -912,6 +926,10 @@ historyBusinessBotSettings: IconButton(defaultIconButton) {
 	ripple: defaultRippleAnimationBgOver;
 	height: 58px;
 	width: 48px;
+}
+paysStatusLabel: FlatLabel(historyBusinessBotStatus) {
+	align: align(top);
+	minWidth: 240px;
 }
 
 historyReplyCancelIcon: icon {{ "box_button_close", historyReplyCancelFg }};
@@ -1122,6 +1140,35 @@ historyScheduledToggle: IconButton(historyAttach) {
 		{ "chat/input_scheduled_dot", attentionButtonFg }
 	};
 }
+historyGiftToUser: IconButton(historyAttach) {
+	icon: icon {{ "chat/input_gift", historyComposeIconFg }};
+	iconOver: icon {{ "chat/input_gift", historyComposeIconFgOver }};
+}
+historySuggestPostToggle: IconButton(historyAttach) {
+	icon: icon{{ "chat/input_paid", historyComposeIconFg }};
+	iconOver: icon{{ "chat/input_paid", historyComposeIconFgOver }};
+}
+historySuggestIconPosition: point(4px, 4px);
+historySuggestIconActive: icon{{ "chat/input_paid", windowActiveTextFg }};
+
+suggestOptionsPrice: InputField(defaultInputField) {
+	textBg: transparent;
+	textMargins: margins(2px, 20px, 2px, 0px);
+
+	placeholderFg: placeholderFg;
+	placeholderFgActive: placeholderFgActive;
+	placeholderFgError: placeholderFgActive;
+	placeholderMargins: margins(2px, 0px, 2px, 0px);
+	placeholderScale: 0.;
+	placeholderFont: normalFont;
+
+	border: 0px;
+	borderActive: 0px;
+
+	heightMin: 32px;
+
+	style: defaultTextStyle;
+}
 
 historyAttachEmojiInner: IconButton(historyAttach) {
 	icon: icon {{ "chat/input_smile_face", historyComposeIconFg }};
@@ -1289,6 +1336,12 @@ historySend: SendButton {
 		icon: historySendIcon;
 		iconOver: historySendIconOver;
 	}
+	stars: RoundButton(defaultActiveButton) {
+		height: 28px;
+		padding: margins(0px, 0px, 6px, 0px);
+		textTop: 5px;
+		width: -8px;
+	}
 	record: historyRecordVoice;
 	recordOver: historyRecordVoiceOver;
 	round: historyRecordRound;
@@ -1434,9 +1487,6 @@ editTagField: InputField(defaultInputField) {
 
 	heightMin: 36px;
 }
-editTagLimit: FlatLabel(defaultFlatLabel) {
-	textFg: windowSubTextFg;
-}
 
 editStickerSetNameField: InputField(defaultInputField) {
 	textMargins: margins(0px, 8px, 26px, 4px);
@@ -1551,3 +1601,29 @@ processingVideoView: RoundButton(defaultActiveButton) {
 	textBgOver: transparent;
 	ripple: emptyRippleAnimation;
 }
+
+frozenBarTitle: FlatLabel(defaultFlatLabel) {
+	style: semiboldTextStyle;
+	textFg: attentionButtonFg;
+}
+frozenRestrictionTitle: FlatLabel(frozenBarTitle) {
+	align: align(top);
+}
+frozenBarSubtitle: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+}
+frozenRestrictionSubtitle: FlatLabel(frozenBarSubtitle) {
+	align: align(top);
+}
+frozenInfoBox: Box(defaultBox) {
+	buttonPadding: margins(16px, 11px, 16px, 16px);
+	buttonHeight: 42px;
+	button: RoundButton(defaultActiveButton) {
+		height: 42px;
+		textTop: 12px;
+		style: semiboldTextStyle;
+	}
+	shadowIgnoreTopSkip: true;
+}
+
+roundVideoFont: font(14px semibold);

@@ -35,6 +35,9 @@
 #include <type_traits>
 // required for generated code
 #include <tuple>
+#if GI_CONFIG_EXCEPTIONS
+#include <exception>
+#endif
 
 #if GI_DL
 #include <dlfcn.h>
@@ -153,10 +156,6 @@ struct if_valid_type
   typedef U type;
 };
 
-template<typename T, typename U = void>
-struct is_valid_type : public std::true_type
-{};
-
 template<typename, typename = void>
 struct is_type_complete : public std::false_type
 {};
@@ -244,8 +243,8 @@ struct ctype
 
 // class case
 template<typename T>
-struct ctype<T, typename std::enable_if<is_valid_type<
-                    typename std::decay<T>::type::BaseObjectType>::value>::type>
+struct ctype<T,
+    typename if_valid_type<typename std::decay<T>::type::BaseObjectType>::type>
 {
   typedef typename std::remove_reference<T>::type CppType;
   // make sure; avoid subclassed cases

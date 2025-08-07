@@ -63,6 +63,10 @@ concepts used in the following descriptions.
   As such, a great many calls might then fail at runtime.  So, if combined
   with `--expected` all those calls will use the above error return type.
 
+* `--output-top`:
+  Also generate convenience `.cpp` and `.hpp` files in root output directory
+  per namespace, as may be useful for some build tool setups.
+
 * `--dump-ignore`:
   (only if compiled with embedded ignore) Dumps embedded ignore data.
 
@@ -262,6 +266,42 @@ here is that such subclassing depends on style and setting, i.e. it is rather
 rare when in a GStreamer setting, but less so in e.g. Gtk. As such, the
 possibly rare cases should not burden or complicate the basic wrapping usecase.
 
+Before going into the details of "how", let's first consider what a "subclass"
+actually means in this context.  It will probably involve a (C++) (sub)class of
+some generated class (related to a GObject class type) with potentially
+extra/custom properties and signals.  In particular, the latter implies it also
+involves a new `GType` that defines a subtype (of the aforementioned GObject
+class type).  An instance of such class/type then consists of a C++ instance
+that is 1-to-1 associated with a GObject instance of the custom defined (sub)
+`GType`.
+
+In turn, this leads to (at least, for now) 2 possible ways to create instances;
+
+* triggered on C++ side, in the usual way through a constructor.  The bottom
+  of the constructor chain registers a custom `GType` (if still needed), creates
+  an instance (`g_object_new()`) and associates it (with the C++ instance).
+
+  The advantage is that standard use of C++ constructor applies.  The downside
+  is that the defined `GType` can not be (safely) used in the GObject
+  (eco)system, as any `g_object_new()`'d instance is incomplete (as it lacks a
+  C++ instance).
+
+* triggered on C-side by `g_object_new()`.  In this case, the registered type's
+  custom (GObject) `constructor` first delegates to parent constructor to create
+  a GObject subtype instance and then `new`'s a C++ object, and again the
+  bottom of the constructor chain associates it with created GObject instance.
+
+  In this case, an instance has to be created based on `GType`.  However, this
+  type can be safely used in any `GType` based factory system, e.g. when
+  referenced (by name) in XML/UI file or (by number) in a GStreamer plugin
+  factory.
+
+In summary, (up to) 2 different ways to create objects, and so (up to) 2
+different custom `GType` that can be defined by a "subclass".  The latter one
+is more recent and is also the recommended approach as instances are always
+properly created.  Also, if desired, some additional helper `new_()` member
+can be defined that acts as a surrogate constructor.
+
 So, how to subclass then? By a slight twist by using the `impl` namespace
 variations, as in following excerpt from an example:
 
@@ -285,15 +325,37 @@ public:
   // so either they should be defined public, or (e.g.) WindowClassDef
   // must be declared friend, or the above manual resolution can be used.
 
-TreeViewFilterWindow () : Gtk::impl::WindowImpl (this)
+  // this (super)constructor signature leads to a C++ side type
+  TreeViewFilterWindow () : Gtk::impl::WindowImpl (this)
   {
     // ...
   }
 
+  // this (super)constructor signature leads to a C-side type
+  // NOTE InitData is not (easily) instantiated,
+  //    so this constructor is only used by the internal C-side mechanics
+  TreeViewFilterWindow (const InitData &id)
+      : Gtk::impl::WindowImpl (this, id, "TreeViewFilterWindow")
+
   void set_focus_ (Gtk::Widget focus) noexcept override
   {
   }
+
+  // the above constructor is also re-used during (C-side) type registration
+  // (in that case with an "empty" id and no associated GObject setup)
+  // that can avoided by providing a separate ...
+  GType get_type_()
+  {
+    // no interfaces, properties or signals to declare
+    return register_type_<TreeViewFilterWindow>("TreeViewFilterWindow", 0, {}, {}, {});
+  }
 };
+
+// create an instance of (either) type
+// it prefers the latter C-side type, if supported, and supports extra arguments
+// (a second template parameter allows for specific selection,
+// see code comments and examples for details)
+gi::make_ref<TreeViewFilterWindow>()
 ```
 Parent (class or interface) methods can then be overridden or implemented
 in the usual way by simply defining them in the subclass.  It is also possible
@@ -313,6 +375,27 @@ So the custom type registration (that happens behind the scenes) can then still
 be used, albeit at the expense of dealing with a plain C signature and types
 (which is similar to directly calling a C function as a fallback if no wrapper
 function was generated for some reason).
+
+It is also a fairly advanced feature, with various aspects not immediately
+obvious.  For example, the resulting "instances" have "2 sides"; there is C++
+object instance as well as an associated (derived) GObject instance (which
+internally refer to each other in 1-to-1 association ).  In particular, it
+follows that their destruction must be closely coordinated.  This is potentially
+tricky as the GObject side is traditionally reference-counted, whereas the C++
+object could be anything (stack-allocated or otherwise).  The latter can be
+stack-allocated if it is ensured that there is no lingering reference in the
+GObject world.  So, it depends on the use-case as to how to proceed. But in
+overall, it is probably recommended to manage lifetime and ownership based on
+GObject (side) reference count.  The `gi::make_ptr` and `gi::ref_ptr` helpers
+can be helpful in this regard.
+
+There are also situations where the C API (implementation) involves some
+"low-level tricks" which do not port over in a simple or straight way (e.g.
+`GtkBuilder`).  Those are likely in need of some custom overrides or extensions
+(see also below) which may or may not already be provided for some particular
+API/situation.  It is highly advised to browse provided overrides and
+extensions and/or consult the closest relevant related example
+(which usually showcases what is available, along with additional explanations).
 
 
 ### CODE LAYOUT AND BUILD SETUP

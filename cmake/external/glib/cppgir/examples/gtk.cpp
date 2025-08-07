@@ -6,6 +6,7 @@
 #define GTK4 1
 #endif
 
+#include <fstream>
 #include <iostream>
 #include <tuple>
 #include <vector>
@@ -154,15 +155,140 @@ public:
 // other part based on gtkmm builder example
 namespace Gio = gi::repository::Gio;
 
+auto templ = R"|(
+<interface>
+  <template class="FooWidget" parent="GtkBox">
+    <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
+    <property name="spacing">4</property>
+    <child>
+      <object class="GtkButton" id="hello_button">
+        <property name="label">Hello World</property>
+        <signal name="clicked" handler="hello_button_clicked"/>
+        <signal name="clicked" handler="hello_button_clicked_object" object="label" swapped="no"/>
+        <signal name="clicked" handler="hello_button_clicked_object_swapped" object="label" swapped="yes"/>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton" id="goodbye_button">
+        <property name="label">Goodbye World</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel" id="label">
+        <property name="label">Greetings World</property>
+      </object>
+    </child>
+  </template>
+</interface>
+)|";
+
+auto templ_child = R"|(
+        <child>
+          <object class="FooWidget" id="foowidget1"/>
+        </child>
+)|";
+
+using WidgetTemplateHelper = Gtk::impl::WidgetTemplateHelper;
+
+class FooWidget : public Gtk::impl::BoxImpl, public WidgetTemplateHelper
+{
+  using self_type = FooWidget;
+
+public:
+  static void custom_class_init(GtkBoxClass *klass, gpointer)
+  {
+    // this is similar to the C case
+    // plain C functions are used, as klass struct has no direct equivalent
+    auto wklass = GTK_WIDGET_CLASS(klass);
+    auto bytes = GLib::Bytes::new_static((const guint8 *)templ, strlen(templ));
+    gtk_widget_class_set_template(wklass, bytes.gobj_());
+    gtk_widget_class_bind_template_child_full(wklass, "hello_button", TRUE, 0);
+    // chain up
+    WidgetTemplateHelper::custom_class_init<gi::register_type<self_type>>(
+        klass, nullptr);
+  }
+
+public:
+  Gtk::Button hello_;
+
+  void on_hello(Gtk::Button) { std::cout << "Hi" << std::endl; }
+
+  void on_hello_tail(Gtk::Button b, Gtk::Label l)
+  {
+    g_assert(l.gobj_type_() == GTK_TYPE_LABEL);
+    g_assert(b.gobj_type_() == GTK_TYPE_BUTTON);
+    std::cout << "Hi tail" << std::endl;
+  }
+
+  void on_hello_head(Gtk::Label l, Gtk::Button b)
+  {
+    g_assert(l.gobj_type_() == GTK_TYPE_LABEL);
+    g_assert(b.gobj_type_() == GTK_TYPE_BUTTON);
+    std::cout << "Hi head" << std::endl;
+  }
+
+  FooWidget(const InitData &id)
+      : Gtk::impl::BoxImpl(this, id, "FooWidget"),
+        WidgetTemplateHelper(object_())
+  {
+    // skip registration case
+    if (!id) {
+      // as we have defined a get_type_() below, that should not happen
+      g_assert_not_reached();
+      return;
+    }
+
+    // locate object
+    hello_ = gi::object_cast<Gtk::Button>(
+        get_template_child(gobj_type_(), "hello_button"));
+
+    // setup signal
+    // NOTE the "manual" signature here should suitably match
+    // (also considering object/swapped flags, etc)
+    auto ok = set_handler<void(Gtk::Button)>(
+        "hello_button_clicked", gi::mem_fun(&self_type::on_hello, this));
+    g_assert(ok);
+    ok = set_handler<void(Gtk::Button, Gtk::Label), ConnectObject::TAIL>(
+        "hello_button_clicked_object",
+        gi::mem_fun(&self_type::on_hello_tail, this));
+    g_assert(ok);
+    ok = set_handler<void(Gtk::Label, Gtk::Button), ConnectObject::HEAD>(
+        "hello_button_clicked_object_swapped",
+        gi::mem_fun(&self_type::on_hello_head, this));
+    g_assert(ok);
+  }
+
+  static GType get_type_()
+  {
+    return register_type_<FooWidget>("FooWidget", 0, {}, {}, {});
+  }
+};
+
 class ExampleWindow : public Gtk::impl::WindowImpl
 {
   using self_type = ExampleWindow;
 
 public:
   ExampleWindow(Gtk::Window base, Gtk::Builder builder)
-      : Gtk::impl::WindowImpl(base, this)
+      : Gtk::impl::WindowImpl(base, this, "ExampleWindow")
+  // custom name parameter is optional, but can be provided if used in .ui
   {
     (void)builder;
+    setup();
+  }
+
+  // name parameter is required and specifies registered type as-is
+  // (so some proper namespace prefix is advisable in real case)
+  ExampleWindow(const InitData &id)
+      : Gtk::impl::WindowImpl(this, id, "ExampleWindow")
+  {
+    // skip registration case
+    if (id)
+      setup();
+  }
+
+  void setup()
+  {
     auto actions = Gio::SimpleActionGroup::new_();
     auto am = Gio::ActionMap(actions);
     auto action = Gio::SimpleAction::new_("help");
@@ -173,19 +299,78 @@ public:
 
   void on_help(Gio::Action, GLib::Variant) { std::cout << "Help" << std::endl; }
 
-  static auto build()
+  // subclass_type == 0; UI specifies GtkWindow
+  // subclass_type < 0; UI specifies GIOBJECT__ExampleWindow
+  //    in either cases above; manual C++ association is needed
+  //        (uses first constructor)
+  //        -> NOT recommended
+  // subclass_type > 0; UI specifies ExampleWindow;
+  //    all is properly created by (C-side) instance construction
+  //        (uses second constructor)
+  //        -> recommended
+  // subclass_type > 1; also insert a FooWidget
+  //    (also all created by C-side construction)
+  static Gtk::Window build(int subclass_type)
   {
     const char *UIFILE = G_STRINGIFY(EXAMPLES_DIR) "/gtk-builder.ui";
     const char *WINID = "window1";
 
     auto builder = Gtk::Builder::new_();
-    builder.add_from_file(UIFILE);
+    // if the subtype has additional functionality (e.g. method overrides)
+    // then builder should instantiate using that type,
+    // otherwise base type suffices
+    // NOTE in the former case, there is a "short time" that the GObject side
+    // exists without a corresponding C++ side, so any attempt to use the
+    // extended parts (e.g. method calls) will be unfortunate
+    if (subclass_type) {
+      std::string WINCLASS = "GtkWindow";
+      std::ifstream f(UIFILE, std::ios::binary);
+      std::string ui;
+      std::getline(f, ui, '\0');
+
+      auto index = ui.find(WINCLASS);
+      assert(index != ui.npos);
+      ui.replace(ui.begin() + index, ui.begin() + index + WINCLASS.size(),
+          subclass_type < 0 ? "GIOBJECT__ExampleWindow" : "ExampleWindow");
+      if (subclass_type > 1) {
+        // sprinkle a template instance
+        std::string MARKER = "<!-- INSERT -->";
+        index = ui.find(MARKER);
+        ui.replace(ui.begin() + index, ui.begin() + index + MARKER.size(),
+            templ_child);
+        // ensure type registered
+        gi::register_type<FooWidget>();
+      }
+      // now we got a UI file that references the subclass type
+      // ensure the latter is registered
+      if (subclass_type < 0) {
+        // use a temporary instance
+        gi::make_ref<ExampleWindow, gi::construct_cpp_t>(nullptr, builder);
+      } else {
+        // a new cleaner way
+        gi::register_type<ExampleWindow>();
+      }
+      builder.add_from_string(ui, -1);
+    } else {
+      builder.add_from_file(UIFILE);
+    }
     if (false) {
       // some compile checks
       builder.get_object(WINID);
       builder.get_object<Gtk::Window>(WINID);
     }
-    return builder.get_object_derived<self_type>(WINID);
+    if (subclass_type > 1) {
+      // verify proper C++ side setup
+      auto foo_obj =
+          builder.get_object<FooWidget::baseclass_type>("foowidget1");
+      assert(foo_obj);
+      auto foo = gi::ref_ptr_cast<FooWidget>(foo_obj);
+      assert(foo);
+      assert(foo->hello_);
+    }
+    // the special _derived may be needed to setup C++ side and associate
+    return subclass_type > 0 ? builder.get_object<Gtk::Window>(WINID)
+                             : builder.get_object_derived<self_type>(WINID);
   }
 };
 
@@ -208,7 +393,7 @@ main(int argc, char **argv)
   if (argc == 1) {
     win = gi::make_ref<TreeViewFilterWindow>();
   } else {
-    win = ExampleWindow::build();
+    win = ExampleWindow::build(std::stoi(argv[1]));
   }
   // TODO auto-handle arg ignore ??
 #ifdef GTK4

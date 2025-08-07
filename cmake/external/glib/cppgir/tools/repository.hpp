@@ -3,6 +3,7 @@
 
 #include "common.hpp"
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -91,6 +92,7 @@ class Repository
   Repository &operator=(const Repository &other) = delete;
 
 public:
+  typedef std::map<std::string, std::string> subst_c_types;
   typedef std::string key_type;
   struct mapped_type
   {
@@ -99,7 +101,7 @@ public:
     std::unique_ptr<TypeInfo> info;
   };
 
-  static std::shared_ptr<Repository> new_();
+  static std::shared_ptr<Repository> new_(subst_c_types m);
 
   // set namespace used for unqualified girname
   void set_ns(const std::string _ns);

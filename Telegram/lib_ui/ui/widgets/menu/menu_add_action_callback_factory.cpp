@@ -11,17 +11,16 @@
 #include "ui/widgets/menu/menu_action.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/qt_object_factory.h"
-#include "ui/qt_weak_factory.h"
 #include "styles/style_widgets.h"
 
 namespace Ui::Menu {
 
 MenuCallback CreateAddActionCallback(not_null<Ui::PopupMenu*> menu) {
 	return MenuCallback([=](MenuCallback::Args a) -> QAction* {
-		const auto initFilter = [&](not_null<Ui::Menu::Action*> action) {
+		const auto initFilter = [&](not_null<Ui::Menu::ItemBase*> action) {
 			if (const auto copy = a.triggerFilter) {
 				action->setClickedCallback([=] {
-					const auto weak = Ui::MakeWeak(action);
+					const auto weak = base::make_weak(action);
 					if (copy() && weak && !action->isDisabled()) {
 						action->setDisabled(true);
 						crl::on_main(
@@ -48,7 +47,9 @@ MenuCallback CreateAddActionCallback(not_null<Ui::PopupMenu*> menu) {
 				a.icon);
 			// Dummy menu.
 			action->setMenu(Ui::CreateChild<QMenu>(menu->menu().get()));
-			a.fillSubmenu(menu->ensureSubmenu(action, menu->st()));
+			a.fillSubmenu(menu->ensureSubmenu(
+				action,
+				a.submenuSt ? *a.submenuSt : menu->st()));
 			return action;
 		} else if (a.separatorSt || a.isSeparator) {
 			return menu->addSeparator(a.separatorSt);
@@ -76,6 +77,9 @@ MenuCallback CreateAddActionCallback(not_null<Ui::PopupMenu*> menu) {
 				a.icon);
 			initFilter(owned.get());
 			return menu->addAction(std::move(owned));
+		} else if (auto owned = a.make ? a.make(menu) : nullptr) {
+			initFilter(owned.get());
+			return menu->addAction(std::move(owned));
 		}
 		return menu->addAction(a.text, std::move(a.handler), a.icon);
 	});
@@ -86,7 +90,7 @@ MenuCallback CreateAddActionCallback(not_null<Ui::DropdownMenu*> menu) {
 		const auto initFilter = [&](not_null<Ui::Menu::Action*> action) {
 			if (const auto copy = a.triggerFilter) {
 				action->setClickedCallback([=] {
-					const auto weak = Ui::MakeWeak(action);
+					const auto weak = base::make_weak(action);
 					if (copy() && weak && !action->isDisabled()) {
 						action->setDisabled(true);
 						crl::on_main(

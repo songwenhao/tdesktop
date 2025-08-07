@@ -1095,6 +1095,14 @@ test_collection()
     auto usa = unwrap(sc, transfer_none);
     assert(usa == sa.data());
   }
+  { // case that might arise trying to pass main's(argv, argc) to a parameter
+    std::array<const char *, 2> sa{{"x", "y"}};
+    CollectionParameter<gi::DSpan, char *, transfer_none_t> sc{
+        (char **)sa.data(), sa.size()};
+    assert(sc.gobj_() == sa.data());
+    auto usa = unwrap(sc, transfer_none);
+    assert(usa == sa.data());
+  }
   {
     std::array<int, 2> a{3, 4};
     CollectionHolderProxy<gi::DSpan, int, transfer_none_t> ac{
@@ -2485,6 +2493,35 @@ public:
   gi::property<CppEnum> prop_enum;
 };
 
+class UserCObject : public ExampleInterfaceImpl,
+                    public PropertyInterfaceImpl,
+                    public GObject_::impl::ObjectImpl
+{
+  using self_type = UserCObject;
+
+public:
+  UserCObject(const InitData &id) : ObjectImpl(this, id) { assert(id); }
+
+  static GType get_type_()
+  {
+    return register_type_<UserCObject>("UserCObject", 0,
+        {ExampleInterfaceImpl::interface_init_data<UserCObject>(),
+            {PropertyInterfaceImpl::register_interface, nullptr}},
+        {{&self_type::prop_itf_int, NAME_INUMBER},
+            {&self_type::prop_int, "prop_int", "prop_int", "prop_int", 0, 10,
+                DEFAULT_PROP_INT}},
+        {{&self_type::signal_demo_, "demo"}});
+  }
+
+  int vmethod_(int a) override { return 5 * a; }
+  int imethod_(int a) override { return 7 * a; }
+
+  // details provided in get_type_
+  gi::signal<void(Object, int)> signal_demo_{this, "demo"};
+  gi::property<int> prop_itf_int{this, NAME_INUMBER};
+  gi::property<int> prop_int{this, "prop_int"};
+};
+
 void
 test_impl()
 {
@@ -2635,6 +2672,21 @@ test_impl()
     auto u4 = std::move(u3);
     assert(refcount(v.gobj_()) == 4);
     assert(!u3);
+
+    auto um = gi::make_ref<UserObject, gi::construct_cpp_t>();
+    assert(um->gobj_type_() == u->gobj_type_());
+  }
+
+  {
+    // similar for C-style
+    auto u = gi::make_ref<UserCObject>("prop_int", DEFAULT_PROP_INT / 2);
+    assert(u->list_properties().size() > 0);
+    assert(u->prop_int.get_value() == DEFAULT_PROP_INT / 2);
+
+    auto um = gi::make_ref<UserCObject>();
+    assert(um->prop_int.get_value() == DEFAULT_PROP_INT);
+    assert(um->gobj_type_() == u->gobj_type_());
+    assert(um->gobj_type_() == gi::register_type<UserCObject>());
   }
 }
 

@@ -109,8 +109,9 @@ class Matcher
   }
 
 public:
-  Matcher(
-      const std::vector<std::string> &paths, const std::string &patterns = {})
+  Matcher(const std::vector<std::string> &paths,
+      const std::string &patterns = {},
+      const std::function<void(const std::string &)> &custom = {})
   {
     std::set<std::string> lines;
     for (auto &fpath : paths) {
@@ -136,6 +137,8 @@ public:
         // combine all expressions into 1 expression
         // so we only need to call once to check for matching
         lpatterns += (lpatterns.size() ? "|" : "") + l;
+      } else if (custom && l.size() > 2 && l[0] == '#' && l[1] == '!') {
+        custom(l);
       }
     }
     if (lpatterns.size())

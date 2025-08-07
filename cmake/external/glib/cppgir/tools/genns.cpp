@@ -22,6 +22,7 @@ class File : public std::ofstream
   std::string fname;
   bool preamble;
   bool guard;
+  bool nsdir;
   NamespaceGuard nsg;
 
   static std::string root;
@@ -30,26 +31,29 @@ public:
   // ok, single threaded processing
   static void set_root(const std::string &dir) { root = dir; }
 
-  static std::string prepdirs(const std::string &_ns, const std::string &_fname)
+  static std::string prepdirs(
+      const std::string &_ns, const std::string &_fname, bool nsdir)
   {
     fs::path p(root);
-    p /= tolower(_ns);
+    if (nsdir)
+      p /= tolower(_ns);
     fs::create_directories(p);
     p /= tolower(_fname);
     return p.native();
   }
 
   File(const std::string &_ns, const std::string _fname, bool _need_ns = true,
-      bool _need_guard = true)
-      : std::ofstream(prepdirs(_ns, _fname)), ns(_ns), fname(_fname),
-        preamble(_need_ns), guard(_need_guard), nsg(*this)
+      bool _need_guard = true, bool _nsdir = true)
+      : std::ofstream(prepdirs(_ns, _fname, _nsdir)), ns(_ns), fname(_fname),
+        preamble(_need_ns), guard(_need_guard), nsdir(_nsdir), nsg(*this)
   {
     write_pre();
   }
 
   std::string get_rel_path() const
   {
-    return (fs::path(tolower(ns)) / tolower(fname)).native();
+    return nsdir ? (fs::path(tolower(ns)) / tolower(fname)).native()
+                 : tolower(fname);
   }
 
   void write_pre()
@@ -846,7 +850,7 @@ constexpr static TypeInitData factory()
       out_impl << indent
                << fmt::format("if (init_data.{0}{3}) methods->{0} = (decltype "
                               "(methods->{0})) "
-                              "detail::method_wrapper<self, {1}, "
+                              "gi::detail::method_wrapper<self, {1}, "
                               "{2}>::wrapper<&self::{0}_>;",
                       n, sig, transferargs, precheck)
                << std::endl;
@@ -1431,6 +1435,12 @@ public:
       nsh << "#define GI_CONST_METHOD 1" << std::endl;
       nsh << "#endif" << std::endl;
     }
+    if (ctx.options.classimpl) {
+      nsh << "#ifndef GI_CLASS_IMPL" << std::endl;
+      nsh << "#define GI_CLASS_IMPL 1" << std::endl;
+      nsh << "#endif" << std::endl;
+    }
+    nsh << std::endl;
     nsh << make_include("gi/gi.hpp", false) << std::endl;
     nsh << std::endl;
     // include gi deps
@@ -1528,6 +1538,16 @@ public:
     auto cpp_ns = tolower(ns) + ".cpp";
     File cpp(ns, cpp_ns, false, false);
     cpp << make_include(h_ns_impl, true) << std::endl;
+
+    // optional build tool convenience
+    // generate refering files in rootdir
+    if (ctx.options.output_top) {
+      File top_cpp(ns, cpp_ns, false, false, false);
+      top_cpp << make_include(nsh_impl.get_rel_path(), true) << std::endl;
+
+      File top_hpp(ns, h_ns, false, false, false);
+      top_hpp << make_include(nsh.get_rel_path(), true) << std::endl;
+    }
 
     return nsh.get_rel_path();
   }

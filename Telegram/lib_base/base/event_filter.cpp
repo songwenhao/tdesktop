@@ -6,6 +6,8 @@
 //
 #include "base/event_filter.h"
 
+#include "base/weak_qptr.h"
+
 namespace base {
 namespace details {
 
@@ -37,4 +39,23 @@ not_null<QObject*> install_event_filter(
 	return new details::EventFilter(context, object, std::move(filter));
 }
 
-} // namespace Core
+void install_event_filter(
+		not_null<QObject*> object,
+		Fn<EventFilterResult(not_null<QEvent*>)> filter,
+		rpl::lifetime &lifetime) {
+	// Not safe in case object is deleted before lifetime.
+	//
+	//lifetime.make_state<details::EventFilter>(
+	//	object,
+	//	object,
+	//	std::move(filter));
+
+	const auto raw = install_event_filter(object, std::move(filter));
+	lifetime.add([weak = make_weak(raw)] {
+		if (const auto strong = weak.get()) {
+			delete strong;
+		}
+	});
+}
+
+} // namespace base

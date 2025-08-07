@@ -1,1 +1,0 @@
-implib-gen.py: warning: library 'a.out' contains data symbols which won't be intercepted: a

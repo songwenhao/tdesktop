@@ -6,25 +6,24 @@
 
 import sys, os, shutil, subprocess
 
-def run(project, arguments, buildType=''):
+def run(project, arguments, outDirName='', buildType=''):
     scriptPath = os.path.dirname(os.path.realpath(__file__))
-    basePath = scriptPath + '/../out/' + buildType
+
+    if outDirName is not None and len(outDirName) > 0:
+        basePath = f'{scriptPath}/../{outDirName}/{buildType}'
+    else:
+        basePath = f'{scriptPath}/../out/{buildType}'
+
+    print(f'basePath: {basePath}')
 
     cmake = ['cmake']
     vsArch = ''
     explicitGenerator = False
-    findStr = 'outDirName='
     for arg in arguments:
         if arg == 'debug':
             cmake.append('-DCMAKE_BUILD_TYPE=Debug')
         elif arg == 'x86' or arg == 'x64' or arg == 'arm':
             vsArch = arg
-        elif arg.startswith(findStr):
-            pos = arg.find(findStr)
-            if pos != -1:
-                outDirName = arg[pos + len(findStr):]
-                if len(outDirName) > 0:
-                    basePath = scriptPath + '/../' + outDirName + '/' + buildType
         elif arg != 'force':
             if arg.startswith('-G'):
                 explicitGenerator = True

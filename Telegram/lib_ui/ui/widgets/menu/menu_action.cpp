@@ -40,7 +40,7 @@ namespace {
 }
 
 TextParseOptions MenuTextOptions = {
-	TextParseLinks, // flags
+	TextParseLinks | TextParseMarkdown, // flags
 	0, // maxw
 	0, // maxh
 	Qt::LayoutDirectionAuto, // dir
@@ -158,7 +158,7 @@ void Action::processAction() {
 void Action::setMarkedText(
 		TextWithEntities text,
 		QString shortcut,
-		std::any context) {
+		const Text::MarkedContext &context) {
 	_text.setMarkedText(_st.itemStyle, text, MenuTextOptions, context);
 	const auto textWidth = _text.maxWidth();
 	const auto &padding = _st.itemPadding;
@@ -178,6 +178,10 @@ void Action::setMarkedText(
 	_shortcut = shortcut;
 	setMinWidth(w);
 	update();
+}
+
+const style::Menu &Action::st() const {
+	return _st;
 }
 
 bool Action::isEnabled() const {

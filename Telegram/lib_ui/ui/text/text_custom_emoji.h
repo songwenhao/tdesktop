@@ -13,9 +13,13 @@
 
 #include <crl/crl_time.h>
 
+#include <any>
+
 class QPainter;
 
 namespace Ui::Text {
+
+struct MarkedContext;
 
 [[nodiscard]] int AdjustCustomEmojiSize(int emojiSize);
 
@@ -50,10 +54,6 @@ public:
 	[[nodiscard]] virtual bool readyInDefaultState() = 0;
 
 };
-
-using CustomEmojiFactory = Fn<std::unique_ptr<CustomEmoji>(
-	QStringView,
-	Fn<void()>)>;
 
 class ShiftedEmoji final : public CustomEmoji {
 public:
@@ -110,5 +110,55 @@ private:
 	bool _stopOnLast = false;
 
 };
+
+class StaticCustomEmoji final : public CustomEmoji {
+public:
+	StaticCustomEmoji(
+		QImage &&image,
+		QString entity,
+		QMargins padding = {});
+
+	int width() override;
+	QString entityData() override;
+	void paint(QPainter &p, const Context &context) override;
+	void unload() override;
+	bool ready() override;
+	bool readyInDefaultState() override;
+
+private:
+	QImage _image;
+	QString _entity;
+	QMargins _padding;
+
+};
+
+class PaletteDependentCustomEmoji final : public CustomEmoji {
+public:
+	PaletteDependentCustomEmoji(
+		Fn<QImage()> factory,
+		QString entity,
+		QMargins padding = {});
+
+	int width() override;
+	QString entityData() override;
+	void paint(QPainter &p, const Context &context) override;
+	void unload() override;
+	bool ready() override;
+	bool readyInDefaultState() override;
+
+private:
+	void validateFrame();
+
+	Fn<QImage()> _factory;
+	QString _entity;
+	QMargins _padding;
+	QImage _frame;
+	int _paletteVersion = 0;
+
+};
+
+[[nodiscard]] std::unique_ptr<CustomEmoji> MakeCustomEmoji(
+	QStringView data,
+	const MarkedContext &context);
 
 } // namespace Ui::Text

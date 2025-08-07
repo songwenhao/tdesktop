@@ -14,7 +14,6 @@
 #include "ui/basic_click_handlers.h" // UrlClickHandler
 #include "ui/inactive_press.h"
 #include "ui/painter.h"
-#include "ui/qt_weak_factory.h"
 #include "ui/integration.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
@@ -244,19 +243,18 @@ FlatLabel::FlatLabel(
 	rpl::producer<TextWithEntities> &&text,
 	const style::FlatLabel &st,
 	const style::PopupMenu &stMenu,
-	const Fn<std::any(Fn<void()>)> &makeContext)
+	const Text::MarkedContext &context)
 : RpWidget(parent)
 , _text(st.minWidth ? st.minWidth : kQFixedMax)
 , _st(st)
 , _stMenu(stMenu)
 , _touchSelectTimer([=] { touchSelect(); }) {
 	textUpdated();
+
 	std::move(
 		text
 	) | rpl::start_with_next([=](const TextWithEntities &value) {
-		setMarkedText(
-			value,
-			makeContext ? makeContext([=] { update(); }) : std::any());
+		setMarkedText(value, context);
 	}, lifetime());
 	init();
 }
@@ -269,7 +267,7 @@ void FlatLabel::textUpdated() {
 	refreshSize();
 	setMouseTracking(_selectable || _text.hasLinks());
 	if (_text.hasSpoilers()) {
-		_text.setSpoilerLinkFilter([weak = Ui::MakeWeak(this)](
+		_text.setSpoilerLinkFilter([weak = base::make_weak(this)](
 				const ClickContext &context) {
 			return (context.button == Qt::LeftButton) && weak;
 		});
@@ -284,7 +282,8 @@ void FlatLabel::setText(const QString &text) {
 
 void FlatLabel::setMarkedText(
 		const TextWithEntities &textWithEntities,
-		const std::any &context) {
+		Text::MarkedContext context) {
+	context.repaint = [=] { update(); };
 	_text.setMarkedText(
 		_st.style,
 		textWithEntities,
@@ -658,7 +657,7 @@ void FlatLabel::touchEvent(QTouchEvent *e) {
 	case QEvent::TouchEnd: {
 		if (!_touchInProgress) return;
 		_touchInProgress = false;
-		auto weak = MakeWeak(this);
+		auto weak = base::make_weak(this);
 		if (_touchSelect) {
 			dragActionFinish(_touchPos, Qt::RightButton);
 			QContextMenuEvent contextMenu(QContextMenuEvent::Mouse, mapFromGlobal(_touchPos), _touchPos);
@@ -917,6 +916,13 @@ Text::StateResult FlatLabel::getTextState(const QPoint &m) const {
 	const auto useWidth = !(_st.align & Qt::AlignLeft)
 		? textWidth
 		: std::min(textWidth, _text.maxWidth());
+	const auto textLeft = _textWidth
+		? ((_st.align & Qt::AlignLeft)
+			? _st.margin.left()
+			: (_st.align & Qt::AlignHCenter)
+			? ((width() - _textWidth) / 2)
+			: (width() - _st.margin.right() - _textWidth))
+		: _st.margin.left();
 
 	Text::StateResult state;
 	bool heightExceeded = _st.maxHeight && (_st.maxHeight < _fullTextHeight || useWidth < _text.maxWidth());
@@ -928,9 +934,9 @@ Text::StateResult FlatLabel::getTextState(const QPoint &m) const {
 		if (_breakEverywhere) {
 			request.flags |= Text::StateRequest::Flag::BreakEverywhere;
 		}
-		state = _text.getStateElided(m - QPoint(_st.margin.left(), _st.margin.top()), useWidth, request);
+		state = _text.getStateElided(m - QPoint(textLeft, _st.margin.top()), useWidth, request);
 	} else {
-		state = _text.getState(m - QPoint(_st.margin.left(), _st.margin.top()), useWidth, request);
+		state = _text.getState(m - QPoint(textLeft, _st.margin.top()), useWidth, request);
 	}
 
 	return state;

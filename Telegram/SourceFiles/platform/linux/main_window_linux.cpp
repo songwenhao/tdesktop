@@ -161,11 +161,6 @@ void MainWindow::updateWindowIcon() {
 }
 
 void MainWindow::updateUnityCounter() {
-#ifndef SHOW_WINDOW
-    // no need to update
-	return;
-#endif
-
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 	qApp->setBadgeNumber(Core::App().unreadBadge());
 #else // Qt >= 6.6.0
@@ -436,7 +431,7 @@ void MainWindow::createGlobalMenu() {
 			u"Telegram"_q),
 		[=] {
 			ensureWindowShown();
-			controller().show(Box<AboutBox>());
+			controller().show(Box(AboutBox));
 		});
 
 	about->setMenuRole(QAction::AboutQtRole);

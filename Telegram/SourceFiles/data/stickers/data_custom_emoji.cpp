@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_frame_generator.h"
 #include "ffmpeg/ffmpeg_frame_generator.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "info/channel_statistics/earn/earn_icons.h"
 #include "storage/file_download.h" // kMaxFileInMemory
 #include "ui/chat/chats_filter_tag.h"
 #include "ui/effects/premium_stars_colored.h"
@@ -40,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
+#include "styles/style_credits.h" // giftBoxByStarsStyle
 
 namespace Data {
 namespace {
@@ -518,8 +520,8 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 Ui::Text::CustomEmojiFactory CustomEmojiManager::factory(
 		SizeTag tag,
 		int sizeOverride) {
-	return [=](QStringView data, Fn<void()> update) {
-		return create(data, std::move(update), tag, sizeOverride);
+	return [=](QStringView data, const Ui::Text::MarkedContext &context) {
+		return create(data, context.repaint, tag, sizeOverride);
 	};
 }
 
@@ -1020,21 +1022,40 @@ uint64 CustomEmojiManager::coloredSetId() const {
 }
 
 TextWithEntities CustomEmojiManager::creditsEmoji(QMargins padding) {
-	return Ui::Text::SingleCustomEmoji(
-		registerInternalEmoji(
-			Ui::GenerateStars(st::normalFont->height, 1),
-			padding,
-			false));
+	return Ui::Text::SingleCustomEmoji(registerInternalEmoji(
+		u"builtin:credits_emoji"_q,
+		Ui::GenerateStars(st::normalFont->height, 1),
+		padding,
+		false));
+}
+
+TextWithEntities CustomEmojiManager::ministarEmoji(QMargins padding) {
+	return Ui::Text::SingleCustomEmoji(registerInternalEmoji(
+		u"builtin:ministar_emoji"_q,
+		Ui::GenerateStars(st::giftBoxByStarsStyle.font->height, 1),
+		padding,
+		false));
 }
 
 QString CustomEmojiManager::registerInternalEmoji(
+		const QString &key,
 		QImage emoji,
 		QMargins padding,
 		bool textColor) {
+	auto i = _imageEmoji.find(key);
+	if (i == end(_imageEmoji)) {
+		i = _imageEmoji.emplace(
+			key,
+			registerImageEmoji(std::move(emoji), textColor)).first;
+	}
+	return i->second + InternalPadding(padding);
+}
+
+QString CustomEmojiManager::registerImageEmoji(
+		QImage emoji,
+		bool textColor) {
 	_internalEmoji.push_back({ std::move(emoji), textColor });
-	return InternalPrefix()
-		+ QString::number(_internalEmoji.size() - 1)
-		+ InternalPadding(padding);
+	return InternalPrefix() + QString::number(_internalEmoji.size() - 1);
 }
 
 QString CustomEmojiManager::registerInternalEmoji(
@@ -1054,10 +1075,7 @@ QString CustomEmojiManager::registerInternalEmoji(
 	icon.paint(p, 0, 0, icon.width());
 	p.end();
 
-	const auto result = registerInternalEmoji(
-		std::move(image),
-		QMargins{},
-		textColor);
+	const auto result = registerImageEmoji(std::move(image), textColor);
 	_iconEmoji.emplace(&icon, result);
 	return result + InternalPadding(padding);
 }
@@ -1099,7 +1117,10 @@ TextWithEntities SingleCustomEmoji(DocumentId id) {
 }
 
 TextWithEntities SingleCustomEmoji(not_null<DocumentData*> document) {
-	return SingleCustomEmoji(document->id);
+	const auto sticker = document->sticker();
+	return Ui::Text::SingleCustomEmoji(
+		SerializeCustomEmojiId(document),
+		sticker ? sticker->alt : QString());
 }
 
 bool AllowEmojiWithoutPremium(
@@ -1136,8 +1157,9 @@ void InsertCustomEmoji(
 Ui::Text::CustomEmojiFactory ReactedMenuFactory(
 		not_null<Main::Session*> session) {
 	return [owner = &session->data()](
-			QStringView data,
-			Fn<void()> repaint) -> std::unique_ptr<Ui::Text::CustomEmoji> {
+		QStringView data,
+		const Ui::Text::MarkedContext &context
+	) -> std::unique_ptr<Ui::Text::CustomEmoji> {
 		const auto prefix = u"default:"_q;
 		if (data.startsWith(prefix)) {
 			const auto &list = owner->reactions().list(
@@ -1157,13 +1179,13 @@ Ui::Text::CustomEmojiFactory ReactedMenuFactory(
 					std::make_unique<Ui::Text::ShiftedEmoji>(
 						owner->customEmojiManager().create(
 							document,
-							std::move(repaint),
+							context.repaint,
 							tag,
 							size),
 						QPoint(skip, skip)));
 			}
 		}
-		return owner->customEmojiManager().create(data, std::move(repaint));
+		return owner->customEmojiManager().create(data, context.repaint);
 	};
 }
 

@@ -11,7 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_global_privacy.h"
 #include "apiwrap.h"
 #include "boxes/send_credits_box.h" // CreditsEmojiSmall.
-#include "core/ui_integration.h" // MarkedTextContext.
+#include "core/ui_integration.h" // TextContext.
 #include "data/components/credits.h"
 #include "data/data_channel.h"
 #include "data/data_message_reactions.h"
@@ -140,7 +140,7 @@ void ShowPaidReactionDetails(
 	const auto chosen = std::clamp(kDefaultPerReaction, 1, max);
 
 	struct State {
-		QPointer<Ui::BoxContent> selectBox;
+		base::weak_qptr<Ui::BoxContent> selectBox;
 		bool ignoreShownPeerSwitch = false;
 		bool sending = false;
 	};
@@ -155,7 +155,7 @@ void ShowPaidReactionDetails(
 			state->sending = false;
 			if (success && count > 0) {
 				state->ignoreShownPeerSwitch = true;
-				if (const auto strong = state->selectBox.data()) {
+				if (const auto strong = state->selectBox.get()) {
 					strong->closeBox();
 				}
 			}
@@ -186,10 +186,7 @@ void ShowPaidReactionDetails(
 		) | rpl::map([=](TextWithEntities &&text) {
 			return Ui::TextWithContext{
 				.text = std::move(text),
-				.context = Core::MarkedTextContext{
-					.session = session,
-					.customEmojiRepaint = [] {},
-				},
+				.context = Core::TextContext({ .session = session }),
 			};
 		});
 	};
@@ -254,6 +251,7 @@ void ShowPaidReactionDetails(
 		.chosen = chosen,
 		.max = max,
 		.top = std::move(top),
+		.session = &channel->session(),
 		.channel = channel->name(),
 		.submit = std::move(submitText),
 		.balanceValue = session->credits().balanceValue(),
@@ -262,7 +260,7 @@ void ShowPaidReactionDetails(
 		},
 	}));
 
-	if (const auto strong = state->selectBox.data()) {
+	if (const auto strong = state->selectBox.get()) {
 		session->data().itemRemoved(
 		) | rpl::start_with_next([=](not_null<const HistoryItem*> removed) {
 			if (removed == item) {
