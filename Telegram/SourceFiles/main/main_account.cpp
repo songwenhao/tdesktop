@@ -32,7 +32,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtp_instance.h"
 #include "ui/image/image.h"
-#include "mainwidget.h"
 #include "api/api_updates.h"
 #include "ui/ui_utility.h"
 #include "main/main_app_config.h"
@@ -40,13 +39,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session_settings.h"
 #include "core/launcher.h"
-#include "intro/intro_start.h"
-#include "intro/intro_qr.h"
-#include "intro/intro_phone.h"
-#include "intro/intro_code.h"
-#include "intro/intro_password_check.h"
-#include "history/history.h"
-#include "history/history_item.h"
 #include "apiwrap.h"
 #include "api/api_chat_participants.h"
 #include "base/random.h"
@@ -2536,8 +2528,11 @@ namespace Main {
                         message.match([&](const MTPDmessage& data) {
                             if (const auto media = data.vmedia()) {
                                 media->match([&](const MTPDmessageMediaDocument& data) {
-                                    auto documentData = _session->data().processDocument(*data.vdocument());
-                                    documentData = _session->data().document(documentData->id);
+                                    const auto document = data.vdocument();
+                                    if (document) {
+                                        auto documentData = _session->data().processDocument(*document);
+                                        //documentData = _session->data().document(documentData->id);
+                                    }
                                 }, [&](const auto& data) {
                                 });
                             }

@@ -574,12 +574,12 @@ void Application::autoRegisterUrlScheme() {
 }
 
 void Application::showAccount(not_null<Main::Account*> account) {
-	if (const auto separate = separateWindowFor(account)) {
-		_lastActivePrimaryWindow = separate;
-		separate->activate();
-	} else if (const auto last = activePrimaryWindow()) {
-		last->showAccount(account);
-	}
+    if (const auto separate = separateWindowFor(account)) {
+        _lastActivePrimaryWindow = separate;
+        separate->activate();
+    } else if (const auto last = activePrimaryWindow()) {
+        last->showAccount(account);
+    }
 }
 
 void Application::checkWindowId(not_null<Window::Controller*> window) {
