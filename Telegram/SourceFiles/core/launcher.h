@@ -29,7 +29,7 @@ public:
 	virtual int exec();
 
 	const QStringList &arguments() const;
-    static const QMap<QString, QString> getApplicationArguments();
+    static const QMap<QString, QVariant> getApplicationArguments();
     
 	QString initialWorkingDir() const;
 	bool customWorkingDir() const;
@@ -91,7 +91,7 @@ private:
 	QString _initialWorkingDir;
 	QString _customWorkingDir;
 
-	static QMap<QString, QString> _parsedAppArgs;
+	static QMap<QString, QVariant> _parsedAppArgs;
 };
 
 } // namespace Core

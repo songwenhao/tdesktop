@@ -16,8 +16,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Platform {
 
+static LONG WINAPI UnhandledExceptionFilter(EXCEPTION_POINTERS* ExceptionInfo) {
+    DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 Launcher::Launcher(int argc, char *argv[])
 : Core::Launcher(argc, argv) {
+    SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+    _set_error_mode(_OUT_TO_STDERR);
+
+    SetUnhandledExceptionFilter(UnhandledExceptionFilter);
 }
 
 std::optional<QStringList> Launcher::readArgumentsHook(

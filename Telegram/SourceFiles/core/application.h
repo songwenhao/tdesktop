@@ -342,7 +342,6 @@ public:
 
 	static void RegisterUrlScheme();
 
-	QString activeAccountId() const;
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
 

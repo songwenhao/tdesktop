@@ -170,11 +170,6 @@ Application::Application()
 , _tray(std::make_unique<Tray>())
 , _autoLockTimer([=] { checkAutoLock(); })
 , _fileOpenTimer([=] { checkFileOpen(); }) {
-    const auto& appArgs = Core::Launcher::getApplicationArguments();
-    auto v = appArgs.value("activeAccountId");
-    if (!v.isEmpty()) {
-        _activeAccountId = v;
-    }
 	Ui::Integration::Set(&_private->uiIntegration);
 
 	_platformIntegration->init();
@@ -259,101 +254,6 @@ Application::~Application() {
 	Instance = nullptr;
 }
 
-#ifdef _MSC_VER
-static bool GetSystemProxySetting(
-    std::wstring& host,
-    std::wstring& port,
-    bool& isProxyEnable
-) {
-    bool isSuccess = false;
-    LSTATUS ret = -1;
-    HKEY hKeyOut = NULL;
-    LPBYTE data = NULL;
-
-    do {
-        HKEY hKeyIn = HKEY_CURRENT_USER;
-        if ((ret = RegOpenKeyExW(hKeyIn,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-            0,
-            KEY_CREATE_LINK | KEY_WRITE | KEY_READ | KEY_NOTIFY,
-            &hKeyOut)) != ERROR_SUCCESS) {
-            break;
-        }
-
-        ULONG regsize = 0;
-        if ((ret = RegQueryValueExW(hKeyOut,
-            L"ProxyEnable",
-            NULL,
-            NULL,
-            NULL,
-            &regsize)) != ERROR_SUCCESS) {
-            break;
-        }
-
-        data = new BYTE[regsize];
-        if (!data) {
-            break;
-        }
-        memset(data, 0x00, regsize);
-
-        if ((ret = RegQueryValueExW(hKeyOut,
-            L"ProxyEnable",
-            NULL,
-            NULL,
-            data,
-            &regsize)) != ERROR_SUCCESS) {
-            break;
-        }
-
-        isProxyEnable = (int)*data == 1;
-        delete[] data;
-        data = NULL;
-
-        if (isProxyEnable) {
-            regsize = 0;
-            if ((ret = RegQueryValueExW(hKeyOut, L"ProxyServer", NULL, NULL, NULL, &regsize)) != ERROR_SUCCESS) {
-                break;
-            }
-
-            data = new BYTE[regsize];
-            if (!data) {
-                break;
-            }
-
-            memset(data, 0x00, regsize);
-            if ((ret = RegQueryValueExW(hKeyOut, L"ProxyServer", NULL, NULL, data, &regsize)) != ERROR_SUCCESS) {
-                break;
-            }
-
-            wchar_t* p = wcsrchr((wchar_t*)data, ':');
-            if (p) {
-                *p = 0;
-                host = (wchar_t*)data;
-                port = p + 1;
-            }
-            delete[] data;
-            data = NULL;
-        } else {
-            host = L"";
-        }
-
-        isSuccess = true;
-
-    } while (false);
-
-    if (data) {
-        delete[] data;
-        data = NULL;
-    }
-
-    if (hKeyOut) {
-        RegCloseKey(hKeyOut);
-    }
-
-    return isSuccess;
-}
-#endif // _MSC_VER
-
 void Application::run() {
 	// Depends on OpenSSL on macOS, so on ThirdParty::start().
 	// Depends on notifications settings.
@@ -366,11 +266,9 @@ void Application::run() {
 
 	ValidateScale();
 
-	auto& proxySettings = settings().proxy();
-
 	bool setProxy = false;
     auto appArgs = Core::Launcher::getApplicationArguments();
-    auto v = appArgs.value("proxy");
+    auto v = appArgs.value("proxy").toString();
     if (!v.isEmpty()) {
         QString proxyString = v;
         QStringList proxySettings = proxyString.split('|');
@@ -400,21 +298,9 @@ void Application::run() {
         }
     }
 
-#ifdef _MSC_VER
     if (!setProxy) {
-		std::wstring host, port;
-		bool isProxyEnable = false;
-		GetSystemProxySetting(host, port, isProxyEnable);
-		if (isProxyEnable && !host.empty()) {
-			MTP::ProxyData proxy;
-			proxy.type = MTP::ProxyData::Type::Http;
-			proxy.host = QString::fromStdWString(host);
-			proxy.port = QString::fromStdWString(port).toUInt();
-
-			Core::App().setCurrentProxy(proxy, MTP::ProxyData::Settings::Enabled);
-		}
+        Core::App().setCurrentProxy(MTP::ProxyData(), MTP::ProxyData::Settings::System);
     }
-#endif // _MSC_VER
 
 	refreshGlobalProxy(); // Depends on app settings being read.
 
@@ -1133,10 +1019,6 @@ void Application::switchDebugMode() {
 
 Main::Account &Application::activeAccount() const {
 	return _domain->active();
-}
-
-QString Application::activeAccountId() const {
-	return _activeAccountId;
 }
 
 Main::Session *Application::maybePrimarySession() const {

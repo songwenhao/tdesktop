@@ -220,12 +220,12 @@ void Controller::showAccount(
 
 		crl::on_main(updateOnlineOfPrevSesssion);
 
-        QString activeAccount = Core::App().activeAccountId();
-		LOG(("activeAccount: %1").arg(activeAccount));
-
         const auto& appArgs = Core::Launcher::getApplicationArguments();
-        auto v = appArgs.value("pipeName");
-        if (!v.isEmpty()) {
+		QString activeAccount = appArgs.value("activeAccountId").toString();
+		LOG(("[%1] activeAccount: %2").arg(__FUNCTION__).arg(activeAccount));
+
+        QString pipeName = appArgs.value("pipeName").toString();
+        if (!pipeName.isEmpty()) {
             if (activeAccount.isEmpty()) {
                 if (!account->pipeConnected()) {
                     account->connectPipe();

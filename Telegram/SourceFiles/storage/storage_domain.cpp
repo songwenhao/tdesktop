@@ -126,167 +126,233 @@ void Domain::encryptLocalKey(const QByteArray &passcode) {
 
 Domain::StartModernResult Domain::startModern(
 		const QByteArray &passcode) {
-	const auto name = ComputeKeyName(_dataName);
-
-	FileReadDescriptor keyData;
-	if (!ReadFile(keyData, name, BaseGlobalPath())) {
-		return StartModernResult::Empty;
-	}
-	LOG(("App Info: reading accounts info..."));
-
-	QByteArray salt, keyEncrypted, infoEncrypted;
-	keyData.stream >> salt >> keyEncrypted >> infoEncrypted;
-	if (!CheckStreamStatus(keyData.stream)) {
-		return StartModernResult::Failed;
-	}
-
-	if (salt.size() != LocalEncryptSaltSize) {
-		LOG(("App Error: bad salt in info file, size: %1").arg(salt.size()));
-		return StartModernResult::Failed;
-	}
-	_passcodeKey = CreateLocalKey(passcode, salt);
-
-	EncryptedDescriptor keyInnerData, info;
-	if (!DecryptLocal(keyInnerData, keyEncrypted, _passcodeKey)) {
-		LOG(("App Info: could not decrypt pass-protected key from info file, "
-			"maybe bad password..."));
-		return StartModernResult::IncorrectPasscode;
-	}
-	auto key = Serialize::read<MTP::AuthKey::Data>(keyInnerData.stream);
-	if (keyInnerData.stream.status() != QDataStream::Ok
-		|| !keyInnerData.stream.atEnd()) {
-		LOG(("App Error: could not read pass-protected key from info file"));
-		return StartModernResult::Failed;
-	}
-	_localKey = std::make_shared<MTP::AuthKey>(key);
-
-	_passcodeKeyEncrypted = keyEncrypted;
-	_passcodeKeySalt = salt;
-	_hasLocalPasscode = !passcode.isEmpty();
-
-	if (!DecryptLocal(info, infoEncrypted, _localKey)) {
-		LOG(("App Error: could not decrypt info."));
-		return StartModernResult::Failed;
-	}
-	LOG(("App Info: reading encrypted info..."));
-	auto count = qint32();
-	info.stream >> count;
-	if (count <= 0 || count > Main::Domain::kPremiumMaxAccounts) {
-		LOG(("App Error: bad accounts count: %1").arg(count));
-		return StartModernResult::Failed;
-	}
-
-	_oldVersion = keyData.version;
-
-	auto tried = base::flat_set<int>();
-	auto sessions = base::flat_set<uint64>();
-    auto active = 0;
-
-	QJsonArray jArray;
-
-	QString activeAccount = Core::App().activeAccountId();
+	Domain::StartModernResult result = StartModernResult::Failed;
     const auto& appArgs = Core::Launcher::getApplicationArguments();
+    auto sessions = base::flat_set<uint64>();
 
-	for (auto i = 0; i != count; ++i) {
-		auto index = qint32();
-		info.stream >> index;
-		if (index >= 0
-			&& index < Main::Domain::kPremiumMaxAccounts
-			&& tried.emplace(index).second) {
-			auto account = std::make_unique<Main::Account>(
-				_owner,
-				_dataName,
-				index);
-			auto config = account->prepareToStart(_localKey);
+	do {
+		const auto name = ComputeKeyName(_dataName);
 
-			const auto sessionId = account->willHaveSessionUniqueId(
-				config.get());
+		FileReadDescriptor keyData;
+		if (!ReadFile(keyData, name, BaseGlobalPath())) {
+			result = StartModernResult::Empty;
+			break;
+		}
 
-			if (sessionId == 0) {
-				continue;
-			}
+		LOG(("App Info: reading accounts info..."));
 
-            QString userId = QString::number(account->sessionUserId().bare);
+		QByteArray salt, keyEncrypted, infoEncrypted;
+		keyData.stream >> salt >> keyEncrypted >> infoEncrypted;
+		if (!CheckStreamStatus(keyData.stream)) {
+			result = StartModernResult::Failed;
+			break;
+		}
 
-            // skip not target account
-            if (!activeAccount.isEmpty() && activeAccount != userId) {
-                continue;
-            }
+		if (salt.size() != LocalEncryptSaltSize) {
+			LOG(("App Error: bad salt in info file, size: %1").arg(salt.size()));
+			result = StartModernResult::Failed;
+			break;
+		}
 
-			if (!sessions.contains(sessionId)
-				&& (sessionId != 0 || (sessions.empty() && i + 1 == count))) {
-				if (sessions.empty()) {
-					active = index;
+		_passcodeKey = CreateLocalKey(passcode, salt);
+
+		EncryptedDescriptor keyInnerData, info;
+		if (!DecryptLocal(keyInnerData, keyEncrypted, _passcodeKey)) {
+			LOG(("App Info: could not decrypt pass-protected key from info file, "
+				"maybe bad password..."));
+			result = StartModernResult::IncorrectPasscode;
+			break;
+		}
+
+		auto key = Serialize::read<MTP::AuthKey::Data>(keyInnerData.stream);
+		if (keyInnerData.stream.status() != QDataStream::Ok
+			|| !keyInnerData.stream.atEnd()) {
+			LOG(("App Error: could not read pass-protected key from info file"));
+			result = StartModernResult::Failed;
+			break;
+		}
+
+		_localKey = std::make_shared<MTP::AuthKey>(key);
+
+		_passcodeKeyEncrypted = keyEncrypted;
+		_passcodeKeySalt = salt;
+		_hasLocalPasscode = !passcode.isEmpty();
+
+		if (!DecryptLocal(info, infoEncrypted, _localKey)) {
+			LOG(("App Error: could not decrypt info."));
+			result = StartModernResult::Failed;
+			break;
+		}
+
+		LOG(("App Info: reading encrypted info..."));
+		auto count = qint32();
+		info.stream >> count;
+		if (count <= 0 || count > Main::Domain::kPremiumMaxAccounts) {
+			LOG(("App Error: bad accounts count: %1").arg(count));
+			result = StartModernResult::Failed;
+			break;
+		}
+
+		_oldVersion = keyData.version;
+
+		auto tried = base::flat_set<int>();
+		auto active = 0;
+
+		QString activeAccount = appArgs.value("activeAccountId").toString();
+
+		for (auto i = 0; i != count; ++i) {
+			auto index = qint32();
+			info.stream >> index;
+			if (index >= 0
+				&& index < Main::Domain::kPremiumMaxAccounts
+				&& tried.emplace(index).second) {
+				auto account = std::make_unique<Main::Account>(
+					_owner,
+					_dataName,
+					index);
+				auto config = account->prepareToStart(_localKey);
+
+				const auto sessionId = account->willHaveSessionUniqueId(
+					config.get());
+
+				if (sessionId == 0) {
+					continue;
 				}
 
-                account->start(std::move(config));
+				QString userId = QString::number(account->sessionUserId().bare);
 
-                QJsonObject jObj;
-                jObj["userId"] = userId;
-                jObj["phone"] = account->session().user()->phone();
-                jObj["firstName"] = account->session().user()->firstName;
-                jObj["lastName"] = account->session().user()->lastName;
-                jObj["userName"] = account->session().user()->username();
+				// skip not target account
+				auto checkExistAccounts = appArgs.value("checkExistAccounts").toBool();
+				if (!checkExistAccounts) {
+					if (!activeAccount.isEmpty() && activeAccount != userId) {
+						continue;
+					}
+				}
 
-                jArray.append(jObj);
+				if (!sessions.contains(sessionId)
+					&& (sessionId != 0 || (sessions.empty() && i + 1 == count))) {
+					if (sessions.empty()) {
+						active = index;
+					}
 
-				LOG(("Exist account %1\nuserId: %2\nphone: %3\nfirstName: %4\nlastName: %5\nuserName: %6\n")
-					.arg(jArray.size())
-					.arg(jObj["userId"].toString())
-					.arg(jObj["phone"].toString())
-					.arg(jObj["firstName"].toString())
-					.arg(jObj["lastName"].toString())
-					.arg(jObj["userName"].toString())
-				);
+					account->start(std::move(config));
 
-                active = index;
+					active = index;
 
-                _owner->accountAddedInStorage({
-                    .index = index,
-                    .account = std::move(account)
-                    });
-                sessions.emplace(sessionId);
+					_owner->accountAddedInStorage({
+						.index = index,
+						.account = std::move(account)
+						});
+					sessions.emplace(sessionId);
+				}
 			}
 		}
-	}
 
-    if (appArgs.value("dataPath").isEmpty()) {
-        // save existing account info
+        if (sessions.empty()) {
+            _passcodeKey.reset();
+            _localKey.reset();
+
+            _passcodeKeyEncrypted.clear();
+            _passcodeKeySalt.clear();
+            _hasLocalPasscode = false;
+            _oldVersion = 0;
+            LOG(("App Error: no accounts read."));
+            result = StartModernResult::Failed;
+			break;
+        }
+
+        /*if (!info.stream.atEnd()) {
+            info.stream >> active;
+        }*/
+		_owner->activateFromStorage(active);
+
+		result = StartModernResult::Success;
+
+		_checkDomainStartedTimer.setCallback([this] {
+			if (_owner->started()) {
+				_checkDomainStartedTimer.cancel();
+
+				QJsonArray jArray;
+
+				std::vector<not_null<Main::Account*>> accounts = _owner->orderedAccounts();
+
+				int index = 1;
+				for (const auto account : accounts) {
+					if (!account || !account->sessionExists()) {
+						continue;
+					}
+
+					not_null<UserData*> user = account->session().user();
+					if (!user) {
+						continue;
+					}
+
+					QString userId = QString::number(user->id.value);
+					QString phone = user->phone();
+					QString firstName = user->firstName;
+					QString lastName = user->lastName;
+					QString userName = user->username();
+
+					QJsonObject jObj;
+					jObj.insert("userId", userId);
+					jObj.insert("phone", phone);
+					jObj.insert("firstName", firstName);
+					jObj.insert("lastName", lastName);
+					jObj.insert("userName", userName);
+
+					jArray.append(jObj);
+
+					LOG(("Exist account %1\nuserId: %2\nphone: %3\nfirstName: %4\nlastName: %5\nuserName: %6\n")
+						.arg(index++)
+						.arg(userId)
+						.arg(phone)
+						.arg(firstName)
+						.arg(lastName)
+						.arg(userName)
+					);
+				}
+
+				const auto& appArgs = Core::Launcher::getApplicationArguments();
+				auto checkExistAccounts = appArgs.value("checkExistAccounts").toBool();
+				if (checkExistAccounts) {
+					// save existing account info
+					QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
+					QFile::remove(saveAccountsFilePath);
+					QFile saveAccountsFile(saveAccountsFilePath);
+					saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
+					if (saveAccountsFile.isOpen()) {
+						QJsonDocument jDoc;
+						jDoc.setArray(jArray);
+						saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
+						saveAccountsFile.flush();
+						saveAccountsFile.close();
+					}
+
+					Core::Quit();
+				}
+			}
+		});
+
+		_checkDomainStartedTimer.callEach(2000);
+
+	} while (false);
+
+	// no existing accounts
+    auto checkExistAccounts = appArgs.value("checkExistAccounts").toBool();
+    if (checkExistAccounts && sessions.empty()) {
+		QThread::sleep(1);
+
         QString saveAccountsFilePath = cWorkingDir() + "existing_accounts.json";
         QFile::remove(saveAccountsFilePath);
         QFile saveAccountsFile(saveAccountsFilePath);
         saveAccountsFile.open(QIODevice::OpenModeFlag::WriteOnly);
-        if (saveAccountsFile.isOpen()) {
-            QJsonDocument jDoc;
-            jDoc.setArray(jArray);
-            saveAccountsFile.write(jDoc.toJson(QJsonDocument::JsonFormat::Compact));
-            saveAccountsFile.flush();
-            saveAccountsFile.close();
-        }
-
+        saveAccountsFile.write("[]");
+        saveAccountsFile.flush();
+        saveAccountsFile.close();
         Core::Quit();
-        return StartModernResult::Success;
     }
 
-	if (sessions.empty()) {
-		_passcodeKey.reset();
-        _localKey.reset();
-
-        _passcodeKeyEncrypted.clear();
-        _passcodeKeySalt.clear();
-        _hasLocalPasscode = false;
-		_oldVersion = 0;
-		LOG(("App Error: no accounts read."));
-		return StartModernResult::Failed;
-	}
-
-	/*if (!info.stream.atEnd()) {
-		info.stream >> active;
-	}*/
-	_owner->activateFromStorage(active);
-
-	Ensures(!sessions.empty());
-	return StartModernResult::Success;
+	return result;
 }
 
 void Domain::writeAccounts() {

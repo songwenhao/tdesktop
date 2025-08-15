@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/timer.h"
+
 namespace MTP {
 class Config;
 class AuthKey;
@@ -74,6 +76,7 @@ private:
 	bool _hasLocalPasscode = false;
 	rpl::event_stream<> _passcodeKeyChanged;
 
+	base::Timer _checkDomainStartedTimer;
 };
 
 } // namespace Storage

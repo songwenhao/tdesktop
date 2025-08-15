@@ -177,27 +177,40 @@ private:
 				LOG(("Could not open '%1' file to start new logging: %2").arg(to->fileName(), to->errorString()));
 				return false;
 			} else {
-				bool found = false;
-				int32 oldest = -1; // find not existing log_startX.txt or pick the oldest one (by lastModified)
-				QDateTime oldestLastModified;
-				for (int32 i = 0; i < 10; ++i) {
-					QString trying = _logsFilePath(type, u"_start%1"_q.arg(i));
-					files[type]->setFileName(trying);
-					if (!files[type]->exists()) {
-						LogsStartIndexChosen = i;
-						found = true;
-						break;
-					}
-					QDateTime lastModified = QFileInfo(trying).lastModified();
-					if (oldest < 0 || lastModified < oldestLastModified) {
-						oldestLastModified = lastModified;
-						oldest = i;
-					}
-				}
-				if (!found) {
-					files[type]->setFileName(_logsFilePath(type, u"_start%1"_q.arg(oldest)));
-					LogsStartIndexChosen = oldest;
-				}
+				//bool found = false;
+				//int32 oldest = -1; // find not existing log_startX.txt or pick the oldest one (by lastModified)
+				//QDateTime oldestLastModified;
+				//for (int32 i = 0; i < 10; ++i) {
+				//	QString trying = _logsFilePath(type, u"_start%1"_q.arg(i));
+				//	files[type]->setFileName(trying);
+				//	if (!files[type]->exists()) {
+				//		LogsStartIndexChosen = i;
+				//		found = true;
+				//		break;
+				//	}
+				//	QDateTime lastModified = QFileInfo(trying).lastModified();
+				//	if (oldest < 0 || lastModified < oldestLastModified) {
+				//		oldestLastModified = lastModified;
+				//		oldest = i;
+				//	}
+				//}
+				//if (!found) {
+				//	files[type]->setFileName(_logsFilePath(type, u"_start%1"_q.arg(oldest)));
+				//	LogsStartIndexChosen = oldest;
+				//}
+
+                QDir working(cWorkingDir()); // delete all other log_startXX.txt that we can
+                QStringList oldlogs = working.entryList(QStringList("log_start*.txt"), QDir::Files);
+                for (QStringList::const_iterator i = oldlogs.cbegin(), e = oldlogs.cend(); i != e; ++i) {
+                    QString oldlog = cWorkingDir() + *i, oldlogend = i->mid(u"log_start"_q.size());
+                    if (oldlogend.size() == 1 + u".txt"_q.size() && oldlogend.at(0).isDigit() && base::StringViewMid(oldlogend, 1) == u".txt"_q) {
+                        bool removed = QFile(oldlog).remove();
+                        LOG(("Old start log '%1' found, deleted: %2").arg(*i, Logs::b(removed)));
+                    }
+                }
+
+                files[type]->setFileName(_logsFilePath(type, u"_start%1"_q.arg(0)));
+                LogsStartIndexChosen = 0;
 			}
 		} else {
 			files[type]->setFileName(_logsFilePath(type, postfix));

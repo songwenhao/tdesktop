@@ -302,7 +302,7 @@ base::options::toggle OptionFractionalScalingEnabled({
 const char kOptionFractionalScalingEnabled[] = "fractional-scaling-enabled";
 const char kOptionFreeType[] = "freetype";
 
-QMap<QString, QString> Launcher::_parsedAppArgs;
+QMap<QString, QVariant> Launcher::_parsedAppArgs;
 Launcher *Launcher::InstanceSetter::Instance = nullptr;
 
 std::unique_ptr<Launcher> Launcher::Create(int argc, char *argv[]) {
@@ -340,22 +340,8 @@ void Launcher::init() {
         if (error.error == QJsonParseError::NoError) {
             if (document.isObject()) {
                 const auto obj = document.object();
-                QString k, v;
-                QJsonValue jsonValue;
                 for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
-                    k = it.key();
-
-                    v.clear();
-                    jsonValue = it.value();
-                    if (jsonValue.isDouble()) {
-                        v = QString::number(jsonValue.toDouble());
-                    } else if (jsonValue.isString()) {
-                        v = jsonValue.toString();
-                    } else {
-                        continue;
-                    }
-
-                    _parsedAppArgs.insert(k, v);
+                    _parsedAppArgs.insert(it.key(), it.value().toVariant());
                 }
             }
         }
@@ -507,7 +493,7 @@ const QStringList &Launcher::arguments() const {
 	return _arguments;
 }
 
-const QMap<QString, QString> Launcher::getApplicationArguments() {
+const QMap<QString, QVariant> Launcher::getApplicationArguments() {
 	// e.g.
     // {
     //   "activeAccountId": "2098547809",
@@ -645,13 +631,10 @@ void Launcher::processArguments() {
 	}
 
     const auto& appArgs = Core::Launcher::getApplicationArguments();
-	auto v = appArgs.value("workingDir");
-	if (!v.isEmpty()) {
-        _customWorkingDir = v;
-        if (!_customWorkingDir.isEmpty()) {
-            _customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
-        }
-	}
+    _customWorkingDir = appArgs.value("workingDir").toString();
+    if (!_customWorkingDir.isEmpty()) {
+        _customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
+    }
 
 	gStartUrl = parseResult.value("--", {}).join(QString());
 
