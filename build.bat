@@ -31,17 +31,17 @@ call %CMD%
 call 7z.exe x %ROOT_PATH%\tools\PortableGit-2.50.1-64-bit.7z.exe -o./tools/git -aoa -y
 
 SET PATH=%ROOT_PATH%\tools\python38;%ROOT_PATH%\tools\git\bin;%PATH%
-echo PATH: %PATH%
-exit /b
 
 call mkdir %ROOT_PATH%\Libraries
 
 call mkdir %ROOT_PATH%\ThirdParty
 
+echo prepare build
 call tdesktop\Telegram\build\prepare\win.bat
 
 cd %ROOT_PATH%\tdesktop\Telegram
 
+echo generate visual studio projects
 rem test
 rem TELEGRAM_API_ID=3653963
 rem TELEGRAM_API_HASH=53c860995094af360d4d4d821567a692
