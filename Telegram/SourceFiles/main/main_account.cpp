@@ -2068,6 +2068,10 @@ namespace Main {
                     ? Export::Data::DialogInfo()
                     : info.chats.back();
 
+                if (_curDialogInfo.topMessageDate == 0 /*异常判断*/) {
+                    finished = true;
+                }
+
                 if (finished) {
                     if (_exportLeftChannels) {
                         requestLeftChannel();
@@ -2596,7 +2600,7 @@ namespace Main {
             // 固定休眠一下
             QThread::msleep(100);
 
-            if (msgCount > 0) {
+            if (msgCount > 0 && _curTask.offsetMsgId != 0 /*异常判断*/) {
                 requestChatMessageEx();
             } else {
                 // 当前会话是否是从其它会话转换的
