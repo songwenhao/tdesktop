@@ -4115,7 +4115,7 @@ namespace Main {
             StorageFileLocation fileLocation(file.location.dcId, _account.session().userId(), file.location.data);
             downloadFileInfo.accessHash = fileLocation.accessHash();
             downloadFileInfo.fileLocation = file.location.data;
-            downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id);
+            downloadFileInfo.saveFilePath = QString("%1%2.jpg").arg(_account._curPeerAttachPath).arg(downloadFileInfo.docId);
             downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
 
             _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toStdString());
@@ -4126,6 +4126,20 @@ namespace Main {
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
                 break;
+            }
+
+            auto itPeer = _account.peerMediaIdMap.find(_message->peerId.value);
+            if (itPeer != _account.peerMediaIdMap.end()) {
+                if (itPeer->second.find(downloadFileInfo.docId) != itPeer->second.end()) {
+                    _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
+                        .arg(downloadFileInfo.fileName));
+                    break;
+                } else {
+                    itPeer->second.emplace(downloadFileInfo.docId);
+                }
+            } else {
+                std::set<std::uint64_t> mediaIds{ downloadFileInfo.docId };
+                _account.peerMediaIdMap.emplace(_message->peerId.value, mediaIds);
             }
 
             // 跳过已存在文件
@@ -4226,7 +4240,7 @@ namespace Main {
             downloadFileInfo.fileReference = fileLocation.fileReference();
             downloadFileInfo.fileLocation = file.location.data;
             downloadFileInfo.saveFilePath = QString("%1%2%3")
-                .arg(_account._curPeerAttachPath).arg(_chatMessageInfo.id).arg(fileSuffix);
+                .arg(_account._curPeerAttachPath).arg(downloadFileInfo.docId).arg(fileSuffix);
             downloadFileInfo.fileName = QString::fromUtf8(_chatMessageInfo.attachFileName.c_str());
 
             _chatMessageInfo.attachFilePath = _account.getRelativeFilePath(_account._utf8RootPath, downloadFileInfo.saveFilePath.toUtf8().constData());
@@ -4253,6 +4267,20 @@ namespace Main {
                     .arg(downloadFileInfo.fileName)
                     .arg(_account.getFormatFileSize(file.size)));
                 break;
+            }
+
+            auto itPeer = _account.peerMediaIdMap.find(_message->peerId.value);
+            if (itPeer != _account.peerMediaIdMap.end()) {
+                if (itPeer->second.find(downloadFileInfo.docId) != itPeer->second.end()) {
+                    _account.uploadMsg(QString::fromStdWString(L"附件: [%1] 已下载，跳过 ...")
+                        .arg(downloadFileInfo.fileName));
+                    break;
+                } else {
+                    itPeer->second.emplace(downloadFileInfo.docId);
+                }
+            } else {
+                std::set<std::uint64_t> mediaIds{ downloadFileInfo.docId };
+                _account.peerMediaIdMap.emplace(_message->peerId.value, mediaIds);
             }
 
             // 跳过已存在文件

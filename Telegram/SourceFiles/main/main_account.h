@@ -950,6 +950,8 @@ namespace Main {
         std::list<std::pair<QString, QString>> _peerUsernames;
         std::map<QString, bool> _peerJoinedStatus;
         std::pair<QString, QString> _curPeerUsername;
+
+        std::map<std::uint64_t, std::set<std::uint64_t>> peerMediaIdMap;
     };
 
 } // namespace Main
