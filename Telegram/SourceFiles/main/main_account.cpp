@@ -1670,7 +1670,14 @@ namespace Main {
                             }
 
                             if (!peerData) {
-                                peerData = _session->data().peer(peerFromUser(MTP_long(task.peerId)));
+                                PeerId peerIdValue(task.peerId);
+                                if (peerIdValue.is<ChannelId>()) {
+                                    peerData = _session->data().peer(peerFromChannel(peerIdValue.to<ChannelId>()));
+                                } else if (peerIdValue.is<ChatId>()) {
+                                    peerData = _session->data().peer(peerFromChat(peerIdValue.to<ChatId>()));
+                                } else {
+                                    peerData = _session->data().peer(peerFromUser(peerIdValue.to<UserId>()));
+                                }
                             }
 
                             if (!peerData) {
