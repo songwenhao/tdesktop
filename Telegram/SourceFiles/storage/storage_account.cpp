@@ -601,10 +601,6 @@ void Account::writeMap() {
 			return QByteArray();
 		}
 		const auto self = _owner->session().user();
-		if (self->phone().isEmpty()) {
-			DEBUG_LOG(("AuthSelf Error: Phone is empty."));
-			return QByteArray();
-		}
 		auto result = QByteArray();
 		result.reserve(Serialize::peerSize(self)
 			+ Serialize::stringSize(self->about()));

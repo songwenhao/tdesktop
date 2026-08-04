@@ -680,9 +680,9 @@ not_null<UserData*> Session::processUser(const MTPUser &data) {
 					qs(data.vlast_name().value_or_empty()))
 				: result->lastName;
 
-			const auto phone = minimal
+			const auto phone = (minimal || !data.vphone())
 				? result->phone()
-				: qs(data.vphone().value_or_empty());
+				: qs(*data.vphone());
 			const auto uname = minimal
 				? result->username()
 				: TextUtilities::SingleLine(

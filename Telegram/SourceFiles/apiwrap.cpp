@@ -1102,10 +1102,16 @@ void ApiWrap::requestFullPeer(not_null<PeerData*> peer) {
 			return request(MTPusers_GetFullUser(
 				user->inputUser
 			)).done([=](const MTPusers_UserFull &result) {
+				LOG(("RequestFullPeer done, before processUsers, user: %1, phone: '%2'"
+					).arg(user->id.value
+					).arg(user->phone()));
 				result.match([&](const MTPDusers_userFull &data) {
 					_session->data().processUsers(data.vusers());
 					_session->data().processChats(data.vchats());
 				});
+				LOG(("RequestFullPeer done, after processUsers, user: %1, phone: '%2'"
+					).arg(user->id.value
+					).arg(user->phone()));
 				gotUserFull(user, result);
 			}).fail(failHandler).send();
 		} else if (const auto chat = peer->asChat()) {

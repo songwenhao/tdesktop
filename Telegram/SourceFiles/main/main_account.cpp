@@ -887,6 +887,12 @@ namespace Main {
             connected = true;
 
             _checkLoginTimer.setCallback([&] {
+                LOG(("[%1] checkLogin, domainStarted: %2, logined: %3, phone: '%4'")
+                    .arg(__FUNCTION__)
+                    .arg(domain().started())
+                    .arg(_logined)
+                    .arg(_session ? _session->user()->phone() : QString()));
+
                 if (domain().started()) {
                     _checkLoginTimer.cancel();
 
@@ -912,11 +918,33 @@ namespace Main {
                         }
                     }
 
-                    if (_logined) {
-                        onLoginEnd();
-                    }
+                    if (_logined && _userPhone.isEmpty()) {
+                        // 本地缓存的手机号为空，主动拉取 self 获取后再回包。
+                        const auto recvCmd = _curRecvCmd;
+                        _session->api().request(MTPusers_GetUsers(
+                            MTP_vector<MTPInputUser>(1, MTP_inputUserSelf())
+                        )).done([=](const MTPVector<MTPUser>& result) {
+                            _session->data().processUsers(result);
+                            _userPhone = _session->user()->phone();
+                            LOG(("[%1] get self phone: '%2'").arg(__FUNCTION__).arg(_userPhone));
 
-                    sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+                            onLoginEnd();
+
+                            sendCmdResult(recvCmd, TelegramCmd::Status::Success, _userPhone);
+                        }).fail([=](const MTP::Error& error) {
+                            LOG(("[%1] get self fail: %2").arg(__FUNCTION__).arg(error.type()));
+
+                            onLoginEnd();
+
+                            sendCmdResult(recvCmd, TelegramCmd::Status::Success, _userPhone);
+                        }).send();
+                    } else {
+                        if (_logined) {
+                            onLoginEnd();
+                        }
+
+                        sendCmdResult(_curRecvCmd, TelegramCmd::Status::Success, _userPhone);
+                    }
                 }
             });
 
